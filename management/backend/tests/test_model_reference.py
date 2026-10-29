@@ -107,6 +107,7 @@ def test_a_list_entry_becomes_the_editors_fields() -> None:
         "output": "2.5",
         "cached_input": "0.03",
         "cache_write": None,
+        "long_context": None,
     }
 
 
@@ -351,6 +352,7 @@ def test_a_price_that_is_not_an_amount_is_left_empty() -> None:
         "output": None,
         "cached_input": None,
         "cache_write": None,
+        "long_context": None,
     }
 
 
@@ -484,12 +486,71 @@ def test_reasoning_options_the_list_may_hold(
     assert normalize._thinking(options, max_output, []) == thinking
 
 
-def test_tiered_and_audio_prices_are_noted() -> None:
-    entry = _entry(cost={"input": 1, "output": 2, "tiers": [{}], "input_audio": 3})
+def test_audio_prices_and_a_step_with_no_price_are_noted() -> None:
+    """A step the list names without saying what it costs cannot be filled, and is said instead."""
+    entry = _entry(
+        cost={
+            "input": 1,
+            "output": 2,
+            "tiers": [{"tier": {"type": "context", "size": 200000}}],
+            "input_audio": 3,
+        }
+    )
 
     (made,) = normalize.drafts(_listing(m=entry))
 
-    assert len(made["notes"]) == 2
+    assert made["prices"]["long_context"] is None
+    assert made["notes"] == [
+        "costs more above a context length — the list gives no price for it",
+        "audio input is priced apart",
+    ]
+
+
+def test_a_price_above_a_prompt_length_is_read_from_its_step() -> None:
+    """`FRD-408`: the list's `tiers` say at which length a request is billed at which rates —
+    every token of it. The first step is kept, and a later one is said rather than dropped."""
+    entry = _entry(
+        cost={
+            "input": 1.25,
+            "output": 10,
+            "cache_read": 0.125,
+            "tiers": [
+                {"input": 5, "output": 20, "tier": {"type": "context", "size": 500000}},
+                {
+                    "input": 2.5,
+                    "output": 15,
+                    "cache_read": 0.25,
+                    "tier": {"type": "context", "size": 200000},
+                },
+            ],
+        }
+    )
+
+    (made,) = normalize.drafts(_listing(m=entry))
+
+    assert made["prices"]["long_context"] == {
+        "threshold": 200000,
+        "input": "2.5",
+        "output": "15",
+        "cached_input": "0.25",
+        "cache_write": None,
+    }
+    assert "costs more again above 500,000 tokens — only the first step is kept" in made["notes"]
+
+
+def test_the_older_spelling_of_the_step_is_read_at_its_length() -> None:
+    """`context_over_200k` names its length in its key."""
+    entry = _entry(cost={"input": 2, "output": 12, "context_over_200k": {"input": 4, "output": 18}})
+
+    (made,) = normalize.drafts(_listing(m=entry))
+
+    assert made["prices"]["long_context"] == {
+        "threshold": 200000,
+        "input": "4",
+        "output": "18",
+        "cached_input": None,
+        "cache_write": None,
+    }
 
 
 def test_an_oversized_live_answer_is_not_read(monkeypatch: pytest.MonkeyPatch) -> None:

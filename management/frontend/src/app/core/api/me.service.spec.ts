@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { InstallationClock } from '../ui/clock';
 import { MeService } from './me.service';
 
 const ME = { subject: 's', username: 'demo', email: '', roles: ['global-admin'], use_cases: [] };
@@ -23,6 +24,18 @@ describe('MeService', () => {
 
     expect(roles).toEqual(['global-admin']);
     expect(service.me()?.username).toBe('demo');
+    http.verify();
+  });
+
+  it('sets the installation’s clock from the answer, for every screen that shows a time', () => {
+    const { service, http } = setup();
+    const clock = TestBed.inject(InstallationClock);
+
+    expect(clock.zone()).toBe('UTC');
+    service.get().subscribe();
+    http.expectOne('/api/v1/me').flush({ ...ME, time_zone: 'Europe/Berlin' });
+
+    expect(clock.zone()).toBe('Europe/Berlin');
     http.verify();
   });
 

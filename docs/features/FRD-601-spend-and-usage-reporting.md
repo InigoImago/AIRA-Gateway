@@ -129,6 +129,9 @@ the reader's local calendar was a set of UTC days labelled by a local one — af
 Berlin, "today" was a day the budget counters had not reached yet. The `to` bound is exclusive
 throughout, and the custom form says which day that makes the last one included.
 
+*Changed by `FRD-629`:* the days are the installation's (`AIRA_TIME_ZONE`), which the gateway reads a bare
+date on, buckets on and resets budgets on; the screen labels the period with that clock.
+
 ## 5. Testing & Acceptance
 
 Delivered (`gateway/tests/test_reporting.py`, `tests/integration/test_reporting.py`, the two

@@ -218,6 +218,12 @@ holds a cached-read and a cache-write price per model, and an undeclared one fal
 ordinary input rate — never to zero, `FRD-403`'s rule one field in. Reporting sums the cached
 tokens. Migration `0025`.
 
+> **Amended 2026-10-28 (`FRD-408`).** An undeclared **write** falls back to 1.25 times the input
+> rate, not to the input rate: the rule above was right for a read, which it can only over-state,
+> and a quarter short of every write — Anthropic, the one provider that reports writes, bills a
+> five-minute write at 1.25x. And the `opencode.json` the console writes now states both cache
+> rates, which OpenCode otherwise prices at zero.
+
 **Stage B — the marker.** `CanonicalRequest.cache_prefix`, set by the layer from the use case's
 configuration after routing (so it is decided per hop, like every other capability question), and
 mapped by the Anthropic dialect onto **two** breakpoints: the system block and the **last** tool.

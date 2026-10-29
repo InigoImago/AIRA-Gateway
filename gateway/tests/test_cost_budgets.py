@@ -202,6 +202,57 @@ async def test_prices_arrive_from_the_catalog_as_exact_decimals(sessionmaker) ->
     assert price.output_per_million_nanos == to_nanos("0.30")
 
 
+async def test_a_price_above_a_prompt_length_arrives_with_the_model(sessionmaker) -> None:
+    """`FRD-408`: the length and its rates travel on the model's event, as the ordinary ones do."""
+    async with sessionmaker() as session:
+        await apply_event(
+            session,
+            "model.upserted",
+            {
+                "name": "pro-1",
+                "input_price_per_million": "1.25",
+                "output_price_per_million": "10",
+                "long_context_threshold": 200000,
+                "long_context_input_price_per_million": "2.5",
+                "long_context_output_price_per_million": "15",
+                "long_context_cached_input_price_per_million": "0.25",
+                "long_context_cache_write_price_per_million": None,
+            },
+        )
+
+    price = await PricingService(sessionmaker).price_for("pro-1")
+    assert price is not None and price.long_context is not None
+    assert price.long_context_threshold == 200_000
+    assert price.long_context.input_per_million_nanos == to_nanos("2.5")
+    assert price.long_context.output_per_million_nanos == to_nanos("15")
+    assert price.long_context.cached_input_per_million_nanos == to_nanos("0.25")
+    assert price.long_context.cache_write_per_million_nanos is None
+
+
+@pytest.mark.parametrize("length", [None, 0, -5, True, "200000"])
+async def test_a_length_that_is_not_a_count_of_tokens_is_no_second_set(
+    sessionmaker, length: object
+) -> None:
+    """Absent from an older Management, or not a positive whole number: the ordinary rates at
+    every length, never a step at a length nobody stated."""
+    payload = {
+        "name": "pro-1",
+        "input_price_per_million": "1.25",
+        "output_price_per_million": "10",
+        "long_context_input_price_per_million": "2.5",
+        "long_context_output_price_per_million": "15",
+    }
+    if length is not None:
+        payload["long_context_threshold"] = length
+    async with sessionmaker() as session:
+        await apply_event(session, "model.upserted", payload)
+
+    price = await PricingService(sessionmaker).price_for("pro-1")
+    assert price is not None
+    assert price.long_context is None
+    assert price.rates_for(10_000_000) is price
+
+
 async def test_a_price_change_replaces_the_old_one(sessionmaker) -> None:
     async with sessionmaker() as session:
         await apply_event(
@@ -340,3 +391,31 @@ async def test_a_reservation_is_never_negative(sessionmaker) -> None:
 
     assert expected.tokens >= 0
     assert expected.cost_nanos >= 0
+
+
+async def test_a_long_prompt_reserves_at_the_rates_it_will_be_billed_at(sessionmaker) -> None:
+    """`FRD-408`: a prompt past the model's stated length is billed at the second set, so it is
+    reserved at it. Reserved at the ordinary rates, a session of 250 000-token turns held back half
+    of what each turn then cost, and the requests in flight passed a limit together."""
+    from aira_common.money import cost_nanos
+    from aira_gateway.api.serving.controls import estimate
+
+    row = _priced("pro-1", "1.25", "10")
+    row.long_context_threshold = 200_000
+    row.long_context_input_price_per_million_nanos = to_nanos("2.5")
+    row.long_context_output_price_per_million_nanos = to_nanos("15")
+    await _add(sessionmaker, row)
+    request = _estimating_request(sessionmaker)
+
+    # Four characters a token: 1 000 000 characters is a 250 000-token prompt.
+    long = await estimate(
+        request, model="pro-1", max_output_tokens=100, input_texts=["x" * 1_000_000]
+    )
+    short = await estimate(request, model="pro-1", max_output_tokens=100, input_texts=["x" * 4_000])
+
+    assert long.cost_nanos == cost_nanos(long.tokens - 100, to_nanos("2.5")) + cost_nanos(
+        100, to_nanos("15")
+    )
+    assert short.cost_nanos == cost_nanos(short.tokens - 100, to_nanos("1.25")) + cost_nanos(
+        100, to_nanos("10")
+    )

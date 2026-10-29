@@ -131,7 +131,7 @@
       </p>
       @if (compiled.last_erasure; as erasure) {
         <p class="muted" style="margin: 0.4rem 0 0" data-testid="register-erasure">
-          Retention last ran {{ erasure.ran_at | date: 'yyyy-MM-dd HH:mm:ss' }} —
+          Retention last ran {{ erasure.ran_at | zoned: 'second' }} —
           {{ count(erasure.payloads_cleared) }} payload(s) cleared,
           {{ count(erasure.rows_deleted) }} row(s) deleted.
         </p>

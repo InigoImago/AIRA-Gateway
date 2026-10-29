@@ -451,6 +451,23 @@ graph LR
     style nocap fill:#dc2626,color:#fff
 ```
 
+**Which chain.** The installation keeps one chain per kind of request — text generation,
+embedding, ranking — set on the console's Models page by whoever may write the catalogue, and each
+is empty until somebody sets it: a model that cannot answer is then the caller's error. A use case
+**follows** these chains, keeps **its own** for text generation (its pipeline's fallback models —
+embedding and ranking still follow the installation's), or has **none**, for every kind. The
+candidates are the model the request reached — after routing — followed by that chain, and a chain
+the installation set is no release: a model the use case was not released is passed over at its
+hop like any other that fails a condition.
+
+**A candidate of another kind is never called.** A text request's candidates must declare text
+generation (or speech, for a spoken answer); an embedding's must embed, and give vectors of the width
+the model asked for would have given — its declared width, or the width the caller asked for, with
+the task type and batch it takes — so a stand-in cannot break the shape of the caller's index; a
+ranking's must be rerankers. Vectors from two different models are not comparable even at the same
+width, which is why an embedding chain is empty unless an installation decides otherwise, and why
+the response's `X-AIRA-Model` and the row name the model that gave them.
+
 A candidate that fails a condition is **skipped with its reason kept**, and a candidate that was
 *tried* and failed is kept with what the upstream said. Both reach the audit row's
 `pipeline_decisions` — `step: dispatch`, with the action `skipped` or `failed`, the model and the

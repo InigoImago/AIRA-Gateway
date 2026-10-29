@@ -1,5 +1,5 @@
 {
- "as_of": "2026-10-17",
+ "as_of": "2026-10-28",
  "entries": [
   {
    "declaration": {
@@ -27,14 +27,19 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "deep-research-max-preview-04-2026",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -67,14 +72,19 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "deep-research-preview-04-2026",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -105,14 +115,19 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "gemini-2.5-computer-use-preview-10-2025",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": null,
     "input": "1.25",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": null,
+     "input": "2.5",
+     "output": "15",
+     "threshold": 200000
+    },
     "output": "10"
    },
    "publisher": "google",
@@ -166,6 +181,7 @@
     "cache_write": null,
     "cached_input": "0.03",
     "input": "0.3",
+    "long_context": null,
     "output": "2.5"
    },
    "publisher": "google",
@@ -202,11 +218,12 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.3",
+    "long_context": null,
     "output": "30"
    },
    "publisher": "google",
    "release_date": "2025-08-26",
-   "status": ""
+   "status": "deprecated"
   },
   {
    "declaration": {
@@ -251,6 +268,7 @@
     "cache_write": null,
     "cached_input": "0.01",
     "input": "0.1",
+    "long_context": null,
     "output": "0.4"
    },
    "publisher": "google",
@@ -279,6 +297,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.5",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "google",
@@ -324,14 +343,20 @@
    "knowledge": "2025-01",
    "name": "gemini-2.5-pro",
    "notes": [
-    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning"
    ],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": "0.125",
     "input": "1.25",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.25",
+     "input": "2.5",
+     "output": "15",
+     "threshold": 200000
+    },
     "output": "10"
    },
    "publisher": "google",
@@ -360,6 +385,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "1",
+    "long_context": null,
     "output": "20"
    },
    "publisher": "google",
@@ -414,6 +440,7 @@
     "cache_write": null,
     "cached_input": "0.05",
     "input": "0.5",
+    "long_context": null,
     "output": "3"
    },
    "publisher": "google",
@@ -461,45 +488,11 @@
     "cache_write": null,
     "cached_input": null,
     "input": "2",
+    "long_context": null,
     "output": "120"
    },
    "publisher": "google",
    "release_date": "2026-05-28",
-   "status": ""
-  },
-  {
-   "declaration": {
-    "attachments": {
-     "media_types": {
-      "image/jpeg": null,
-      "image/png": null,
-      "image/webp": null
-     }
-    },
-    "capabilities": [
-     "generate",
-     "attachments"
-    ],
-    "context_window": 131072,
-    "fixed_sampling": false,
-    "max_output_tokens": 32768,
-    "thinking": null
-   },
-   "description": "Nano Banana Pro for higher-fidelity image generation and design-heavy edits",
-   "display_name": "Nano Banana Pro",
-   "family": "gemini-pro",
-   "knowledge": "2025-01",
-   "name": "gemini-3-pro-image-preview",
-   "notes": [],
-   "platform": "generative-language",
-   "prices": {
-    "cache_write": null,
-    "cached_input": null,
-    "input": "2",
-    "output": "120"
-   },
-   "publisher": "google",
-   "release_date": "2025-11-20",
    "status": ""
   },
   {
@@ -539,53 +532,11 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.5",
+    "long_context": null,
     "output": "60"
    },
    "publisher": "google",
    "release_date": "2026-05-28",
-   "status": ""
-  },
-  {
-   "declaration": {
-    "attachments": {
-     "media_types": {
-      "application/pdf": null,
-      "image/jpeg": null,
-      "image/png": null,
-      "image/webp": null
-     }
-    },
-    "capabilities": [
-     "generate",
-     "attachments",
-     "thinking"
-    ],
-    "context_window": 65536,
-    "fixed_sampling": false,
-    "max_output_tokens": 65536,
-    "thinking": {
-     "levels": [
-      "minimal",
-      "high"
-     ],
-     "modes": []
-    }
-   },
-   "description": "Image model for prompt-driven generation, editing, and visual design workflows",
-   "display_name": "Nano Banana 2",
-   "family": "gemini-flash",
-   "knowledge": "2025-01",
-   "name": "gemini-3.1-flash-image-preview",
-   "notes": [],
-   "platform": "generative-language",
-   "prices": {
-    "cache_write": null,
-    "cached_input": null,
-    "input": "0.5",
-    "output": "60"
-   },
-   "publisher": "google",
-   "release_date": "2026-02-26",
    "status": ""
   },
   {
@@ -632,6 +583,7 @@
     "cache_write": null,
     "cached_input": "0.025",
     "input": "0.25",
+    "long_context": null,
     "output": "1.5"
    },
    "publisher": "google",
@@ -675,6 +627,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.25",
+    "long_context": null,
     "output": "30"
    },
    "publisher": "google",
@@ -725,6 +678,7 @@
     "cache_write": null,
     "cached_input": "0.025",
     "input": "0.25",
+    "long_context": null,
     "output": "1.5"
    },
    "publisher": "google",
@@ -772,6 +726,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.75",
+    "long_context": null,
     "output": "4.5"
    },
    "publisher": "google",
@@ -800,6 +755,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "1",
+    "long_context": null,
     "output": "20"
    },
    "publisher": "google",
@@ -845,14 +801,20 @@
    "knowledge": "2025-01",
    "name": "gemini-3.1-pro-preview",
    "notes": [
-    "thinking default 'high' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "thinking default 'high' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning"
    ],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -894,14 +856,19 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "gemini-3.1-pro-preview-customtools",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -956,6 +923,7 @@
     "cache_write": null,
     "cached_input": "0.15",
     "input": "1.5",
+    "long_context": null,
     "output": "9"
    },
    "publisher": "google",
@@ -1004,6 +972,7 @@
     "cache_write": null,
     "cached_input": "0.03",
     "input": "0.3",
+    "long_context": null,
     "output": "2.5"
    },
    "publisher": "google",
@@ -1034,6 +1003,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "3.5",
+    "long_context": null,
     "output": "21"
    },
    "publisher": "google",
@@ -1088,6 +1058,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -1141,6 +1112,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -1194,6 +1166,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -1247,6 +1220,7 @@
     "cache_write": null,
     "cached_input": "0.1",
     "input": "2",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "google",
@@ -1275,6 +1249,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.15",
+    "long_context": null,
     "output": null
    },
    "publisher": "google",
@@ -1313,6 +1288,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.2",
+    "long_context": null,
     "output": null
    },
    "publisher": "google",
@@ -1362,6 +1338,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -1410,10 +1387,65 @@
     "cache_write": null,
     "cached_input": "0.03",
     "input": "0.3",
+    "long_context": null,
     "output": "2.5"
    },
    "publisher": "google",
    "release_date": "2026-07-21",
+   "status": ""
+  },
+  {
+   "declaration": {
+    "attachments": {
+     "media_types": {
+      "application/pdf": null,
+      "image/jpeg": null,
+      "image/png": null,
+      "image/webp": null
+     }
+    },
+    "capabilities": [
+     "generate",
+     "tools",
+     "structured_output",
+     "attachments",
+     "thinking",
+     "prompt_caching"
+    ],
+    "context_window": 1048576,
+    "fixed_sampling": false,
+    "max_output_tokens": 65536,
+    "thinking": {
+     "levels": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "modes": []
+    }
+   },
+   "description": "Reasoning-first Gemini preview for agentic coding and complex problem solving",
+   "display_name": "Gemini Pro Latest",
+   "family": "gemini-pro",
+   "knowledge": "2025-01",
+   "name": "gemini-pro-latest",
+   "notes": [],
+   "platform": "generative-language",
+   "prices": {
+    "cache_write": null,
+    "cached_input": "0.2",
+    "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
+    "output": "12"
+   },
+   "publisher": "google",
+   "release_date": "2026-02-19",
    "status": ""
   },
   {
@@ -1453,6 +1485,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": null,
+    "long_context": null,
     "output": null
    },
    "publisher": "google",
@@ -1496,6 +1529,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": null,
+    "long_context": null,
     "output": null
    },
    "publisher": "google",
@@ -1531,6 +1565,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0",
+    "long_context": null,
     "output": "0"
    },
    "publisher": "google",
@@ -1566,6 +1601,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0",
+    "long_context": null,
     "output": "0"
    },
    "publisher": "google",
@@ -1585,6 +1621,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -1621,6 +1658,7 @@
     "cache_write": "12.5",
     "cached_input": "1",
     "input": "10",
+    "long_context": null,
     "output": "50"
    },
    "publisher": "anthropic",
@@ -1677,6 +1715,7 @@
     "cache_write": "12.5",
     "cached_input": "0.25",
     "input": "10",
+    "long_context": null,
     "output": "50"
    },
    "publisher": "anthropic",
@@ -1696,6 +1735,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -1724,6 +1764,7 @@
     "cache_write": "1.25",
     "cached_input": "0.1",
     "input": "1",
+    "long_context": null,
     "output": "5"
    },
    "publisher": "anthropic",
@@ -1774,14 +1815,20 @@
    "knowledge": "2026-06",
    "name": "claude-haiku-5-5",
    "notes": [
-    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning"
    ],
    "platform": "vertex",
    "prices": {
     "cache_write": "0.125",
     "cached_input": "0.01",
     "input": "0.1",
+    "long_context": {
+     "cache_write": "0.625",
+     "cached_input": "0.05",
+     "input": "0.5",
+     "output": "2.5",
+     "threshold": 100000
+    },
     "output": "0.5"
    },
    "publisher": "anthropic",
@@ -1829,6 +1876,7 @@
     "cache_write": "18.75",
     "cached_input": "1.5",
     "input": "15",
+    "long_context": null,
     "output": "75"
    },
    "publisher": "anthropic",
@@ -1848,6 +1896,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -1881,10 +1930,11 @@
     "cache_write": "6.25",
     "cached_input": "0.5",
     "input": "5",
+    "long_context": null,
     "output": "25"
    },
    "publisher": "anthropic",
-   "release_date": "2025-11-01",
+   "release_date": "2025-11-24",
    "status": ""
   },
   {
@@ -1900,6 +1950,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -1927,14 +1978,14 @@
    "knowledge": "2025-05-31",
    "name": "claude-opus-4-6",
    "notes": [
-    "the thinking ceiling is the output cap less one; the list states none",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "the thinking ceiling is the output cap less one; the list states none"
    ],
    "platform": "vertex",
    "prices": {
     "cache_write": "6.25",
     "cached_input": "0.5",
     "input": "5",
+    "long_context": null,
     "output": "25"
    },
    "publisher": "anthropic",
@@ -1954,6 +2005,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -1977,14 +2029,13 @@
    "family": "claude-opus",
    "knowledge": "2026-01-31",
    "name": "claude-opus-4-7",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "vertex",
    "prices": {
     "cache_write": "6.25",
     "cached_input": "0.5",
     "input": "5",
+    "long_context": null,
     "output": "25"
    },
    "publisher": "anthropic",
@@ -2004,6 +2055,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -2027,14 +2079,13 @@
    "family": "claude-opus",
    "knowledge": "2026-01",
    "name": "claude-opus-4-8",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "vertex",
    "prices": {
     "cache_write": "6.25",
     "cached_input": "0.5",
     "input": "5",
+    "long_context": null,
     "output": "25"
    },
    "publisher": "anthropic",
@@ -2082,6 +2133,7 @@
     "cache_write": "18.75",
     "cached_input": "1.5",
     "input": "15",
+    "long_context": null,
     "output": "75"
    },
    "publisher": "anthropic",
@@ -2101,6 +2153,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -2137,6 +2190,7 @@
     "cache_write": "6.25",
     "cached_input": "0.5",
     "input": "5",
+    "long_context": null,
     "output": "25"
    },
    "publisher": "anthropic",
@@ -2193,6 +2247,7 @@
     "cache_write": "5",
     "cached_input": "0.2",
     "input": "4",
+    "long_context": null,
     "output": "20"
    },
    "publisher": "anthropic",
@@ -2212,6 +2267,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -2240,11 +2296,12 @@
     "cache_write": "3.75",
     "cached_input": "0.3",
     "input": "3",
+    "long_context": null,
     "output": "15"
    },
    "publisher": "anthropic",
    "release_date": "2025-09-29",
-   "status": ""
+   "status": "deprecated"
   },
   {
    "declaration": {
@@ -2259,6 +2316,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -2286,14 +2344,14 @@
    "knowledge": "2025-08-31",
    "name": "claude-sonnet-4-6",
    "notes": [
-    "the thinking ceiling is the output cap less one; the list states none",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "the thinking ceiling is the output cap less one; the list states none"
    ],
    "platform": "vertex",
    "prices": {
     "cache_write": "3.75",
     "cached_input": "0.3",
     "input": "3",
+    "long_context": null,
     "output": "15"
    },
    "publisher": "anthropic",
@@ -2341,6 +2399,7 @@
     "cache_write": "3.75",
     "cached_input": "0.3",
     "input": "3",
+    "long_context": null,
     "output": "15"
    },
    "publisher": "anthropic",
@@ -2360,6 +2419,7 @@
     "capabilities": [
      "generate",
      "tools",
+     "structured_output",
      "attachments",
      "thinking",
      "prompt_caching"
@@ -2397,6 +2457,7 @@
     "cache_write": "2.5",
     "cached_input": "0.2",
     "input": "2",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "anthropic",
@@ -2451,8 +2512,9 @@
    "platform": "vertex",
    "prices": {
     "cache_write": "2.5",
-    "cached_input": "0.2",
+    "cached_input": "0.1",
     "input": "2",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "anthropic",
@@ -2483,6 +2545,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.3",
+    "long_context": null,
     "output": "0.9"
    },
    "publisher": "google",
@@ -2520,6 +2583,7 @@
     "cache_write": null,
     "cached_input": "0.06",
     "input": "0.6",
+    "long_context": null,
     "output": "1.7"
    },
    "publisher": "deepseek-ai",
@@ -2557,6 +2621,7 @@
     "cache_write": null,
     "cached_input": "0.056",
     "input": "0.56",
+    "long_context": null,
     "output": "1.68"
    },
    "publisher": "deepseek-ai",
@@ -2610,6 +2675,7 @@
     "cache_write": null,
     "cached_input": "0.03",
     "input": "0.3",
+    "long_context": null,
     "output": "2.5"
    },
    "publisher": "google",
@@ -2646,6 +2712,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.3",
+    "long_context": null,
     "output": "30"
    },
    "publisher": "google",
@@ -2695,6 +2762,7 @@
     "cache_write": null,
     "cached_input": "0.01",
     "input": "0.1",
+    "long_context": null,
     "output": "0.4"
    },
    "publisher": "google",
@@ -2723,6 +2791,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.5",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "google",
@@ -2768,14 +2837,20 @@
    "knowledge": "2025-01",
    "name": "gemini-2.5-pro",
    "notes": [
-    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "thinking default 'auto' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning"
    ],
    "platform": "vertex",
    "prices": {
     "cache_write": null,
     "cached_input": "0.125",
     "input": "1.25",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.25",
+     "input": "2.5",
+     "output": "15",
+     "threshold": 200000
+    },
     "output": "10"
    },
    "publisher": "google",
@@ -2804,6 +2879,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "1",
+    "long_context": null,
     "output": "20"
    },
    "publisher": "google",
@@ -2858,6 +2934,7 @@
     "cache_write": null,
     "cached_input": "0.05",
     "input": "0.5",
+    "long_context": null,
     "output": "3"
    },
    "publisher": "google",
@@ -2895,6 +2972,7 @@
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": null,
     "output": "120"
    },
    "publisher": "google",
@@ -2939,6 +3017,7 @@
     "cache_write": null,
     "cached_input": "0.05",
     "input": "0.5",
+    "long_context": null,
     "output": "60"
    },
    "publisher": "google",
@@ -2989,6 +3068,7 @@
     "cache_write": null,
     "cached_input": "0.025",
     "input": "0.25",
+    "long_context": null,
     "output": "1.5"
    },
    "publisher": "google",
@@ -2999,6 +3079,7 @@
    "declaration": {
     "attachments": {
      "media_types": {
+      "application/pdf": null,
       "image/jpeg": null,
       "image/png": null,
       "image/webp": null
@@ -3033,6 +3114,7 @@
     "cache_write": null,
     "cached_input": "0.025",
     "input": "0.25",
+    "long_context": null,
     "output": "30"
    },
    "publisher": "google",
@@ -3078,14 +3160,20 @@
    "knowledge": "2025-01",
    "name": "gemini-3.1-pro-preview",
    "notes": [
-    "thinking default 'high' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning",
-    "costs more above a context length \u2014 the list price is the lower tier"
+    "thinking default 'high' proposed \u2014 what the vendor documents the model doing unasked, so it costs nothing more and lets the gateway return the reasoning"
    ],
    "platform": "vertex",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -3127,14 +3215,19 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "gemini-3.1-pro-preview-customtools",
-   "notes": [
-    "costs more above a context length \u2014 the list price is the lower tier"
-   ],
+   "notes": [],
    "platform": "vertex",
    "prices": {
     "cache_write": null,
     "cached_input": "0.2",
     "input": "2",
+    "long_context": {
+     "cache_write": null,
+     "cached_input": "0.4",
+     "input": "4",
+     "output": "18",
+     "threshold": 200000
+    },
     "output": "12"
    },
    "publisher": "google",
@@ -3189,6 +3282,7 @@
     "cache_write": null,
     "cached_input": "0.15",
     "input": "1.5",
+    "long_context": null,
     "output": "9"
    },
    "publisher": "google",
@@ -3237,6 +3331,7 @@
     "cache_write": null,
     "cached_input": "0.03",
     "input": "0.3",
+    "long_context": null,
     "output": "2.5"
    },
    "publisher": "google",
@@ -3291,6 +3386,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -3344,6 +3440,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -3397,6 +3494,7 @@
     "cache_write": null,
     "cached_input": "0.075",
     "input": "0.75",
+    "long_context": null,
     "output": "3.75"
    },
    "publisher": "google",
@@ -3450,6 +3548,7 @@
     "cache_write": null,
     "cached_input": "0.1",
     "input": "2",
+    "long_context": null,
     "output": "10"
    },
    "publisher": "google",
@@ -3478,6 +3577,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.15",
+    "long_context": null,
     "output": null
    },
    "publisher": "google",
@@ -3488,6 +3588,7 @@
    "declaration": {
     "attachments": {
      "media_types": {
+      "application/pdf": null,
       "image/jpeg": null,
       "image/png": null,
       "image/webp": null
@@ -3527,6 +3628,7 @@
     "cache_write": null,
     "cached_input": "0.15",
     "input": "1.5",
+    "long_context": null,
     "output": "30"
    },
    "publisher": "google",
@@ -3565,6 +3667,7 @@
     "cache_write": null,
     "cached_input": "0.015",
     "input": "0.15",
+    "long_context": null,
     "output": "0.6"
    },
    "publisher": "google",
@@ -3602,6 +3705,7 @@
     "cache_write": null,
     "cached_input": "0.06",
     "input": "0.6",
+    "long_context": null,
     "output": "2.2"
    },
    "publisher": "zai-org",
@@ -3639,6 +3743,7 @@
     "cache_write": null,
     "cached_input": "0.1",
     "input": "1",
+    "long_context": null,
     "output": "3.2"
    },
    "publisher": "zai-org",
@@ -3676,6 +3781,7 @@
     "cache_write": null,
     "cached_input": "0.14",
     "input": "1.4",
+    "long_context": null,
     "output": "4.4"
    },
    "publisher": "zai-org",
@@ -3712,6 +3818,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.4",
+    "long_context": null,
     "output": "2"
    },
    "publisher": "google",
@@ -3749,6 +3856,7 @@
     "cache_write": null,
     "cached_input": null,
     "input": "0.1",
+    "long_context": null,
     "output": "0.3"
    },
    "publisher": "google",

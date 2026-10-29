@@ -95,7 +95,7 @@
                   {{ openRow() === row.id ? '▾' : '▸' }}
                 </button>
               </td>
-              <td class="nowrap">{{ row.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
+              <td class="nowrap">{{ row.created_at | zoned }}</td>
               <td data-testid="read-who">{{ who(row) }}</td>
               <td data-testid="read-kind">{{ kindOf(row) }}</td>
               <td>

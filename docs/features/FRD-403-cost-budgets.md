@@ -52,6 +52,9 @@ Budgets could only cap **tokens** and **request counts**. Neither is a cost cont
   so the two cannot disagree. An **embedding** is priced by the input tokens its adapter reports
   (Vertex's `:predict` does); one whose adapter reports none stays unpriced under FR-7. Every
   embedding counted as unpriced until a live round found it, since none reported usage at all.
+  *Widened 2026-10-28 (`FRD-408`):* a model may state a prompt length above which a request — every
+  token of it — is priced at a second set of rates, and the reservation prices its estimated
+  prompt the same way.
 - **FR-6 Enforcement**: pre-dispatch, an exhausted cost limit rejects with
   `429 RESOURCE_EXHAUSTED`, exactly like the count limits.
 - **FR-7 Unpriced traffic**: a request whose model has no price is counted under

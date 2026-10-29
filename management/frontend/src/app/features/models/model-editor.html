@@ -911,6 +911,15 @@
             placeholder="0.075"
             autocomplete="off"
           />
+          @if (hasCapability('rerank')) {
+            <!-- A ranking is booked by the query, not the token (`FRD-147` FR-7): the field's
+                 unit is a million of those, and a price copied off a list per thousand is a
+                 thousand times too small. -->
+            <span class="field__hint" data-testid="rerank-price-unit">
+              For a reranker this is the price of 1,000,000 ranking units — one unit is one query of
+              up to 100 records. A list price of 1 per 1,000 queries is 1000 here.
+            </span>
+          }
           @if (priceSources()['input']; as source) {
             <span class="field__hint" [attr.data-testid]="'price-source-input'">
               From the {{ source.kind === 'billing' ? 'billing account' : 'model reference' }}:
@@ -972,8 +981,10 @@
               It is <strong>more</strong> than ordinary input, not less: Anthropic charges 1.25× for
               a five-minute lifetime and 2× for an hour. This is the number that decides whether
               caching pays at all, because a prefix that is written and never read again costs you a
-              quarter extra. Leave it empty where the provider does not charge for writes (Azure
-              before GPT-5.6, and Gemini's implicit cache).
+              quarter extra. Left empty, a write the provider reports is charged at 1.25 times the
+              input price — Anthropic's rate, and Anthropic is the one provider whose writes the
+              gateway is told of; Gemini's implicit cache and the OpenAI-compatible servers report
+              none, so nothing is charged for them either way.
             </app-info-hint>
           </label>
           <input
@@ -992,6 +1003,85 @@
             </span>
           }
         </div>
+        <!-- A second set of prices for a long prompt (`FRD-408`): the provider bills every token
+             of such a request at it, the answer included, so a figure without it under-states
+             exactly the longest sessions. -->
+        <fieldset class="field" data-testid="long-context-prices">
+          <legend>
+            Above a prompt length
+            <app-info-hint label="Long-prompt prices" testid="long-context-price" [wide]="true">
+              Some providers bill a request whose prompt is longer than a stated length at higher
+              prices — <strong>every</strong> token of it, the answer included: Gemini 2.5 Pro and
+              3.1 Pro above 200,000 tokens, some Claude models above 200,000 or 100,000. The prompt
+              counts everything the provider read, cached and cache-written tokens too. Leave all of
+              this empty where the provider bills alike at every length. An empty cache price here
+              is read like the ones above: a read at this section's input price, a write at 1.25
+              times it.
+            </app-info-hint>
+          </legend>
+          <div class="field">
+            <label for="model-long-threshold">Longest prompt at the prices above (tokens)</label>
+            <input
+              id="model-long-threshold"
+              name="long_context_threshold"
+              type="number"
+              min="1"
+              step="1"
+              data-testid="model-long-threshold"
+              [ngModel]="longContextThreshold()"
+              (ngModelChange)="longContextThreshold.set($event)"
+              placeholder="200000"
+            />
+          </div>
+          <div class="field">
+            <label for="model-long-input">Input price above it {{ perMillion() }}</label>
+            <input
+              id="model-long-input"
+              name="long_context_input_price"
+              data-testid="model-long-input-price"
+              inputmode="decimal"
+              [ngModel]="longInputPrice()"
+              (ngModelChange)="longInputPrice.set($event)"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-long-output">Output price above it {{ perMillion() }}</label>
+            <input
+              id="model-long-output"
+              name="long_context_output_price"
+              data-testid="model-long-output-price"
+              inputmode="decimal"
+              [ngModel]="longOutputPrice()"
+              (ngModelChange)="longOutputPrice.set($event)"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-long-cached">Cached input above it {{ perMillion() }}</label>
+            <input
+              id="model-long-cached"
+              name="long_context_cached_price"
+              data-testid="model-long-cached-price"
+              inputmode="decimal"
+              [ngModel]="longCachedPrice()"
+              (ngModelChange)="longCachedPrice.set($event)"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="model-long-cache-write">Cache write above it {{ perMillion() }}</label>
+            <input
+              id="model-long-cache-write"
+              name="long_context_cache_write_price"
+              data-testid="model-long-cache-write-price"
+              inputmode="decimal"
+              [ngModel]="longCacheWritePrice()"
+              (ngModelChange)="longCacheWritePrice.set($event)"
+              autocomplete="off"
+            />
+          </div>
+        </fieldset>
       }
     </form>
 

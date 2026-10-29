@@ -1,6 +1,6 @@
-import { formatDate } from '@angular/common';
 import { errorMessage } from '../../core/api/error-message';
 import { TestResult, TestRun, TestVerdict } from '../../core/api/models';
+import { DEFAULT_CLOCK, dayIn } from '../../core/ui/clock';
 
 /** How much of a failed request's message is stored on the result. */
 const FAILURE_NOTE_MAX = 240;
@@ -42,9 +42,9 @@ export function describeFailure(error: unknown): string {
  * cannot carry replaced. The run id is in it because a use case is run again and again, and two
  * exports of the same use case must not save as one file and a "(1)".
  */
-export function csvFileName(run: TestRun): string {
+export function csvFileName(run: TestRun, zone: string = DEFAULT_CLOCK): string {
   const useCase = run.use_case.replace(/[^\w.-]/g, '_');
-  // The day as the runs table shows it — local, like every date on this page.
-  const day = formatDate(run.started_at, 'yyyy-MM-dd', 'en-US');
+  // The day as the runs table shows it: on the installation's clock (`FRD-629`).
+  const day = dayIn(new Date(run.started_at), zone);
   return `aira-smoketest_${useCase}_run-${run.id}_${day}.csv`;
 }

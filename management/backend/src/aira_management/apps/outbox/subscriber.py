@@ -57,6 +57,9 @@ _TOPIC_FOR = {
     # Sent when a use case is retired or purged, ending its pipeline on the pipeline's own key
     # (`FRD-607` §4.1b). No view deletes a pipeline: clearing one is a PUT with no steps.
     "pipeline.deleted": PIPELINE_TOPIC,
+    # The installation's fallback chain for one kind of request (`FRD-310`): beside the use cases'
+    # chains, keyed by its kind, which no use case's slug can be (see `_ALSO_IDENTIFIED_BY`).
+    "fallback_chain.upserted": PIPELINE_TOPIC,
     "budget.upserted": BUDGET_TOPIC,
     "budget.deleted": BUDGET_TOPIC,
     "ratelimit.upserted": RATE_LIMIT_TOPIC,
@@ -81,6 +84,8 @@ _ALSO_IDENTIFIED_BY = {
     "membership.removed": "username",
     "use_case_group.granted": "group",
     "use_case_group.revoked": "group",
+    # Keyed `|generate`: a pipeline's key is its use case's slug, and a slug has no `|`.
+    "fallback_chain.upserted": "kind",
 }
 
 

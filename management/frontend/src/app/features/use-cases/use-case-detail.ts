@@ -21,6 +21,7 @@ import {
 } from '../../core/api/models';
 import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
+import { InstallationClock } from '../../core/ui/clock';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { can, strictData as strictDataOf } from '../../core/auth/roles';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -89,6 +90,8 @@ export class UseCaseDetail implements OnInit {
   private readonly router = inject(Router);
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  /** The installation's clock (`FRD-629`): today and this month are its days. */
+  private readonly clock = inject(InstallationClock).zone;
   private readonly destroyRef = inject(DestroyRef);
   protected readonly feedback = inject(PageFeedback);
   /** Passed down to the panels that price things, so the unit reaches them one way. */
@@ -331,8 +334,10 @@ export class UseCaseDetail implements OnInit {
     this.loadRateLimits();
     this.loadRules();
     this.loadWarnings();
-    // Its own load: consumption is a fact about the use case, not about its limits.
-    this.loadConsumption();
+    // Its own load: consumption is a fact about the use case, not about its limits. Once the clock
+    // is known (`FRD-629`): today and this month are the installation's, and `/v1/me` says which.
+    const consumption = () => this.loadConsumption();
+    this.meService.get().subscribe({ next: consumption, error: consumption });
   }
 
   /**
@@ -434,7 +439,7 @@ export class UseCaseDetail implements OnInit {
     this.consumptionReason.set('');
     const load = (preset: 'this-month' | 'today', into: (row: ReportRow | null) => void) => {
       const failed = preset === 'today' ? this.todayFailed : this.monthFailed;
-      const { from, to } = windowFor(preset, new Date());
+      const { from, to } = windowFor(preset, new Date(), this.clock());
       this.service.useCaseReport(this.slug(), from, to).subscribe({
         next: (report) => {
           // `in_scope: false` is an empty report the caller was not entitled to fill; its zeroes
@@ -471,7 +476,7 @@ export class UseCaseDetail implements OnInit {
       this.chartLoading.set(false);
       return;
     }
-    const { from, to } = windowFor(this.chartPeriod(), new Date());
+    const { from, to } = windowFor(this.chartPeriod(), new Date(), this.clock());
     this.chartLoading.set(true);
     this.chartReason.set('');
     // The previous choice's answer is dropped: arriving last, it would draw thirty days under a

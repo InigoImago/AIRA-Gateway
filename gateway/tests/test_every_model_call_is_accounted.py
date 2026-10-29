@@ -38,16 +38,14 @@ BILLABLE = frozenset({"generate", "stream_generate", "embed"})
 #: An entry is `"<module path>:<method>"`. The value is the justification a reader needs — not
 #: decoration: if you cannot write one, the call site is the defect.
 ACCOUNTED: dict[str, str] = {
-    "api/gemini/routes.py:embed": (
-        "The Gemini surface's `:embedContent`. Attribution comes from `require_attribution` on the "
-        "router mount, and the call is inside `Accounting`, which reserves before and settles "
-        "after — so the row and the budget booking happen on every exit including a refusal."
-    ),
-    "api/kira/routes.py:embed": (
-        "The KIRA surface's `/embed`. That surface resolves its own attribution (`FRD-107` §5.3 — "
-        "one membership, or a header, never an unattributed bucket) and shares this file's "
-        "`Accounting`, which is what `test_a_kira_request_is_audited_exactly_like_a_gemini_one` "
-        "compares row for row."
+    "api/serving/prepare.py:embed": (
+        "An embedding, on both surfaces — the Gemini surface's `:embedContent` and the KIRA "
+        "surface's `/embed` — along the embedding's chain (`embed_along_chain`, `FRD-310`). Each "
+        "surface calls it inside `Accounting`, which reserves before and settles after, so the "
+        "row and the budget booking happen on every exit including a refusal, booked as the model "
+        "that gave the vectors. The Gemini surface's attribution comes from `require_attribution` "
+        "on the router mount; the KIRA surface resolves its own (`FRD-107` §5.3), and "
+        "`test_a_kira_request_is_audited_exactly_like_a_gemini_one` compares the two row for row."
     ),
     "api/incidents/thinking_check.py:generate": (
         "The console's *Ask the model* and *Check reachability* buttons (`ADR-0021`, `FRD-609`), "

@@ -455,7 +455,7 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
     expect(config.provider.aira.models['qwen2.5:3b']).toEqual({
       name: 'qwen2.5:3b via AIRA',
       limit: { context: 32768, output: 4096 },
-      cost: { input: 0.1, output: 0.4 },
+      cost: { input: 0.1, output: 0.4, cache_read: 0.1, cache_write: 0.125 },
     });
   });
 

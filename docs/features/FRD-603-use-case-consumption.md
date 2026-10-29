@@ -133,6 +133,9 @@ beside budgets and per-person allowances, which reset at midnight UTC and on the
 month: a local "today" asked the gateway for a different day from the one the counter refusing a
 request was on, and the allowance looked untouched while the gateway refused.
 
+*Changed by `FRD-629`:* the windows and their label are the installation's clock, which every budget
+resets on; UTC where none is set.
+
 ### 5.4 A failed load is not a page failure
 
 Consumption is a figure the panel offers, not something the reader asked for. It reports its own

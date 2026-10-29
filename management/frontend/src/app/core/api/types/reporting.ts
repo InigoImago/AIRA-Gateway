@@ -66,6 +66,12 @@ export interface SeriesPoint extends ReportRow {
 export interface UsageSeries {
   granularity: Granularity;
   split: SeriesSplit;
+  /**
+   * The clock the buckets are on (`FRD-629`): a day is that zone's date, and an hour carries the
+   * zone's offset where it is not UTC — `2026-10-25T02+01:00` — so the hour the clocks go back
+   * twice is two buckets. Absent from a gateway older than the setting, which counted in UTC.
+   */
+  time_zone?: string;
   /** Every bucket of the window, in order, including the quiet ones. */
   buckets: string[];
   /**

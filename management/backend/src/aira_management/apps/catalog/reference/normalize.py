@@ -181,8 +181,7 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
 
     name = name.removesuffix(DEFAULT_VERSION_SUFFIX)
     thinking = with_vendor_default(name, thinking, notes)
-    if cost.get("context_over_200k") or cost.get("tiers"):
-        notes.append("costs more above a context length — the list price is the lower tier")
+    long_context = None if embeds else _long_context(cost, notes)
     if cost.get("input_audio") is not None:
         notes.append("audio input is priced apart")
     return {
@@ -208,9 +207,51 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
             "output": None if embeds else _price(cost.get("output")),
             "cached_input": None if embeds else _price(cost.get("cache_read")),
             "cache_write": None if embeds else _price(cost.get("cache_write")),
+            "long_context": long_context,
         },
         "notes": notes,
     }
+
+
+#: The list's older spelling of a price above a prompt length, which names its length in its key.
+OVER_200K = 200_000
+
+
+def _long_context(cost: dict[str, Any], notes: list[str]) -> dict[str, Any] | None:
+    """The price of a request whose prompt is longer than a stated length (`FRD-408`), or nothing.
+
+    The list states it two ways: `tiers`, each with its length (`tier.size`), and the older
+    `context_over_200k`. The catalog holds one such step, so the first is kept and a list with
+    more says so; a step without both an input and an output price is no price at all.
+    """
+    steps: list[tuple[int, dict[str, Any]]] = []
+    for tier in cost.get("tiers") or []:
+        if not isinstance(tier, dict):
+            continue
+        bound = tier.get("tier") or {}
+        size = _positive(bound.get("size")) if bound.get("type") == "context" else None
+        if size is not None:
+            steps.append((size, tier))
+    over = cost.get("context_over_200k")
+    if not steps and isinstance(over, dict):
+        steps.append((OVER_200K, over))
+    if not steps:
+        return None
+    steps.sort(key=lambda step: step[0])
+    threshold, rates = steps[0]
+    block = {
+        "threshold": threshold,
+        "input": _price(rates.get("input")),
+        "output": _price(rates.get("output")),
+        "cached_input": _price(rates.get("cache_read")),
+        "cache_write": _price(rates.get("cache_write")),
+    }
+    if block["input"] is None or block["output"] is None:
+        notes.append("costs more above a context length — the list gives no price for it")
+        return None
+    if len(steps) > 1:
+        notes.append(f"costs more again above {steps[1][0]:,} tokens — only the first step is kept")
+    return block
 
 
 def drafts(listing: Any) -> list[dict[str, Any]]:

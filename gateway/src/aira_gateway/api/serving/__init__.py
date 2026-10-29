@@ -71,11 +71,11 @@ from aira_gateway.api.serving.pipeline_run import (
 )
 from aira_gateway.api.serving.prepare import (
     Prepared,
+    embed_along_chain,
     fitting,
     prepare_for_dispatch,
     rank,
     requirements_for,
-    resolve_direct_target,
 )
 from aira_gateway.api.serving.refusals import (
     REFUSALS,
@@ -114,6 +114,7 @@ __all__ = [
     "declared_routing",
     "deprecation_headers",
     "elapsed_ms",
+    "embed_along_chain",
     "embedding_bounds",
     "enforce_pre_dispatch",
     "ensure_body_is_encodable",
@@ -136,7 +137,6 @@ __all__ = [
     "released_for",
     "released_models",
     "requirements_for",
-    "resolve_direct_target",
     "resolve_reasoning",
     "run_pipeline",
     "run_pipeline_over_texts",

@@ -113,7 +113,8 @@ Some rules that follow from the table:
   `report.read_all`. The endpoint behind it, `GET /v1beta/register`, answers anybody else for the
   use cases they are in.
 - **Only a catalogued and approved model may be used**, and only `catalog.write` changes the
-  catalogue.
+  catalogue — and the installation's fallback chains, which decide what answers every use case that
+  follows them when a model cannot.
 - **A global anomaly rule** lands on use cases its author cannot otherwise touch, which is why
   writing one is a permission and reading one is everybody's.
 

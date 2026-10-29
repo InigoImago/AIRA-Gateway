@@ -63,6 +63,8 @@ those costs. Picking one would have put an untestable integration in this reposi
 - **FR-5 — `period_ends` is the first moment of the next period**, in UTC — the moment the counter
   resets, which is the second question a refused caller has. Computed beside `period_key`
   (`budgets/keys.py`), so the end and the beginning of a month cannot drift apart.
+  *Changed by `FRD-629`:* on the installation's clock and written with its offset; the answer names the
+  clock (`time_zone`).
 - **FR-6 — `this_period`**: what this caller spent in the current calendar month, from the **audit
   trail**, whether or not a budget exists. A use case nobody capped still answers *what have I
   used* (owner's choice, 2026-10-11) — with no limit beside it, because `limit: null` and

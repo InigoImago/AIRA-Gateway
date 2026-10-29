@@ -18,6 +18,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from aira_common.clock import zone_named
 from aira_management.apps.privacy import notice
 from aira_management.apps.privacy.edition import EDITION
 from aira_management.apps.privacy.models import NoticeAcknowledgement
@@ -57,11 +58,14 @@ def _installation() -> notice.Installation:
 
 def _state(user: Any, version: str, now: dt.datetime) -> dict[str, Any]:
     """Whether ``user`` must acknowledge ``version`` now, and when they last did."""
-    mode = NoticeMode(get_settings().privacy_notice_mode)
+    settings = get_settings()
+    mode = NoticeMode(settings.privacy_notice_mode)
     rows = NoticeAcknowledgement.objects.filter(user=user)
     current = rows.filter(version=version).first()
     last = Acknowledged(current.version, current.last_at) if current else None
-    due = acknowledgement_due(mode, version, last, rows.exists(), now)
+    due = acknowledgement_due(
+        mode, version, last, rows.exists(), now, zone_named(settings.time_zone)
+    )
     return {
         "mode": str(mode),
         "due": str(due) if due else None,

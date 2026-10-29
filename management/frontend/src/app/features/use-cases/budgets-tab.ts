@@ -2,6 +2,7 @@ import { Component, computed, inject, input, output, signal } from '@angular/cor
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { InstallationClock } from '../../core/ui/clock';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { Budget, BudgetScope, BudgetUsage, Membership } from '../../core/api/models';
@@ -72,6 +73,8 @@ export class BudgetsTab {
   readonly changed = output<void>();
 
   private readonly service = inject(UseCaseService);
+  /** The installation's clock (`FRD-629`), which every budget resets on. */
+  protected readonly clock = inject(InstallationClock).zone;
   private readonly confirmService = inject(ConfirmService);
   protected readonly feedback = inject(PageFeedback);
 

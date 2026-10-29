@@ -38,7 +38,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aira_common.logging import get_logger
-from aira_gateway.core.canonical import CanonicalChunk, CanonicalRequest, CanonicalResponse
+from aira_gateway.core.canonical import (
+    CanonicalChunk,
+    CanonicalEmbeddingRequest,
+    CanonicalRequest,
+    CanonicalRerankRequest,
+    CanonicalResponse,
+)
 from aira_gateway.residency import RegionNotAllowed
 from aira_gateway.telemetry import model_call_span
 from aira_gateway.upstreams.base import (
@@ -186,15 +192,15 @@ def _why(error: UpstreamError) -> str:
     return f"{error.message} (HTTP {error.status_code})"
 
 
-async def _candidates(
+async def _candidates[R: (CanonicalRequest, CanonicalEmbeddingRequest, CanonicalRerankRequest)](
     registry: ProviderRegistry,
-    request: CanonicalRequest,
+    request: R,
     fallback_models: tuple[str, ...],
     permits: Permits | None,
     routing_of: RoutingOf | None,
     skipped: list[Skipped],
-    fit: Fit | None = None,
-) -> AsyncIterator[tuple[int, str, Upstream, CanonicalRequest]]:
+    fit: Callable[[R], Awaitable[R | str]] | None = None,
+) -> AsyncIterator[tuple[int, str, Upstream, R]]:
     """Each candidate that may be **called**, in order, with the request addressed — and, given
     ``fit``, fitted — to it.
 
@@ -271,6 +277,70 @@ async def dispatch_with_fallback(
     # passed over, for the refusal's row (`PassedOver`).
     if last_error is not None:
         raise _exhausted(last_error, skipped, failed)
+    raise _exhausted(_nothing_could_serve(skipped, unsayable), skipped, failed)
+
+
+@dataclass(frozen=True, slots=True)
+class Answered[T]:
+    """What a chain for vectors or a ranking produced (`FRD-310`), which candidate produced it
+    (0 is the model asked for), and who was passed over."""
+
+    value: T
+    model: str
+    candidate_index: int
+    skipped: list[Skipped] = field(default_factory=list)
+    failed: list[Attempted] = field(default_factory=list)
+
+
+async def answer_with_fallback[R: (CanonicalEmbeddingRequest, CanonicalRerankRequest), T](
+    registry: ProviderRegistry,
+    request: R,
+    fallback_models: tuple[str, ...],
+    call: Callable[[Upstream, R], Awaitable[T]],
+    *,
+    permits: Permits | None = None,
+    routing_of: RoutingOf | None = None,
+    fit: Callable[[R], Awaitable[R | str]] | None = None,
+) -> Answered[T]:
+    """The chain for an embedding or a ranking: `dispatch_with_fallback`'s walk and outcome, for a
+    request whose answer is not text (`FRD-310`, `ADR-0048`).
+
+    The same candidates, the same conditions, the same record of who was skipped and who failed —
+    one walk (`_candidates`), so a kind of request cannot reach a model the others could not. What
+    differs is ``call``, the one verb the kind has, and ``fit``, which holds a candidate to what
+    the request needs of it: the vector width a caller's index expects, the records a ranking
+    orders.
+    """
+    skipped: list[Skipped] = []
+    failed: list[Attempted] = []
+    last_error: UpstreamError | None = None
+    unsayable: list[DialectUnsupported] = []
+    unaddressable: list[AmbiguousModel | RegionNotAllowed] = []
+
+    async for index, model, provider, addressed in _candidates(
+        registry, request, fallback_models, permits, routing_of, skipped, fit
+    ):
+        try:
+            # ``call`` marks its own attempt where the request is made (`FRD-619`).
+            value = await call(provider, addressed)
+        except UpstreamError as exc:
+            last_error = exc
+            failed.append(Attempted(model, _why(exc)))
+        except (AmbiguousModel, RegionNotAllowed) as exc:
+            unaddressable.append(exc)
+            skipped.append(Skipped(model, str(exc)))
+        except DialectUnsupported as exc:
+            unsayable.append(exc)
+            skipped.append(Skipped(model, str(exc)))
+        else:
+            return Answered(value, model, index, skipped, failed)
+
+    if last_error is not None:
+        raise _exhausted(last_error, skipped, failed)
+    if unaddressable and len(unaddressable) == len(skipped):
+        # Nowhere this installation may send any candidate: the model's own addressing fault, as
+        # these verbs answered it before they had a chain — the predecessor's `MODEL_NOT_FOUND`.
+        raise _exhausted(unaddressable[-1], skipped, failed)
     raise _exhausted(_nothing_could_serve(skipped, unsayable), skipped, failed)
 
 

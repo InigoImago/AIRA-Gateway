@@ -486,3 +486,84 @@ def test_an_insert_that_loses_a_race_is_a_conflict_with_a_sentence(monkeypatch) 
     body = response.json()
     assert body["error"]["code"] == "conflict"
     assert "try again" in body["error"]["message"].lower()
+
+
+# ---- the price above a prompt length (FRD-408) --------------------------------------------
+
+LONG = {
+    **PRICED,
+    "name": "gemini-2.5-pro",
+    "input_price_per_million": "1.25",
+    "output_price_per_million": "10",
+    "long_context_threshold": 200000,
+    "long_context_input_price_per_million": "2.5",
+    "long_context_output_price_per_million": "15",
+    "long_context_cached_input_price_per_million": "0.25",
+}
+
+
+def test_a_price_above_a_prompt_length_is_saved_and_published(captured_events) -> None:
+    """Google bills a Gemini 2.5 Pro request whose prompt is longer than 200 000 tokens at a second
+    set of rates, every token of it. The gateway can only charge what the event carries."""
+    resp = _client(_user("admin", "global-admin")).post(BASE, LONG, format="json")
+
+    assert resp.status_code == 201, resp.json()
+    _, payload = captured_events[-1]
+    assert payload["long_context_threshold"] == 200000
+    assert payload["long_context_input_price_per_million"] == "2.500000"
+    assert payload["long_context_output_price_per_million"] == "15.000000"
+    assert payload["long_context_cached_input_price_per_million"] == "0.250000"
+    assert payload["long_context_cache_write_price_per_million"] is None
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "long_context_threshold",
+        "long_context_input_price_per_million",
+        "long_context_output_price_per_million",
+    ],
+)
+def test_a_price_above_a_prompt_length_needs_its_length_and_both_directions(missing: str) -> None:
+    """Each of the three alone would be read by the gateway as no second set at all — a price the
+    console shows and nothing charges."""
+    body = {key: value for key, value in LONG.items() if key != missing}
+
+    resp = _client(_user("admin", "global-admin")).post(BASE, body, format="json")
+
+    assert resp.status_code == 400
+    assert "length" in str(resp.json())
+
+
+def test_a_cache_price_above_a_length_without_the_length_is_refused() -> None:
+    resp = _client(_user("admin", "global-admin")).post(
+        BASE,
+        {**PRICED, "long_context_cached_input_price_per_million": "0.25"},
+        format="json",
+    )
+
+    assert resp.status_code == 400
+
+
+def test_a_price_above_a_length_needs_the_ordinary_price_first() -> None:
+    """A model priced only for long prompts would count every shorter one as unpriced."""
+    body = {
+        key: value
+        for key, value in LONG.items()
+        if key not in {"input_price_per_million", "output_price_per_million"}
+    }
+
+    resp = _client(_user("admin", "global-admin")).post(BASE, body, format="json")
+
+    assert resp.status_code == 400
+    assert "ordinary" in str(resp.json())
+
+
+def test_clearing_the_length_alone_is_refused_on_an_edit() -> None:
+    """Checked against the model the edit produces, as the ordinary pair is."""
+    client = _client(_user("admin", "global-admin"))
+    client.post(BASE, LONG, format="json")
+
+    resp = client.patch(f"{BASE}gemini-2.5-pro/", {"long_context_threshold": None}, format="json")
+
+    assert resp.status_code == 400

@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { MeService, unitSuffix } from '../../core/api/me.service';
+import { InstallationClock } from '../../core/ui/clock';
 import { Report } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -135,7 +136,10 @@ interface Stat {
 export class ReportingPage implements OnInit {
   private readonly service = inject(UseCaseService);
   protected readonly feedback = inject(PageFeedback);
-  private readonly currency = inject(MeService).currency;
+  private readonly meService = inject(MeService);
+  private readonly currency = this.meService.currency;
+  /** The installation's clock (`FRD-629`): the days a period names, and the label they carry. */
+  private readonly clock = inject(InstallationClock).zone;
   private readonly budgetCard = viewChild(InstallationBudgetCard);
   /** A count as a person reads it, grouped (`12,840`) like every other figure in the console. */
   protected readonly count = displayCount;
@@ -204,7 +208,7 @@ export class ReportingPage implements OnInit {
   });
 
   /** The period the figures are for, as a person reads it: first and last day included. */
-  protected readonly shownPeriod = computed(() => periodText(this.shown()));
+  protected readonly shownPeriod = computed(() => periodText(this.shown(), this.clock()));
 
   /**
    * Whether the gateway narrowed the splits by person to this reader (`people_limited`). The
@@ -298,7 +302,11 @@ export class ReportingPage implements OnInit {
   });
 
   ngOnInit(): void {
-    this.applyPreset('this-month');
+    // Once the clock is known (`FRD-629`): `/v1/me` carries it, and a month asked for before it
+    // answered would be UTC's — a different month for the first hours of every one. Asked either
+    // way, since a failed `/me` leaves the console on UTC rather than without a report.
+    const thisMonth = () => this.applyPreset('this-month');
+    this.meService.get().subscribe({ next: thisMonth, error: thisMonth });
   }
 
   protected applyPreset(preset: Preset): void {
@@ -306,7 +314,7 @@ export class ReportingPage implements OnInit {
     if (preset === 'custom') {
       return; // keep the two date fields; the user is about to change them
     }
-    const { from, to } = windowFor(preset, new Date());
+    const { from, to } = windowFor(preset, new Date(), this.clock());
     this.from.set(from);
     this.to.set(to);
     this.load();

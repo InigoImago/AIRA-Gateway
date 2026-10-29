@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 import pytest
 from aira_management.apps.privacy.schedule import (
@@ -14,6 +15,7 @@ from aira_management.apps.privacy.schedule import (
 )
 
 NOW = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.UTC)
+BERLIN = ZoneInfo("Europe/Berlin")
 V = "2026-09-16.aaaa"
 
 
@@ -56,9 +58,25 @@ def test_an_acknowledgement_of_another_version_is_not_one_of_this_version() -> N
     assert _due(NoticeMode.ONCE, other, any_=True) is DueReason.CHANGED
 
 
-def test_the_month_starts_at_midnight_utc_whatever_zone_the_clock_is_in() -> None:
+def test_on_utc_the_month_starts_at_midnight_utc_whatever_zone_a_moment_is_in() -> None:
     berlin = dt.timezone(dt.timedelta(hours=2))
     # 00:30 on 1 October in Berlin is still 30 September in UTC.
     assert month_start(dt.datetime(2026, 10, 1, 0, 30, tzinfo=berlin)) == dt.datetime(
         2026, 9, 1, tzinfo=dt.UTC
     )
+
+
+def test_the_month_starts_at_midnight_on_the_installations_clock() -> None:
+    """`FRD-629`: the month a reader is asked in is the month their console shows them."""
+    assert month_start(dt.datetime(2026, 9, 30, 22, 30, tzinfo=dt.UTC), BERLIN) == dt.datetime(
+        2026, 9, 30, 22, 0, tzinfo=dt.UTC
+    )
+
+
+def test_monthly_asks_again_by_the_installations_month() -> None:
+    """Acknowledged at 00:30 on 1 October in Berlin: October's, though UTC still says September."""
+    last = Acknowledged(V, dt.datetime(2026, 9, 30, 22, 30, tzinfo=dt.UTC))
+    now = dt.datetime(2026, 10, 16, 10, 0, tzinfo=dt.UTC)
+
+    assert acknowledgement_due(NoticeMode.MONTHLY, V, last, True, now, BERLIN) is None
+    assert acknowledgement_due(NoticeMode.MONTHLY, V, last, True, now) is DueReason.MONTH

@@ -10,6 +10,8 @@ import datetime as dt
 from dataclasses import dataclass
 from enum import StrEnum
 
+from aira_common.clock import month_starts
+
 
 class NoticeMode(StrEnum):
     """``AIRA_PRIVACY_NOTICE_MODE``."""
@@ -43,14 +45,10 @@ class Acknowledged:
     at: dt.datetime
 
 
-def month_start(now: dt.datetime) -> dt.datetime:
-    """Midnight UTC on the first of ``now``'s month.
-
-    UTC rather than a local zone: the boundary moves by the zone's offset — at most a few hours on
-    the first of a month — and one zone for every reader keeps the rule free of configuration.
-    """
-    utc = now.astimezone(dt.UTC)
-    return utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+def month_start(now: dt.datetime, zone: dt.tzinfo = dt.UTC) -> dt.datetime:
+    """Midnight on the first of ``now``'s month on the installation's clock (``zone``,
+    `FRD-629`): the month a reader's console shows them is the month they are asked in."""
+    return month_starts(now, zone)
 
 
 def acknowledgement_due(
@@ -59,6 +57,7 @@ def acknowledgement_due(
     last_of_version: Acknowledged | None,
     acknowledged_any: bool,
     now: dt.datetime,
+    zone: dt.tzinfo = dt.UTC,
 ) -> DueReason | None:
     """Why this person must acknowledge ``version`` now, or ``None`` when they need not.
 
@@ -70,6 +69,6 @@ def acknowledgement_due(
         return DueReason.ALWAYS
     if last_of_version is None or last_of_version.version != version:
         return DueReason.CHANGED if acknowledged_any else DueReason.FIRST
-    if mode is NoticeMode.MONTHLY and last_of_version.at < month_start(now):
+    if mode is NoticeMode.MONTHLY and last_of_version.at < month_start(now, zone):
         return DueReason.MONTH
     return None

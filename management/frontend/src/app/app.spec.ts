@@ -8,6 +8,7 @@ import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
 import { PrivacyNoticeService } from './core/privacy/privacy-notice.service';
 import { privacyNotice } from './core/privacy/privacy-notice.fixture';
+import { InstallationClock } from './core/ui/clock';
 
 const baseMe: Me = {
   subject: 's',
@@ -120,6 +121,19 @@ describe('App', () => {
     expect(el.querySelector('h1')?.textContent).toContain('AIRA Gateway');
     expect(el.textContent).toContain('Use cases');
     expect(el.querySelector('.aira-user')?.textContent).toContain('demo');
+  });
+
+  it('says once, beside the name, which clock every time on the console is on', () => {
+    // `FRD-629`: the installation's clock from `/v1/me`, never the browser's.
+    configure(true);
+    TestBed.inject(InstallationClock).zone.set('Europe/Berlin');
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('[data-testid="installation-clock"]')?.textContent?.trim()).toBe(
+      'Europe/Berlin',
+    );
   });
 
   it('names the role in the header instead of showing tabs that do not respond', () => {

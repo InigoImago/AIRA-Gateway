@@ -1,10 +1,10 @@
-import { DatePipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { PrivacyNotice } from '../../core/api/models';
 import { PrivacyLanguagePicker } from '../../core/privacy/privacy-language-picker';
 import { PrivacyNoticeBody } from '../../core/privacy/privacy-notice-body';
 import { PrivacyNoticeService } from '../../core/privacy/privacy-notice.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /**
  * The privacy notice at its own address (`FRD-625` FR-2): readable at any time, in any language it
@@ -13,7 +13,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
  */
 @Component({
   selector: 'app-privacy-page',
-  imports: [DatePipe, PrivacyLanguagePicker, PrivacyNoticeBody],
+  imports: [ZonedPipe, PrivacyLanguagePicker, PrivacyNoticeBody],
   templateUrl: './privacy-page.html',
   providers: [PageFeedback],
 })

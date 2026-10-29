@@ -255,6 +255,26 @@ describe('buildChart', () => {
     expect(hours.columns[1].label).toBe('14:00');
     expect(hours.columns[1].title).toBe('2026-09-01 14:00 UTC');
   });
+
+  it('keeps an hour’s offset on another clock, so the hour that happens twice reads as two', () => {
+    // The night the clocks go back in Berlin (`FRD-629`): 02:00 summer time, then 02:00 winter time.
+    const twice = ['2026-10-25T02+02:00', '2026-10-25T02+01:00'];
+    const hours = buildChart(
+      series({
+        granularity: 'hour',
+        time_zone: 'Europe/Berlin',
+        buckets: twice,
+        points: twice.map((bucket) => point({ bucket })),
+      }),
+      'cost',
+    );
+
+    expect(hours.columns.map((column) => column.label)).toEqual(['02:00', '02:00']);
+    expect(hours.columns.map((column) => column.title)).toEqual([
+      '2026-10-25 02:00 UTC+02:00',
+      '2026-10-25 02:00 UTC+01:00',
+    ]);
+  });
 });
 
 describe('the palette', () => {

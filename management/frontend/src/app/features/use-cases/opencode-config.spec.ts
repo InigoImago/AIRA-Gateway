@@ -31,7 +31,7 @@ describe('openCodeModel', () => {
     expect(openCodeModel(model(), 'USD')).toEqual({
       name: 'qwen3:0.6b via AIRA',
       limit: { context: 40960, output: 4096 },
-      cost: { input: 0.1, output: 0.4 },
+      cost: { input: 0.1, output: 0.4, cache_read: 0.1, cache_write: 0.125 },
     });
   });
 
@@ -79,7 +79,7 @@ describe('openCodeModel', () => {
     // controls and OpenCode displays.
     const entry = openCodeModel(model(), 'EUR');
 
-    expect(entry.cost).toEqual({ input: 0.1, output: 0.4 });
+    expect(entry.cost).toEqual({ input: 0.1, output: 0.4, cache_read: 0.1, cache_write: 0.125 });
     expect(entry.name).toBe('qwen3:0.6b via AIRA (EUR)');
     // The limits are not money and are unaffected: a context window is a count of tokens.
     expect(entry.limit).toEqual({ context: 40960, output: 4096 });
@@ -99,7 +99,12 @@ describe('openCodeModel', () => {
   });
 
   it('does not care how the currency is spelled', () => {
-    expect(openCodeModel(model(), 'usd').cost).toEqual({ input: 0.1, output: 0.4 });
+    expect(openCodeModel(model(), 'usd').cost).toEqual({
+      input: 0.1,
+      output: 0.4,
+      cache_read: 0.1,
+      cache_write: 0.125,
+    });
   });
 
   it('writes the price before the console has been told the currency, and labels nothing', () => {
@@ -108,7 +113,7 @@ describe('openCodeModel', () => {
     // nothing is called anything — rather than guessing "probably dollars" in the name.
     const entry = openCodeModel(model(), '');
 
-    expect(entry.cost).toEqual({ input: 0.1, output: 0.4 });
+    expect(entry.cost).toEqual({ input: 0.1, output: 0.4, cache_read: 0.1, cache_write: 0.125 });
     expect(entry.name).toBe('qwen3:0.6b via AIRA');
   });
 
@@ -118,7 +123,87 @@ describe('openCodeModel', () => {
     expect(
       openCodeModel(model({ input_price_per_million: '0', output_price_per_million: '0' }), 'USD')
         .cost,
-    ).toEqual({ input: 0, output: 0 });
+    ).toEqual({ input: 0, output: 0, cache_read: 0, cache_write: 0 });
+  });
+});
+
+/**
+ * The cache rates (`FRD-408`). OpenCode subtracts the cached tokens from the input and multiplies
+ * them by `cache_read` — **zero when the key is absent** (read in both generations' binaries). A
+ * file with only `input` and `output` therefore showed every cache hit as free: in an agentic
+ * session, 80–95 % of the prompt, and a session cost a third to a sixth of what the gateway booked.
+ */
+describe('openCodeModel cache rates', () => {
+  it('writes the cache rates the catalogue states', () => {
+    const entry = openCodeModel(
+      model({
+        input_price_per_million: '1.5',
+        output_price_per_million: '9',
+        cached_input_price_per_million: '0.15',
+        cache_write_price_per_million: '1.875',
+      }),
+      'USD',
+    );
+
+    expect(entry.cost).toEqual({ input: 1.5, output: 9, cache_read: 0.15, cache_write: 1.875 });
+  });
+
+  it('writes what the gateway charges where the catalogue states no cache rate', () => {
+    // Never left out — OpenCode would read that as free. A read at the input price and a write at
+    // 1.25 times it, which is how `pricing.Rates` books them; to six places, as the catalogue
+    // stores prices, so 1.25 × 0.3 is 0.375 and not a float's tail.
+    const entry = openCodeModel(
+      model({ input_price_per_million: '0.3', output_price_per_million: '2.5' }),
+      'USD',
+    );
+
+    expect(entry.cost).toEqual({ input: 0.3, output: 2.5, cache_read: 0.3, cache_write: 0.375 });
+  });
+
+  it('writes the price above 200,000 prompt tokens where the catalogue has that step', () => {
+    const entry = openCodeModel(
+      model({
+        input_price_per_million: '1.25',
+        output_price_per_million: '10',
+        cached_input_price_per_million: '0.125',
+        long_context_threshold: 200000,
+        long_context_input_price_per_million: '2.5',
+        long_context_output_price_per_million: '15',
+        long_context_cached_input_price_per_million: '0.25',
+      }),
+      'USD',
+    );
+
+    expect(entry.cost?.context_over_200k).toEqual({
+      input: 2.5,
+      output: 15,
+      cache_read: 0.25,
+      cache_write: 3.125,
+    });
+  });
+
+  it('writes no step at another length, which OpenCode cannot state', () => {
+    // A step at 100,000 tokens written as `context_over_200k` would charge requests between the two
+    // lengths at the lower price and claim the step was configured.
+    const entry = openCodeModel(
+      model({
+        long_context_threshold: 100000,
+        long_context_input_price_per_million: '0.5',
+        long_context_output_price_per_million: '2.5',
+      }),
+      'USD',
+    );
+
+    expect(entry.cost?.context_over_200k).toBeUndefined();
+  });
+
+  it('writes no step that has half a price', () => {
+    const entry = openCodeModel(
+      model({ long_context_threshold: 200000, long_context_input_price_per_million: '2.5' }),
+      'USD',
+    );
+
+    expect(entry.cost?.context_over_200k).toBeUndefined();
   });
 });
 

@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, computed, inject, input, model, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiKey, CatalogModel, IssuedApiKey } from '../../core/api/models';
@@ -13,6 +12,7 @@ import { saveBlob } from '../../core/ui/save-blob';
 import { ANOTHER_MEMBER, WITHHELD_REASON } from '../../core/ui/withheld';
 import { openCodeModel } from './opencode-config';
 import { OPENCODE_BUDGET_PLUGIN } from './opencode-plugin.generated';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /** The model an OpenCode configuration names when nothing is released to the use case at all. */
 const FALLBACK_OPENCODE_MODEL = 'qwen2.5:3b';
@@ -25,7 +25,7 @@ const FALLBACK_OPENCODE_MODEL = 'qwen2.5:3b';
  */
 @Component({
   selector: 'app-api-keys-panel',
-  imports: [DatePipe, FormsModule, InfoHint, Modal],
+  imports: [ZonedPipe, FormsModule, InfoHint, Modal],
   templateUrl: './api-keys-panel.html',
 })
 export class ApiKeysPanel {

@@ -132,32 +132,44 @@
 
             <div class="node node--dispatch">Dispatch</div>
 
-            @for (model of config().fallback_models; track model) {
+            <!-- What happens when a model cannot answer (`FRD-310`): the use case's own chain, the
+                 installation's, or none — one node per model tried, so the order is read off. -->
+            @if (fallbackMode() === 'own') {
+              @for (model of config().fallback_models; track model) {
+                <div class="edge edge--fallback"></div>
+                <div
+                  class="node node--fallback"
+                  (click)="select('fallback')"
+                  (keydown.enter)="select('fallback')"
+                  (keydown.space)="select('fallback'); $event.preventDefault()"
+                  tabindex="0"
+                  role="button"
+                  aria-label="Configure the fallback chain"
+                  data-testid="fallback-node"
+                >
+                  fallback → <code>{{ model }}</code>
+                </div>
+              }
+            } @else {
               <div class="edge edge--fallback"></div>
               <div
                 class="node node--fallback"
+                [class.node--muted]="fallbackMode() === 'none' || !installationText()"
                 (click)="select('fallback')"
                 (keydown.enter)="select('fallback')"
                 (keydown.space)="select('fallback'); $event.preventDefault()"
                 tabindex="0"
                 role="button"
-                aria-label="Configure the fallback chain"
+                aria-label="Configure the fallback"
+                data-testid="fallback-node"
               >
-                fallback → <code>{{ model }}</code>
-              </div>
-            }
-            @if (config().fallback_models.length === 0) {
-              <div class="edge edge--fallback"></div>
-              <div
-                class="node node--fallback node--muted"
-                (click)="select('fallback')"
-                (keydown.enter)="select('fallback')"
-                (keydown.space)="select('fallback'); $event.preventDefault()"
-                tabindex="0"
-                role="button"
-                aria-label="Add a fallback model"
-              >
-                + add fallback
+                @if (fallbackMode() === 'none') {
+                  no fallback
+                } @else if (installationText(); as chain) {
+                  fallback → installation's: <code>{{ chain }}</code>
+                } @else {
+                  fallback: the installation's — none set
+                }
               </div>
             }
 
@@ -176,7 +188,7 @@
         <app-pipeline-test-panel
           [slug]="slug"
           [config]="config()"
-          [released]="released()"
+          [released]="writers()"
           [mayCall]="mayCall()"
           [mayAuthor]="canManage()"
         />
@@ -252,7 +264,7 @@
                     @if (strayOption(step.config.model); as stored) {
                       <option [value]="stored.value">{{ stored.label }}</option>
                     }
-                    @for (model of released(); track model) {
+                    @for (model of writers(); track model) {
                       <option [value]="model">{{ model }}</option>
                     }
                   </select>
@@ -336,7 +348,7 @@
                   @if (strayOption(step.config.model); as stored) {
                     <option [value]="stored.value">{{ stored.label }}</option>
                   }
-                  @for (model of released(); track model) {
+                  @for (model of writers(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
@@ -430,7 +442,7 @@
                   @if (strayOption(step.config.model); as stored) {
                     <option [value]="stored.value">{{ stored.label }}</option>
                   }
-                  @for (model of released(); track model) {
+                  @for (model of writers(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
@@ -497,7 +509,7 @@
                       @if (strayOption(cat.model); as stored) {
                         <option [value]="stored.value">{{ stored.label }}</option>
                       }
-                      @for (model of released(); track model) {
+                      @for (model of writers(); track model) {
                         <option [value]="model">{{ model }}</option>
                       }
                     </select>
@@ -538,7 +550,7 @@
                   @if (strayOption(step.config.default_model); as stored) {
                     <option [value]="stored.value">{{ stored.label }}</option>
                   }
-                  @for (model of released(); track model) {
+                  @for (model of writers(); track model) {
                     <option [value]="model">{{ model }}</option>
                   }
                 </select>
@@ -548,25 +560,91 @@
               </div>
             }
           } @else if (selected() === 'fallback') {
-            <h3 class="section-title">Fallback chain</h3>
-            <div class="field">
-              <label id="insp-fallback">Fallback models, in the order they are tried</label>
-              <app-multi-select
-                label="Fallback models"
-                testid="fallback-picker"
-                placeholder="type part of a model name…"
-                emptyHint="No model is released to this use case yet."
-                [options]="modelChoices()"
-                [selected]="config().fallback_models"
-                [disabled]="!canManage()"
-                (changed)="setFallbackModels($event)"
-              />
-            </div>
+            <h3 class="section-title">When a model cannot answer</h3>
+            <fieldset class="field" data-testid="fallback-mode" [disabled]="!canManage()">
+              <legend>Fallback for this use case</legend>
+              <label class="checkline">
+                <input
+                  type="radio"
+                  name="fallback-mode"
+                  value="default"
+                  [checked]="fallbackMode() === 'default'"
+                  (change)="setFallbackMode('default')"
+                  data-testid="fallback-mode-default"
+                />
+                The installation's chains
+              </label>
+              <label class="checkline">
+                <input
+                  type="radio"
+                  name="fallback-mode"
+                  value="own"
+                  [checked]="fallbackMode() === 'own'"
+                  (change)="setFallbackMode('own')"
+                  data-testid="fallback-mode-own"
+                />
+                Its own chain for text generation
+              </label>
+              <label class="checkline">
+                <input
+                  type="radio"
+                  name="fallback-mode"
+                  value="none"
+                  [checked]="fallbackMode() === 'none'"
+                  (change)="setFallbackMode('none')"
+                  data-testid="fallback-mode-none"
+                />
+                No fallback — a model that cannot answer is an error
+              </label>
+            </fieldset>
+            @if (fallbackMode() === 'own') {
+              <div class="field">
+                <label id="insp-fallback">Fallback models, in the order they are tried</label>
+                <app-multi-select
+                  label="Fallback models"
+                  testid="fallback-picker"
+                  placeholder="type part of a model name…"
+                  emptyHint="No model released to this use case writes text."
+                  [options]="modelChoices()"
+                  [selected]="config().fallback_models"
+                  [disabled]="!canManage()"
+                  (changed)="setFallbackModels($event)"
+                />
+              </div>
+            }
+            <!-- What each kind of request meets under the choice above — before a save as well. -->
+            @if (effectiveChains(); as chains) {
+              <ul class="stack" data-testid="fallback-effective">
+                @for (entry of chains; track entry.kind) {
+                  <li [attr.data-testid]="'fallback-effective-' + entry.kind">
+                    <strong>{{ kindLabel(entry.kind) }}:</strong>
+                    @if (entry.models.length) {
+                      @for (model of entry.models; track model; let last = $last) {
+                        <code>{{ model }}</code>
+                        @if (notReleasedHere(model)) {
+                          <span class="badge badge--warning">not released here — skipped</span>
+                        }
+                        @if (!last) {
+                          →
+                        }
+                      }
+                    } @else {
+                      no fallback — the error goes to the caller
+                    }
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p class="muted" data-testid="fallback-effective-unknown">
+                The installation's chains could not be loaded; the Models page shows them.
+              </p>
+            }
             <p class="muted">
               Tried in order when the model asked for cannot answer — on a streamed request too, for
-              as long as nothing has reached the caller. Only models released to this use case: a
-              chain that named another would be skipped at every hop anyway, and the request would
-              fail with nothing here saying why.
+              as long as nothing has reached the caller. Every model is still held to this use
+              case's release and to what the request asks of it: one that cannot answer it is passed
+              over by name. The installation's chains are set on the Models page; a chain of this
+              use case's own replaces the one for text generation only.
             </p>
           } @else {
             <p class="muted">Select a node in the graph to configure it.</p>

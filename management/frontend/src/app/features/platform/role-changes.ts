@@ -1,10 +1,10 @@
-import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { PermissionInfo, RoleChange, RoleSnapshot } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ServerTableView } from '../../core/ui/server-table-view';
 import { TablePager } from '../../core/ui/table-pager';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /** One page of the log, as the server pages it: the browser holds that page and nothing more. */
 const PAGE = 25;
@@ -53,7 +53,7 @@ export function summarise(change: RoleChange): ChangeSummary {
  */
 @Component({
   selector: 'app-role-changes',
-  imports: [DatePipe, TablePager],
+  imports: [ZonedPipe, TablePager],
   templateUrl: './role-changes.html',
 })
 export class RoleChanges implements OnInit {

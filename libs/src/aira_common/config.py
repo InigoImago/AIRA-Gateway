@@ -16,6 +16,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from aira_common.clock import DEFAULT_TIME_ZONE, zone_named
 from aira_common.secrets import by_setting, load_secrets
 
 #: The settings a plane may also hold under its own name, `AIRA_<PLANE>_<SETTING>` (`FRD-150`).
@@ -184,6 +185,23 @@ class BaseAiraSettings(BaseSettings):
     this currency — Google's billing account answers in it (`FRD-509`), and a public list price in
     another is converted only at a rate the installation set.
     """
+
+    time_zone: str = DEFAULT_TIME_ZONE
+    """The installation's clock (`FRD-629`): an IANA name such as ``Europe/Berlin``, or ``UTC``.
+
+    Where a budget's day and month begin, a report's days and hours, and the clock every timestamp
+    in the console is printed on. Shared by both planes, because the gateway counts on it and the
+    console shows it: one setting, or a budget would reset at a midnight the console does not show.
+    UTC by default, which is how an installation that sets nothing has always counted. Refused at
+    start-up when the time-zone database does not know it, or when it is ever a part of an hour off
+    UTC (`aira_common.clock`).
+    """
+
+    @field_validator("time_zone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        # The zone's own name, so every answer that states the clock spells it one way.
+        return str(zone_named(value))
 
     store_payloads: bool = True
     """Persist request/response payloads (FRD-103). When False, only metadata is stored.

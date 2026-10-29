@@ -20,7 +20,7 @@ from aira_gateway.core.canonical import CanonicalRequest, Thinking
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.residency import RegionNotAllowed, check_region
 from aira_gateway.thinking import permitted_by
-from aira_gateway.upstreams.base import ProviderRegistry
+from aira_gateway.upstreams.base import ProviderRegistry, can_rank
 
 #: The values that leave a model's sampling as it is: no scaling, the whole distribution. A model
 #: that samples at its own settings accepts these and nothing else (`SamplingAccepted`).
@@ -224,6 +224,55 @@ class ModelReleasedForUseCase:
             f"'{model}' has not been released to use case '{self._use_case}'. An administrator of "
             f"the use case can add it; it currently has {len(self._released)} model(s)."
         )
+
+
+class GenerationSupported:
+    """The model must write text (`FRD-310`).
+
+    A chain's candidates are the operator's names, and a chain written for one kind of request may
+    meet another: an embedding model or a reranker asked for an answer is called with a request it
+    has no answer to, and the vendor's refusal reads as an outage. Passed over by name instead. A
+    spoken answer is `SpeechSupported`'s question, asked of the requests that want one.
+    """
+
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if declaration.can(Capability.GENERATE):
+            return None
+        return "declares no text generation, so it cannot write this request's answer"
+
+
+class EmbeddingSupported:
+    """The model must embed (`FRD-310`): a model that writes text has no vector to give."""
+
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if declaration.can(Capability.EMBED):
+            return None
+        return "declares no embedding, so it has no vector to give"
+
+
+class RankingSupported:
+    """The model must rank, on an adapter that can ask for a ranking (`FRD-310`, `FRD-147`)."""
+
+    def __init__(self, registry: ProviderRegistry, catalog: ModelCatalog) -> None:
+        self._registry = registry
+        self._catalog = catalog
+
+    async def refusal(self, model: str) -> str | None:
+        declaration = await self._catalog.declaration(model)
+        if not declaration.can(Capability.RERANK):
+            return "is not declared a reranker, so it cannot order these records"
+        provider = await adapter_for(self._registry, self._catalog, model)
+        if provider is not None and not can_rank(provider):
+            return "is served by an adapter that cannot rank"
+        return None
 
 
 class ToolsSupported:

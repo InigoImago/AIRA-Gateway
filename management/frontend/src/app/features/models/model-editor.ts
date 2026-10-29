@@ -330,10 +330,17 @@ export class ModelEditor {
 
   protected readonly inputPrice = signal('');
   protected readonly outputPrice = signal('');
-  /** The two cache rates (`FRD-133`). Optional: without them cached tokens are charged the ordinary
-   *  input rate — over-stating a bill, never under-stating it. */
+  /** The two cache rates (`FRD-133`). Optional: without them a cache read is charged the ordinary
+   *  input rate, which can only over-state a bill, and a write 1.25 times it (`FRD-408`). */
   protected readonly cachedPrice = signal('');
   protected readonly cacheWritePrice = signal('');
+  /** The prices of a request whose prompt is longer than `longContextThreshold` tokens (`FRD-408`).
+   *  All empty for a model its provider bills alike at every length. */
+  protected readonly longContextThreshold = signal<number | null>(null);
+  protected readonly longInputPrice = signal('');
+  protected readonly longOutputPrice = signal('');
+  protected readonly longCachedPrice = signal('');
+  protected readonly longCacheWritePrice = signal('');
 
   // ---- standing, beside Save ----------------------------------------------------------------
 
@@ -497,6 +504,11 @@ export class ModelEditor {
     this.outputPrice.set(model.output_price_per_million ?? '');
     this.cachedPrice.set(model.cached_input_price_per_million ?? '');
     this.cacheWritePrice.set(model.cache_write_price_per_million ?? '');
+    this.longContextThreshold.set(model.long_context_threshold ?? null);
+    this.longInputPrice.set(model.long_context_input_price_per_million ?? '');
+    this.longOutputPrice.set(model.long_context_output_price_per_million ?? '');
+    this.longCachedPrice.set(model.long_context_cached_input_price_per_million ?? '');
+    this.longCacheWritePrice.set(model.long_context_cache_write_price_per_million ?? '');
     this.capabilities.set([...(model.capabilities ?? [])]);
     this.publisher.set(model.publisher ?? '');
     this.regions.set(readRegions(model.addressing));
@@ -684,6 +696,9 @@ export class ModelEditor {
       prices.output && `output ${prices.output}`,
       prices.cached_input && `cached input ${prices.cached_input}`,
       prices.cache_write && `cache write ${prices.cache_write}`,
+      prices.long_context &&
+        `above ${prices.long_context.threshold.toLocaleString('en-US')} prompt tokens input ` +
+          `${prices.long_context.input} and output ${prices.long_context.output}`,
     ].filter((part): part is string => !!part);
     // The list's price where the installation counts in its currency; otherwise at the
     // installation's rate, where one is set (`FRD-509`); otherwise said, not filled.
@@ -708,6 +723,17 @@ export class ModelEditor {
       }
       this.priceSources.set(sources);
       if (listed.length) filled.push(conversion ? 'prices (converted)' : 'prices');
+      // The price above a prompt length, from the same list at the same rate (`FRD-408`); a list
+      // with none clears what the form held, as an empty price field above does.
+      const longer = prices.long_context ?? null;
+      const at = (value: string | null) =>
+        !value ? '' : conversion ? convert(value, conversion.rate) : value;
+      this.longContextThreshold.set(longer?.threshold ?? null);
+      this.longInputPrice.set(at(longer?.input ?? null));
+      this.longOutputPrice.set(at(longer?.output ?? null));
+      this.longCachedPrice.set(at(longer?.cached_input ?? null));
+      this.longCacheWritePrice.set(at(longer?.cache_write ?? null));
+      if (longer) filled.push(`the price above ${longer.threshold.toLocaleString('en-US')} tokens`);
     }
     this.fromReference.set({
       source: reference.source,
@@ -1136,7 +1162,40 @@ export class ModelEditor {
     if (!!input !== !!output) {
       return 'Set both the input and the output price, or neither.';
     }
-    return this.capError() ?? this.declarationError();
+    return this.longContextError(!!input) ?? this.capError() ?? this.declarationError();
+  }
+
+  /** The server's rules about the price above a prompt length (`FRD-408`): the length and both
+   *  directions together, and only beside an ordinary price — said where they are typed. */
+  private longContextError(priced: boolean): string | null {
+    const threshold = this.longContextThreshold();
+    const input = this.longInputPrice().trim();
+    const output = this.longOutputPrice().trim();
+    const cached = this.longCachedPrice().trim();
+    const cacheWrite = this.longCacheWritePrice().trim();
+    const problem = [
+      priceProblem('Long-prompt input price', input),
+      priceProblem('Long-prompt output price', output),
+      priceProblem('Long-prompt cached input price', cached),
+      priceProblem('Long-prompt cache write price', cacheWrite),
+    ].find(Boolean);
+    if (problem) return problem;
+    if (threshold === null && !input && !output && !cached && !cacheWrite) return null;
+    if (threshold === null || threshold <= 0 || !input || !output) {
+      return 'A price above a prompt length needs the length and both its input and output price.';
+    }
+    if (!priced) {
+      return 'A price above a prompt length needs the ordinary input and output prices first.';
+    }
+    return null;
+  }
+
+  private clearLongContext(): void {
+    this.longContextThreshold.set(null);
+    this.longInputPrice.set('');
+    this.longOutputPrice.set('');
+    this.longCachedPrice.set('');
+    this.longCacheWritePrice.set('');
   }
 
   /** The server's rules about the caps, said before the save rather than behind the window. */
@@ -1252,6 +1311,11 @@ export class ModelEditor {
         output_price_per_million: amount(this.outputPrice()),
         cached_input_price_per_million: amount(this.cachedPrice()),
         cache_write_price_per_million: amount(this.cacheWritePrice()),
+        long_context_threshold: this.longContextThreshold(),
+        long_context_input_price_per_million: amount(this.longInputPrice()),
+        long_context_output_price_per_million: amount(this.longOutputPrice()),
+        long_context_cached_input_price_per_million: amount(this.longCachedPrice()),
+        long_context_cache_write_price_per_million: amount(this.longCacheWritePrice()),
         capabilities: this.capabilities(),
         publisher: this.publisher().trim(),
         addressing: this.addressing(),
@@ -1310,6 +1374,7 @@ export class ModelEditor {
     this.outputPrice.set('');
     this.cachedPrice.set('');
     this.cacheWritePrice.set('');
+    this.clearLongContext();
     this.capabilities.set([]);
     this.publisher.set('');
     this.regions.set([]);

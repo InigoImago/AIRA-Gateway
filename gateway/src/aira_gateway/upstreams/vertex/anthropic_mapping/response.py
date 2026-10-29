@@ -110,6 +110,25 @@ def usage_of(payload: Any) -> CanonicalUsage:
     )
 
 
+def take_usage(held: dict[str, Any], reported: Any) -> None:
+    """Fold one event's usage into the running totals ``held``: each count it carries **as a
+    number** replaces the one held, and each breakdown replaces its own.
+
+    One reading for the stream and for the message assembled from one: a `message_delta` may
+    repeat the input counts or carry them as `null` (Anthropic's `MessageDeltaUsage` types them
+    nullable), and a `null` taken over a count would book the prompt as free.
+    """
+    if not isinstance(reported, dict):
+        return
+    for field in _USAGE_FIELDS:
+        value = reported.get(field)
+        if isinstance(value, int) and not isinstance(value, bool):
+            held[field] = value
+    for block in _USAGE_BLOCKS:
+        if isinstance(reported.get(block), dict):
+            held[block] = reported[block]
+
+
 def _nested(usage: dict[str, Any], block: str, field: str) -> Any:
     inner = usage.get(block)
     return inner.get(field) if isinstance(inner, dict) else None
@@ -342,15 +361,7 @@ class StreamAssembler:
 
     def _update_usage(self, reported: Any) -> None:
         """Take each count the event carries: it is the total so far, never an increment."""
-        if not isinstance(reported, dict):
-            return
-        for field in _USAGE_FIELDS:
-            value = reported.get(field)
-            if isinstance(value, int) and not isinstance(value, bool):
-                self._usage[field] = value
-        for block in _USAGE_BLOCKS:
-            if isinstance(reported.get(block), dict):
-                self._usage[block] = reported[block]
+        take_usage(self._usage, reported)
 
     def _running(self) -> CanonicalUsage:
         """The usage so far, read exactly as a finished answer's is (`usage_of`)."""
@@ -408,8 +419,9 @@ class MessageAssembler:
         if kind == "message_start":
             message = event.get("message")
             self._message = dict(message) if isinstance(message, dict) else {}
-            usage = self._message.get("usage")
-            self._message["usage"] = dict(usage) if isinstance(usage, dict) else {}
+            held: dict[str, Any] = {}
+            take_usage(held, self._message.get("usage"))
+            self._message["usage"] = held
             return
         index = event.get("index")
         if kind == "content_block_start" and isinstance(index, int):
@@ -424,10 +436,10 @@ class MessageAssembler:
             for field in ("stop_reason", "stop_sequence"):
                 if field in delta:
                     self._message[field] = delta[field]
-            usage = event.get("usage")
-            if isinstance(usage, dict):
-                # Running totals, each the figure so far: replaced, never added (`StreamAssembler`).
-                self._message["usage"].update(usage)
+            # Running totals, each the figure so far: replaced, never added — and only by a figure.
+            # Anthropic's own type allows `null` for the input counts here, and `update` would
+            # have priced a whole prompt at nothing (`take_usage`).
+            take_usage(self._message["usage"], event.get("usage"))
         elif kind == "message_stop":
             self._finished = True
 

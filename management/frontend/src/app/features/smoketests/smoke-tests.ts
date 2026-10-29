@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
@@ -18,6 +17,8 @@ import { saveBlob } from '../../core/ui/save-blob';
 import { QuestionCatalogue } from './question-catalogue';
 import { RatingWindow } from './rating-window';
 import { csvFileName, describeFailure } from './run-results';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
+import { InstallationClock } from '../../core/ui/clock';
 
 /**
  * The question catalogue put to a use case's pipeline, and the answers rated by a person
@@ -36,13 +37,15 @@ import { csvFileName, describeFailure } from './run-results';
  */
 @Component({
   selector: 'app-smoke-tests',
-  imports: [DatePipe, FormsModule, InfoHint, QuestionCatalogue, RatingWindow],
+  imports: [ZonedPipe, FormsModule, InfoHint, QuestionCatalogue, RatingWindow],
   templateUrl: './smoke-tests.html',
   providers: [PageFeedback],
 })
 export class SmokeTests implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  /** The installation's clock (`FRD-629`): an export is named by the day the runs table shows. */
+  private readonly clock = inject(InstallationClock).zone;
   private readonly destroyRef = inject(DestroyRef);
   protected readonly feedback = inject(PageFeedback);
   private readonly ratingWindow = viewChild.required(RatingWindow);
@@ -307,7 +310,7 @@ export class SmokeTests implements OnInit {
     this.exporting.set(run.id);
     this.service.testRunCsv(run.id).subscribe({
       next: (blob) => {
-        saveBlob(blob, csvFileName(run));
+        saveBlob(blob, csvFileName(run, this.clock()));
         this.exporting.set(null);
       },
       error: (response: unknown) => {

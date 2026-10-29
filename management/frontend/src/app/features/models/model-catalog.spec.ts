@@ -1,4 +1,3 @@
-import { formatDate } from '@angular/common';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
@@ -6,6 +5,8 @@ import { Router, provideRouter } from '@angular/router';
 import { Observable, Subject, defer, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
+  FallbackChains,
+  FallbackKind,
   Capability,
   CatalogModel,
   GatewayProvider,
@@ -228,6 +229,11 @@ interface Editor {
   outputPrice: { set: (v: string) => void; (): string };
   cacheWritePrice: { set: (v: string) => void; (): string };
   cachedPrice: { set: (v: string) => void; (): string };
+  longContextThreshold: { set: (v: number | null) => void; (): number | null };
+  longInputPrice: { set: (v: string) => void; (): string };
+  longOutputPrice: { set: (v: string) => void; (): string };
+  longCachedPrice: { set: (v: string) => void; (): string };
+  longCacheWritePrice: { set: (v: string) => void; (): string };
   formError: () => string | null;
   canSave: () => boolean;
   save: () => void;
@@ -295,6 +301,10 @@ function setup(
     reference?: Observable<ModelReference>;
     /** What the gateway's billing lookup answers (`FRD-509`). */
     billing?: Observable<BillingPrices>;
+    /** The installation's fallback chains (`FRD-310`); none set unless a case says. */
+    chains?: Observable<FallbackChains>;
+    /** What saving a chain answers; the chain as saved unless a case says. */
+    saveChain?: (kind: FallbackKind, models: string[]) => Observable<FallbackChains>;
   } = {},
 ) {
   const checked: string[] = [];
@@ -310,6 +320,7 @@ function setup(
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
   const removed: string[] = [];
+  const savedChains: { kind: FallbackKind; models: string[] }[] = [];
   const me: Me = {
     subject: 's',
     username: 'admin',
@@ -411,6 +422,14 @@ function setup(
             saved.push(model);
             return options.save ?? of(model);
           },
+          fallbackChains: () => options.chains ?? of({ generate: [], embed: [], rerank: [] }),
+          saveFallbackChain: (kind: FallbackKind, models: string[]) => {
+            savedChains.push({ kind, models });
+            return (
+              options.saveChain?.(kind, models) ??
+              of({ generate: [], embed: [], rerank: [], [kind]: models })
+            );
+          },
           removeModel: (name: string) => {
             removed.push(name);
             return of(undefined as unknown as void);
@@ -428,6 +447,7 @@ function setup(
     fixture,
     saved,
     removed,
+    savedChains,
     component: fixture.componentInstance as unknown as Page,
     editor,
     /** Rendered for a role that may catalogue; `undefined` for a reader. */
@@ -1134,6 +1154,11 @@ describe('ModelCatalog — finding one among many', () => {
       cached_input_price_per_million: '0.1111',
       cache_write_price_per_million: '2.2222',
       output_price_per_million: '6.7890',
+      long_context_threshold: 200000,
+      long_context_input_price_per_million: '2.4690',
+      long_context_output_price_per_million: '10.1835',
+      long_context_cached_input_price_per_million: '0.2222',
+      long_context_cache_write_price_per_million: '4.4444',
       is_priced: true,
       updated_at: '2026-08-09T10:00:00Z',
       capabilities: ['generate', 'tools'],
@@ -1165,10 +1190,23 @@ describe('ModelCatalog — finding one among many', () => {
       cached_input_price_per_million: { testid: 'cached_input_price', shows: '0.1111' },
       cache_write_price_per_million: { testid: 'cache_write_price', shows: '2.2222' },
       output_price_per_million: { testid: 'output_price', shows: '6.7890' },
+      // The price above a prompt length is one line: its length and its four rates together.
+      long_context_threshold: { testid: 'long_context_price', shows: 'above 200,000 tokens' },
+      long_context_input_price_per_million: { testid: 'long_context_price', shows: '2.4690' },
+      long_context_output_price_per_million: { testid: 'long_context_price', shows: '10.1835' },
+      long_context_cached_input_price_per_million: {
+        testid: 'long_context_price',
+        shows: 'cached input 0.2222',
+      },
+      long_context_cache_write_price_per_million: {
+        testid: 'long_context_price',
+        shows: 'cache write 4.4444',
+      },
       is_priced: null, // said by the two prices, which read "no price" without one
       updated_at: {
         testid: 'updated_at',
-        shows: formatDate('2026-08-09T10:00:00Z', 'yyyy-MM-dd HH:mm', 'en-US'),
+        // On the installation's clock — UTC in this bed — and not on the browser's (`FRD-629`).
+        shows: '2026-08-09 10:00',
       },
       capabilities: { testid: 'capabilities', shows: 'generate, tools' },
       publisher: { testid: 'publisher', shows: 'publisher-y' },
@@ -4141,5 +4179,178 @@ describe('ModelEditor — sampling defaults', () => {
     const help = (harness.testid('help-sampling-defaults')?.textContent ?? '').replace(/\s+/g, ' ');
     expect(help).toContain('own value always wins');
     expect(help).toContain('nothing is sent on anybody');
+  });
+});
+
+describe('ModelEditor — the price above a prompt length (FRD-408)', () => {
+  /** Gemini 2.5 Pro as the list states it: 1.25/10 per million, 2.50/15 above 200,000 tokens. */
+  const LONG: ReferenceEntry = {
+    ...SONNET,
+    name: 'claude-sonnet-9',
+    prices: {
+      input: '1.25',
+      output: '10',
+      cached_input: '0.125',
+      cache_write: null,
+      long_context: {
+        threshold: 200000,
+        input: '2.5',
+        output: '15',
+        cached_input: '0.25',
+        cache_write: null,
+      },
+    },
+  };
+
+  function picked(options: Parameters<typeof setup>[0]) {
+    const harness = setup(options);
+    harness.component.openBrowse();
+    harness.fixture.detectChanges();
+    harness.component.chooseBrowseProvider('vertex');
+    harness.fixture.detectChanges();
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+    harness.editor.editorTab.set('price');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('fills the step from the list, and says it did', () => {
+    const harness = picked({
+      currency: 'USD',
+      reference: of({ ...REFERENCE, entries: [LONG] }),
+    });
+    const { editor } = harness;
+
+    expect(editor.longContextThreshold()).toBe(200000);
+    expect([editor.longInputPrice(), editor.longOutputPrice()]).toEqual(['2.5', '15']);
+    expect([editor.longCachedPrice(), editor.longCacheWritePrice()]).toEqual(['0.25', '']);
+    expect(harness.testid('model-long-input-price')).not.toBeNull();
+    // The banner sits on the first tab, with everything else the list filled in.
+    editor.editorTab.set('identity');
+    harness.fixture.detectChanges();
+    expect(harness.testid('reference-filled')?.textContent).toContain(
+      'the price above 200,000 tokens',
+    );
+  });
+
+  it('converts the step at the rate the other prices are converted at', () => {
+    const harness = picked({
+      currency: 'EUR',
+      reference: of({
+        ...REFERENCE,
+        entries: [LONG],
+        conversion: { from: 'USD', to: 'EUR', rate: '0.92' },
+      }),
+    });
+
+    expect(harness.editor.longInputPrice()).toBe('2.3');
+    expect(harness.editor.longOutputPrice()).toBe('13.8');
+  });
+
+  it('clears a step the form held where the list states none', () => {
+    const harness = setup({ currency: 'USD' });
+    harness.editor.longContextThreshold.set(100000);
+    harness.editor.longInputPrice.set('9');
+    harness.component.openBrowse();
+    harness.fixture.detectChanges();
+    harness.component.chooseBrowseProvider('vertex');
+    harness.fixture.detectChanges();
+
+    harness.click('[data-testid="reference-pick-claude-sonnet-9"]');
+
+    expect(harness.editor.longContextThreshold()).toBeNull();
+    expect(harness.editor.longInputPrice()).toBe('');
+  });
+
+  it('refuses a length without both of its prices, and prices without a length', () => {
+    const { editor } = setup();
+    editor.name.set('m-1');
+    editor.inputPrice.set('1.25');
+    editor.outputPrice.set('10');
+
+    editor.longContextThreshold.set(200000);
+    expect(editor.formError()).toContain('needs the length and both');
+    editor.longInputPrice.set('2.5');
+    expect(editor.formError()).toContain('needs the length and both');
+    editor.longOutputPrice.set('15');
+    expect(editor.formError()).toBeNull();
+    editor.longContextThreshold.set(null);
+    expect(editor.formError()).toContain('needs the length and both');
+  });
+
+  it('refuses a step on a model with no ordinary price', () => {
+    const { editor } = setup();
+    editor.name.set('m-1');
+    editor.longContextThreshold.set(200000);
+    editor.longInputPrice.set('2.5');
+    editor.longOutputPrice.set('15');
+
+    expect(editor.formError()).toContain('ordinary input and output prices first');
+  });
+
+  it('names the step price that is not an amount', () => {
+    const { editor } = setup();
+    editor.name.set('m-1');
+    editor.inputPrice.set('1.25');
+    editor.outputPrice.set('10');
+    editor.longContextThreshold.set(200000);
+    editor.longInputPrice.set('teuer');
+    editor.longOutputPrice.set('15');
+
+    expect(editor.formError()).toContain('Long-prompt input price');
+  });
+
+  it('sends the step with the model, as strings', () => {
+    const harness = setup();
+    const { editor, saved } = harness;
+    editor.name.set('m-1');
+    editor.inputPrice.set('1.25');
+    editor.outputPrice.set('10');
+    editor.longContextThreshold.set(200000);
+    editor.longInputPrice.set('2,5');
+    editor.longOutputPrice.set('15');
+    harness.lookFirst();
+
+    editor.save();
+
+    expect(saved[0]).toMatchObject({
+      long_context_threshold: 200000,
+      long_context_input_price_per_million: '2.5',
+      long_context_output_price_per_million: '15',
+      long_context_cached_input_price_per_million: null,
+      long_context_cache_write_price_per_million: null,
+    });
+  });
+
+  it('loads the step of a stored model into the form', () => {
+    const { editor } = setup();
+
+    editor.edit({
+      name: 'gemini-2.5-pro',
+      input_price_per_million: '1.25',
+      output_price_per_million: '10',
+      long_context_threshold: 200000,
+      long_context_input_price_per_million: '2.5',
+      long_context_output_price_per_million: '15',
+      long_context_cache_write_price_per_million: '3.125',
+    });
+
+    expect(editor.longContextThreshold()).toBe(200000);
+    expect(editor.longCacheWritePrice()).toBe('3.125');
+  });
+
+  it('says in what unit a reranker is priced', () => {
+    const harness = setup();
+    harness.editor.showAdd.set(true);
+    harness.editor.capabilities.set(['rerank']);
+    harness.editor.editorTab.set('price');
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('rerank-price-unit')?.textContent).toContain(
+      'A list price of 1 per 1,000 queries is 1000 here',
+    );
+    harness.editor.capabilities.set(['generate']);
+    harness.fixture.detectChanges();
+    expect(harness.testid('rerank-price-unit')).toBeNull();
   });
 });

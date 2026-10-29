@@ -2,7 +2,10 @@
 
 What a stream's ending means is the same on every surface, so it is decided here, once:
 
-    the upstream broke off      settled at what it had reported, recorded with its failure
+    the upstream broke off      settled at what it had reported — a floor short of the end — and
+                                recorded with its failure; where it had reported nothing and the
+                                connection or this gateway's time limit ended it, not the vendor,
+                                counted at the vendor first, as for a caller who left (`FRD-408`)
     the answer was delivered    served — whether or not the upstream ever reported usage
     the caller left             read to its end first (`ADR-0041`), so the vendor says what the
                                 answer cost; settled at what it reported, recorded as `499`. Cut
@@ -43,12 +46,13 @@ from aira_gateway.api.serving.refusals import (
     stream_failure_status,
 )
 from aira_gateway.audio import AudioDigest
-from aira_gateway.audit import AuditTrail
+from aira_gateway.audit import AuditTrail, UsageBasis
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage, ToolCallPart
 from aira_gateway.explaining import MODEL_HEADER, withhold
 from aira_gateway.pipeline.dispatch import Streaming, passed_over_by
 from aira_gateway.shielding import uninterrupted
 from aira_gateway.state import drains_of, settings_of
+from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -349,6 +353,14 @@ class StreamAccounting:
                 # Spent, and partly delivered: what the upstream reported is booked, and the row
                 # keeps the failure's status rather than claiming the request was served.
                 acct.served(self.model, self.usage, stored, self._tool_calls)
+                if self.finish_reason is None:
+                    # Reported before the end: the vendor's running total, a floor (`UsageBasis`).
+                    acct.usage_basis = UsageBasis.PARTIAL
+            elif _vendor_may_go_on(self._failure):
+                # Nothing reported, and the stream ended by the connection or this gateway's time
+                # limit rather than by the vendor, which goes on answering — and billing — on its
+                # side. Counted there, as a caller who left is, or the request is booked as free.
+                acct.unreported = self._unreported()
             acct.failed(
                 stream_failure_status(self._failure),
                 refusal_outcome(self._failure),
@@ -389,6 +401,16 @@ class StreamAccounting:
             calls=tuple(self._calls),
             region=self._trail.served_region or self._opened_in,
         )
+
+
+def _vendor_may_go_on(failure: Exception) -> bool:
+    """Whether a stream ended by ``failure`` may still be answered — and billed — at the vendor.
+
+    A transport failure carries no status: this gateway stopped waiting, or the connection broke,
+    and either way the vendor was not the one that stopped. An error the vendor sent carries its
+    status, and is the vendor ending the answer itself.
+    """
+    return isinstance(failure, UpstreamError) and failure.status_code is None
 
 
 class AccountedStream(StreamingResponse):

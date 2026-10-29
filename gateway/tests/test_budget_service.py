@@ -343,19 +343,14 @@ async def test_a_pipeline_call_spends_the_request_allowance(sessionmaker) -> Non
     assert (await service.usage("uc", NOW, subject="alice"))[0]["used_requests"] == 2
 
 
-def test_the_period_boundary_is_utc_and_the_console_says_so() -> None:
+def test_the_period_boundary_is_the_installations_clock_and_the_console_says_so() -> None:
     """One clock, and a reader who is told which.
 
-    The counter key is the UTC calendar day or month, which is the right choice for an
-    installation whose callers, models and operators sit in different zones — and it is a couple
-    of hours from the reader's own calendar, in both directions. In central Europe, traffic at
-    00:30 local counts against yesterday, and a monthly budget that ran out keeps refusing for the
-    first hours of the new month.
-
-    Nothing was wrong with the behaviour and nothing said what it was, which is the state in which
-    a figure somebody is accountable for gets misread. Both halves are pinned here: the boundary,
-    so it cannot drift to local time without a decision, and the console's explanation of it, so
-    the decision cannot become silent again.
+    The counter key is the calendar day or month on the installation's clock (`FRD-629`), UTC
+    unless one is set — never the clock of the moment's own zone, and never the reader's calendar.
+    Both halves are pinned here: the boundary, so it cannot drift to whatever zone a moment arrived
+    in, and the console's explanation of it, so the decision cannot become silent again. The zone
+    itself is tested in `test_one_clock_for_the_installation.py`.
     """
     from datetime import UTC, datetime, timedelta, timezone
     from pathlib import Path
@@ -378,7 +373,9 @@ def test_the_period_boundary_is_utc_and_the_console_says_so() -> None:
         / "management/frontend/src/app/features/use-cases/budgets-tab.html"
     ).read_text()
     assert 'testid="budget-period"' in console, "the Period control has no explanation"
-    assert "UTC" in console, "the explanation does not name the clock the counters follow"
+    assert "the installation's clock, <strong>{{ clock() }}</strong>" in console, (
+        "the explanation does not name the clock the counters follow"
+    )
 
 
 async def test_a_budget_of_a_scope_this_build_does_not_know_is_reported_without_figures(

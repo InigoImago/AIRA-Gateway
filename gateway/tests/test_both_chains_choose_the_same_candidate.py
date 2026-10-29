@@ -177,19 +177,23 @@ def test_the_cases_cover_the_answers_and_the_refusals() -> None:
     assert any(withheld for *_, withheld in CASES)
 
 
-def test_neither_chain_builds_its_own_candidate_list() -> None:
+def test_no_chain_builds_its_own_candidate_list() -> None:
     """The structural half, and the one that survives a behaviour nobody thought to parametrise.
 
-    The agreement above holds because both walk `_candidates`. A second list — written inline,
-    looking reasonable — is how the two drifted the first time: the conditions were asked in the
-    chain, and the stream never entered it.
+    The agreement above holds because every chain walks `_candidates`. A second list — written
+    inline, looking reasonable — is how two of them drifted the first time: the conditions were
+    asked in the chain, and the stream never entered it. Three chains walk it now: the answer, the
+    stream, and the one for vectors and rankings (`FRD-310`) — and the count is of every function
+    with a chain's name, so a fourth cannot join without walking it too.
     """
     source = SOURCE.read_text()
     walks = source.count("async for index, model, provider, addressed in _candidates(")
+    chains = source.count("_with_fallback[") + source.count("_with_fallback(\n")
 
-    assert walks == 2, (
-        f"{walks} of the two chains walk the shared candidate list. One that builds its own is "
-        "one that will be given a condition the other has, or lose one the other keeps."
+    assert chains == 3, f"expected the three chains, found {chains}"
+    assert walks == chains, (
+        f"{walks} of the {chains} chains walk the shared candidate list. One that builds its own "
+        "is one that will be given a condition the others have, or lose one they keep."
     )
     # And the walk is the only place the conditions are asked, so neither can be given its own.
     assert source.count("await permits(model)") == 1

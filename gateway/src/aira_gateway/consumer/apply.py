@@ -19,13 +19,16 @@ import structlog
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_common.fallback import FallbackKind
 from aira_common.money import to_nanos
+from aira_common.pipelines import MAX_FALLBACK_MODELS, MAX_MODEL_LENGTH
 from aira_gateway.db.base import Base
 from aira_gateway.db.models import (
     AnomalyRuleRead,
     ApiKey,
     BudgetRead,
     BudgetUsage,
+    FallbackChainRead,
     ModelRead,
     PipelineConfigRead,
     RateLimitRead,
@@ -94,6 +97,13 @@ async def apply_event(session: AsyncSession, event_type: str, payload: dict[str,
 def _price_nanos(value: object) -> int | None:
     """Prices arrive as exact decimal strings; absent means "no price on file"."""
     return None if value is None else to_nanos(str(value))
+
+
+def _tokens(value: object) -> int | None:
+    """A positive whole number of tokens, or ``None`` — absent, or anything that is not one."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def _moment(value: Any) -> datetime | None:
@@ -386,8 +396,32 @@ async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> No
     fields = {
         "steps": payload.get("steps", []),
         "fallback_models": payload.get("fallback_models", []),
+        # Absent from an older Management: kept absent, and read as what such a pipeline meant
+        # (`aira_common.fallback.stored_mode`) rather than as a mode it never chose.
+        "fallback_mode": payload.get("fallback_mode"),
     }
     await _upsert(session, PipelineConfigRead, fields, use_case=payload["use_case"])
+
+
+async def _upsert_fallback_chain(session: AsyncSession, payload: dict[str, Any]) -> None:
+    """The installation's fallback chain for one kind of request, keyed by kind (`FRD-310`).
+
+    Held to the bounds a use case's own chain has (`ADR-0018`): a direct write to the topic is a
+    write to every use case that follows the chain. A kind this build does not know is left alone
+    — it would be a chain no request asks for — and said once in the log.
+    """
+    kind = payload.get("kind")
+    if kind not in {member.value for member in FallbackKind}:
+        _log.warning("fallback_chain_kind_unknown", kind=str(kind)[:32])
+        return
+    names = payload.get("models")
+    models = [
+        name[:MAX_MODEL_LENGTH]
+        for name in (names if isinstance(names, list) else [])
+        if isinstance(name, str) and name
+    ][:MAX_FALLBACK_MODELS]
+    fields = {"models": models, "updated_at": datetime.now(UTC)}
+    await _upsert(session, FallbackChainRead, fields, kind=kind)
 
 
 async def _delete_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
@@ -482,6 +516,21 @@ async def _upsert_model(session: AsyncSession, payload: dict[str, Any]) -> None:
             payload.get("cache_write_price_per_million")
         ),
         "output_price_per_million_nanos": _price_nanos(payload.get("output_price_per_million")),
+        # The prices above a prompt length (`FRD-408`). Absent from an older Management, which has
+        # none to send, and read as none — the ordinary rates at every length, as before.
+        "long_context_threshold": _tokens(payload.get("long_context_threshold")),
+        "long_context_input_price_per_million_nanos": _price_nanos(
+            payload.get("long_context_input_price_per_million")
+        ),
+        "long_context_output_price_per_million_nanos": _price_nanos(
+            payload.get("long_context_output_price_per_million")
+        ),
+        "long_context_cached_input_price_per_million_nanos": _price_nanos(
+            payload.get("long_context_cached_input_price_per_million")
+        ),
+        "long_context_cache_write_price_per_million_nanos": _price_nanos(
+            payload.get("long_context_cache_write_price_per_million")
+        ),
     }
     for field, default in _DECLARATION_DEFAULTS.items():
         if field in payload:
@@ -529,6 +578,7 @@ HANDLERS: dict[str, Handler] = {
     "api_key.revoked": _revoke_api_key,
     "pipeline.upserted": _upsert_pipeline,
     "pipeline.deleted": _delete_pipeline,
+    "fallback_chain.upserted": _upsert_fallback_chain,
     "budget.upserted": _upsert_budget,
     "budget.deleted": _delete_budget,
     "ratelimit.upserted": _upsert_rate_limit,

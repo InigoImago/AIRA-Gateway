@@ -109,11 +109,18 @@ export interface CatalogModel {
   approved?: boolean;
   provider?: string;
   input_price_per_million?: string | null;
-  /** What a cache read and a cache write cost (FRD-133). Absent means "charge the ordinary input
-   *  rate" — never "free", so an undeclared rate can only over-state a bill. */
+  /** What a cache read and a cache write cost (FRD-133). Never "free" when absent: a read is then
+   *  charged at the ordinary input rate and a write at 1.25 times it (`FRD-408`). */
   cached_input_price_per_million?: string | null;
   cache_write_price_per_million?: string | null;
   output_price_per_million?: string | null;
+  /** The longest prompt, in tokens, the prices above apply to (`FRD-408`); a request whose prompt
+   *  is longer is billed — every token of it — at the `long_context_*` prices. */
+  long_context_threshold?: number | null;
+  long_context_input_price_per_million?: string | null;
+  long_context_output_price_per_million?: string | null;
+  long_context_cached_input_price_per_million?: string | null;
+  long_context_cache_write_price_per_million?: string | null;
   is_priced?: boolean;
   updated_at?: string;
 
@@ -336,8 +343,20 @@ export interface ReferenceEntry {
     output: string | null;
     cached_input: string | null;
     cache_write: string | null;
+    /** What a request costs whose prompt is longer than `threshold` tokens (`FRD-408`); absent from
+     *  an older Management, and `null` where the list states no such price. */
+    long_context?: ReferenceLongContext | null;
   };
   notes: string[];
+}
+
+/** The list's price above a prompt length, in the same currency as the entry's other prices. */
+export interface ReferenceLongContext {
+  threshold: number;
+  input: string;
+  output: string;
+  cached_input: string | null;
+  cache_write: string | null;
 }
 
 /** The reference as Management answers it: the drafts, and where and when they come from. */

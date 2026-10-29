@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Suspension } from '../../core/api/models';
@@ -9,6 +8,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
 import { WITHHELD_REASON, targetAtStart, targetName } from '../../core/ui/withheld';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /** Everything about a suspension a person might type to find it. */
 function haystack(row: Suspension): string {
@@ -29,7 +29,7 @@ export function reachOf(row: Suspension): string {
  */
 @Component({
   selector: 'app-suspensions-panel',
-  imports: [DatePipe, FormsModule, InfoHint, TablePager],
+  imports: [ZonedPipe, FormsModule, InfoHint, TablePager],
   templateUrl: './suspensions-panel.html',
   host: { style: 'display: contents' },
 })

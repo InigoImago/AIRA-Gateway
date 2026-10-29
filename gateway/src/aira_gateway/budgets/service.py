@@ -12,8 +12,8 @@ back to read-then-book, which enforces but is racy — refusing all traffic woul
 into an outage, and skipping enforcement would make it free.
 
 A budget may cap cost, tokens or requests (`FRD-403`). Money is integer nano-units throughout.
-Counters are keyed by ``(scope_key, period_key)`` and reset at each UTC day or month
-(`budgets.keys`).
+Counters are keyed by ``(scope_key, period_key)`` and reset at each day or month on the
+installation's clock (`budgets.keys`, `FRD-629`).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 from sqlalchemy import select
@@ -93,10 +93,14 @@ class BudgetService:
         enforce: bool = True,
         ledger: BudgetLedger | None = None,
         degradation: DegradationLog | None = None,
+        zone: tzinfo = UTC,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._enforce = enforce
         self._ledger = ledger
+        #: The installation's clock (`AIRA_TIME_ZONE`, `FRD-629`): where a budget's day and month
+        #: begin, and so which counter a request books against.
+        self._zone = zone
         # `is not None`, not `or`: an empty log is falsy and `or` would discard the caller's.
         self._degradation = degradation if degradation is not None else DegradationLog()
 
@@ -127,7 +131,9 @@ class BudgetService:
             if not binding:
                 return Reservation()
             # Each budget is booked under the period it was admitted in, whenever the request ends.
-            periods = {budget.id: keys.period_key(budget.period, now) for budget in binding}
+            periods = {
+                budget.id: keys.period_key(budget.period, now, self._zone) for budget in binding
+            }
             budgets = [budget for budget in binding if budget.enabled]
             lifted = [budget for budget in binding if not budget.enabled]
             if not self._enforce:
@@ -183,7 +189,7 @@ class BudgetService:
         amounts = reservation.reserved
         for budget in reservation.budgets:
             scope_key = keys.scope_key(budget, reservation.subject)
-            period_key = keys.period_key(budget.period, now)
+            period_key = keys.period_key(budget.period, now, self._zone)
             seed = await read_usage(session, scope_key, period_key)
             breached = await self._ledger.reserve(
                 scope_key,
@@ -200,7 +206,7 @@ class BudgetService:
             )
             if breached:
                 await self.release(reservation)
-                raise keys.exceeded(budget, breached, now, amounts, settled=seed)
+                raise keys.exceeded(budget, breached, now, amounts, settled=seed, zone=self._zone)
             reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
@@ -219,7 +225,9 @@ class BudgetService:
         """
         for budget in budgets:
             usage = await read_usage(
-                session, keys.scope_key(budget, caller), keys.period_key(budget.period, now)
+                session,
+                keys.scope_key(budget, caller),
+                keys.period_key(budget.period, now, self._zone),
             )
             breached = None
             if budget.limit_cost_nanos is not None and usage.cost_nanos >= budget.limit_cost_nanos:
@@ -229,7 +237,7 @@ class BudgetService:
             elif budget.limit_tokens is not None and usage.tokens >= budget.limit_tokens:
                 breached = "tokens"
             if breached:
-                raise keys.exceeded(budget, breached, now)
+                raise keys.exceeded(budget, breached, now, zone=self._zone)
 
     async def refuse_if_exhausted(
         self,
@@ -381,7 +389,7 @@ class BudgetService:
                         session,
                         scope_key=keys.scope_key(budget, subject),
                         period_key=(periods or {}).get(budget.id)
-                        or keys.period_key(budget.period, now),
+                        or keys.period_key(budget.period, now, self._zone),
                         tokens=tokens,
                         requests=requests,
                         cost_nanos=cost_nanos,
@@ -445,7 +453,7 @@ class BudgetService:
             try:
                 await self._ledger.adjust(
                     keys.scope_key(budget, subject),
-                    periods.get(budget.id) or keys.period_key(budget.period, now),
+                    periods.get(budget.id) or keys.period_key(budget.period, now, self._zone),
                     amounts=amounts,
                 )
             except CountersUnavailable:
@@ -540,7 +548,7 @@ class BudgetService:
                     "period": budget.period,
                     # When this counter is replaced by the next one — the moment an exhausted
                     # allowance comes back, which is the second thing a refused caller asks.
-                    "period_ends": keys.period_ends(budget.period, now).isoformat(),
+                    "period_ends": keys.resets_at(budget.period, now, self._zone),
                     "enabled": budget.enabled,
                     "binds": bound_here,
                     # Only a row that applies to the reader can give way to another for them; one
@@ -578,7 +586,7 @@ class BudgetService:
                     out.append(row)
                     continue
                 usage = await read_usage(
-                    session, scope.usage_key, keys.period_key(budget.period, now)
+                    session, scope.usage_key, keys.period_key(budget.period, now, self._zone)
                 )
                 left_cost = _left(budget.limit_cost_nanos, usage.cost_nanos)
                 row.update(

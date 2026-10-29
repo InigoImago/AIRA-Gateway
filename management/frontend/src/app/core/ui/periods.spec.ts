@@ -127,6 +127,52 @@ describe('a window as two period screens hold it', () => {
     expect(periodText({ from: '2026-08-01', to: '2026-09-01' })).toBe(
       '2026-08-01 to 2026-08-31 (UTC)',
     );
+    expect(periodText({ from: '2026-08-01', to: '2026-09-01' }, 'Europe/Berlin')).toBe(
+      '2026-08-01 to 2026-08-31 (Europe/Berlin)',
+    );
     expect(periodText(null)).toBe('');
+  });
+});
+
+/**
+ * On an installation whose clock is not UTC (`FRD-629`): the days are that clock's, because its
+ * midnight is where every counter resets and every bare date the gateway is sent begins.
+ */
+describe('windowFor, on the installation’s clock', () => {
+  const at = (instant: string) => new Date(instant);
+
+  it('asks for the installation’s day just after its midnight', () => {
+    // 00:30 on 13 October in Berlin; UTC still says the 12th.
+    expect(windowFor('today', at('2026-10-12T22:30:00Z'), 'Europe/Berlin')).toEqual({
+      from: '2026-10-13',
+      to: '2026-10-14',
+    });
+  });
+
+  it('starts a month when the installation’s month starts', () => {
+    expect(windowFor('this-month', at('2026-09-30T22:30:00Z'), 'Europe/Berlin')).toEqual({
+      from: '2026-10-01',
+      to: '2026-11-01',
+    });
+    expect(windowFor('last-month', at('2026-09-30T22:30:00Z'), 'Europe/Berlin')).toEqual({
+      from: '2026-09-01',
+      to: '2026-10-01',
+    });
+  });
+
+  it('counts back whole days from the installation’s today, across its clock change', () => {
+    // 00:30 on 26 October in Berlin, on winter time since the night before.
+    expect(windowFor('last-7-days', at('2026-10-25T23:30:00Z'), 'Europe/Berlin')).toEqual({
+      from: '2026-10-20',
+      to: '2026-10-27',
+    });
+  });
+
+  it('is behind UTC west of it', () => {
+    // 20:00 on 31 December in New York is New Year's Day in UTC.
+    expect(windowFor('this-month', at('2027-01-01T01:00:00Z'), 'America/New_York')).toEqual({
+      from: '2026-12-01',
+      to: '2027-01-01',
+    });
   });
 });

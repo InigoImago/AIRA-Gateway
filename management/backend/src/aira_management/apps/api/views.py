@@ -53,6 +53,9 @@ class MeView(APIView):
                 # The unit of every money figure on the console — the installation's
                 # `AIRA_CURRENCY`, never an assumption about what providers price in.
                 "currency": settings.currency,
+                # The installation's clock (`AIRA_TIME_ZONE`, `FRD-629`): every timestamp the
+                # console prints is on it, and every period it names begins on it.
+                "time_zone": settings.time_zone,
                 # Whether to offer the pipeline-tests screen, answered by the permission class
                 # itself (`ADR-0020`): it is an object-level question the roles and slugs above
                 # cannot answer (`FRD-206`).

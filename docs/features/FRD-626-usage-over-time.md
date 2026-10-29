@@ -89,6 +89,9 @@ difference. `FRD-603` needed no new query. This one does.
 - **FR-3 Every bucket of the window, including the empty ones.** A chart assembled only from buckets
   that have rows puts Monday beside Friday and calls it a week. A quiet Sunday is a reading.
 - **FR-4 The bucket is what the clock says**, in UTC, identically on both stores (`ADR-0028`).
+  *Changed by `FRD-629`:* on the installation's clock: the database counts by the UTC hour and the
+  hours are folded into that clock's days and hours; an hour bucket carries its offset where the
+  clock is not UTC, and the answer names the clock (`time_zone`).
 - **FR-5 A granularity too wide to draw is refused by name.** Hours are capped at **192** — eight
   days. A month of them is 744 columns, which at phone width is under half a pixel each; a year is
   8 784. Past the cap it is a `400` naming the cap and the granularity that would work, never a day

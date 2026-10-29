@@ -250,7 +250,7 @@
             </td>
             <td>
               @if (key.expires_at) {
-                {{ key.expires_at | date: 'yyyy-MM-dd' }}
+                {{ key.expires_at | zoned: 'day' }}
               } @else {
                 <!-- Issued before keys were bounded. It still works, and an unbounded credential
                      nobody sees is one nobody replaces. -->

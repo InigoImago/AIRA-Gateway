@@ -31,10 +31,12 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
 import { checkVerdict, detailOf, providerLabel } from './catalog-display';
+import { FallbackChainsCard } from './fallback-chains-card';
 import { GatewayProviders } from './gateway-providers';
 import { ModelEditor } from './model-editor';
 import { ServedModels } from './served-models';
 import { REFERENCE_PLATFORMS, ReferenceModels, ReferencePick } from './reference-models';
+import { InstallationClock } from '../../core/ui/clock';
 
 /** The query parameter that holds the editor's address, and its value for a new model. */
 const EDITOR_PARAM = 'editor';
@@ -50,7 +52,15 @@ const EDITOR_NEW = 'new';
  */
 @Component({
   selector: 'app-model-catalog',
-  imports: [FormsModule, Modal, TablePager, ModelEditor, ServedModels, ReferenceModels],
+  imports: [
+    FormsModule,
+    Modal,
+    TablePager,
+    ModelEditor,
+    ServedModels,
+    ReferenceModels,
+    FallbackChainsCard,
+  ],
   templateUrl: './model-catalog.html',
   providers: [PageFeedback, GatewayProviders],
 })
@@ -64,6 +74,8 @@ export class ModelCatalog implements OnInit {
 
   /** The unit this installation's money figures are in, from the one place that decides it. */
   protected readonly currency = this.meService.currency;
+  /** The installation's clock (`FRD-629`), which a model's last change is shown on. */
+  protected readonly clock = inject(InstallationClock).zone;
   protected readonly perMillion = computed(() => perMillion(this.currency()));
   /** `, in EUR` — joined to the sentence in code, because a template block puts a space before the comma. */
   protected readonly pricedIn = computed(() => (this.currency() ? `, in ${this.currency()}` : ''));

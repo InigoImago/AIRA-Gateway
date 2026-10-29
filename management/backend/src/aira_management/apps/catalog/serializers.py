@@ -73,6 +73,12 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             "output_price_per_million",
             "cached_input_price_per_million",
             "cache_write_price_per_million",
+            # FRD-408
+            "long_context_threshold",
+            "long_context_input_price_per_million",
+            "long_context_output_price_per_million",
+            "long_context_cached_input_price_per_million",
+            "long_context_cache_write_price_per_million",
             "is_priced",
             # FRD-114
             "capabilities",
@@ -208,6 +214,33 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
             validated_data["numeric_id"] = max(highest or 0, self.KIRA_ID_BASE) + 1
         return super().create(validated_data)
 
+    def _check_long_context(self, attrs: dict[str, Any], *, priced: bool) -> None:
+        """The prices above a prompt length (`FRD-408`), refused where they could not be applied.
+
+        A length with no prices, prices with no length, or one direction alone would each be read
+        by the gateway as no second set at all — a price the console shows and nothing charges.
+        And a second set on a model with no first one would price only its longest requests.
+        """
+        threshold = self._effective(attrs, "long_context_threshold")
+        has_input = self._effective(attrs, "long_context_input_price_per_million") is not None
+        has_output = self._effective(attrs, "long_context_output_price_per_million") is not None
+        has_cache = any(
+            self._effective(attrs, f"long_context_{field}_price_per_million") is not None
+            for field in ("cached_input", "cache_write")
+        )
+        if threshold is None and not (has_input or has_output or has_cache):
+            return
+        if threshold is None or not (has_input and has_output):
+            raise serializers.ValidationError(
+                "A price above a prompt length needs the length and both its input and its output "
+                "price — set all three, or none of them."
+            )
+        if not priced:
+            raise serializers.ValidationError(
+                "A price above a prompt length needs the ordinary input and output prices first: "
+                "a model priced only for long prompts would count every shorter one as unpriced."
+            )
+
     def _effective(self, attrs: dict[str, Any], field: str) -> Any:
         """What the field will hold after the save: the incoming value, or the stored one.
 
@@ -227,6 +260,7 @@ class ModelSerializer(serializers.ModelSerializer[Model]):
                 "Set both the input and the output price, or neither — a model priced in only "
                 "one direction would report costs that look complete but are not."
             )
+        self._check_long_context(attrs, priced=has_input)
         # Merged over the instance like `_effective`, but falling back to the field's *empty*
         # value: DRF omits a field with a model default from `attrs`, so a create that never
         # mentions `capabilities` must be validated as `[]`, not refused as `None` (FRD-114 FR-3).

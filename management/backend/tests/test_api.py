@@ -116,6 +116,33 @@ def test_me_states_the_currency_the_installation_is_configured_with(monkeypatch)
     assert get_settings().currency != "CHF", "the override leaked and the assertion proves nothing"
 
 
+def test_me_states_the_installations_clock(monkeypatch) -> None:
+    """The zone every timestamp on the console is printed on (`FRD-629`), from the setting both
+    planes read — not the browser's, which put a request at 00:30 beside a budget day it was not
+    counted in."""
+    private, public = _keypair()
+    _use_fake_verifier(monkeypatch, public)
+    token = _token(private)
+
+    with setting(time_zone="Europe/Berlin"):
+        resp = APIClient().get("/api/v1/me", HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    assert resp.json()["time_zone"] == "Europe/Berlin"
+
+
+def test_every_timestamp_the_api_answers_is_written_in_utc() -> None:
+    """A serializer field answers in Django's `TIME_ZONE`, whose default is America/Chicago."""
+    from django.conf import settings
+    from rest_framework import serializers
+
+    field = serializers.DateTimeField()
+
+    assert settings.TIME_ZONE == "UTC"
+    assert field.to_representation(dt.datetime(2026, 10, 1, 12, 0, tzinfo=dt.UTC)) == (
+        "2026-10-01T12:00:00Z"
+    )
+
+
 def test_provisioning_is_idempotent(monkeypatch) -> None:
     private, public = _keypair()
     _use_fake_verifier(monkeypatch, public)

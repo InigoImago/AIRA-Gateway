@@ -169,12 +169,23 @@ export function severity(budget: any): Severity {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-/** `2026-11-01T00:00:00+00:00` → `1 Nov`. The question that follows a refusal is *when*. */
+/**
+ * `2026-11-01T00:00:00+01:00` → `1 Nov`. The question that follows a refusal is *when*.
+ *
+ * The date **as the gateway wrote it**: it writes the moment on the installation's clock, with that
+ * clock's offset, so its date is the day the installation means. Converted to this machine's zone
+ * or to UTC, a reset at midnight in Berlin would read as the 31st.
+ */
 export function resets(ends: string | null): string | null {
   if (!ends) return null
-  const when = new Date(ends)
-  if (Number.isNaN(when.getTime())) return null
-  return `${when.getUTCDate()} ${MONTHS[when.getUTCMonth()]}`
+  const date = /^(\d{4})-(\d{2})-(\d{2})T/.exec(ends)
+  if (!date || Number.isNaN(new Date(ends).getTime())) return null
+  return `${Number(date[3])} ${MONTHS[Number(date[2]) - 1]}`
+}
+
+/** The clock every period in the answer is on (`time_zone`), or UTC from a gateway older than it. */
+export function clock(budget: any): string {
+  return `${budget?.time_zone ?? ""}`.trim() || "UTC"
 }
 
 /** `1234567` → `1.2M`: a sidebar has 37 columns, and a token count is the widest figure in it. */
@@ -559,7 +570,7 @@ export function Details(props: { host: Host; reading: () => Reading; where: () =
               </text>
             )}
           </For>
-          <text fg={palette().muted}>{"  From the audit trail, in UTC. The limits count what enforcement reads."}</text>
+          <text fg={palette().muted}>{`  From the audit trail, in ${clock(budget())}. The limits count what enforcement reads.`}</text>
         </box>
       </Show>
       <text fg={palette().muted}>{status()}</text>

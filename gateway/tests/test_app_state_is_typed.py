@@ -55,6 +55,7 @@ SERVICES = frozenset(
         "catalog",
         "db_sessionmaker",
         "drains",
+        "fallback_chains",
         "group_grants",
         "log_writer",
         "oidc_validator",
@@ -83,6 +84,7 @@ NOT_A_SERVICE = {
     "db_engine": "the SQLAlchemy engine, handed to a sessionmaker and otherwise disposed of",
     "counters": "may be `None` by design when Redis is absent, and every reader tests for that",
     "degradation": "a log of what is degraded, read for its contents by the readiness probe",
+    "clock": "the installation's time zone, a `tzinfo` fixed at start-up and read for its value",
 }
 
 

@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, shareReplay, tap } from 'rxjs';
+import { InstallationClock } from '../ui/clock';
 import { Me } from './models';
 import { API } from './prefixes';
 
@@ -28,6 +29,7 @@ export function perMillion(currency: string): string {
 @Injectable({ providedIn: 'root' })
 export class MeService {
   private readonly http = inject(HttpClient);
+  private readonly clock = inject(InstallationClock);
 
   /** The account as `/v1/me` answered, or `null` before it has. */
   readonly me = signal<Me | null>(null);
@@ -55,6 +57,10 @@ export class MeService {
         this.me.set(me);
         if (me.currency) {
           this.currency.set(me.currency);
+        }
+        // The installation's clock (`FRD-629`), for every screen that shows a time.
+        if (me.time_zone) {
+          this.clock.zone.set(me.time_zone);
         }
       }),
       shareReplay({ bufferSize: 1, refCount: false }),

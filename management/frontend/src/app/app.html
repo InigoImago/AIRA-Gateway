@@ -10,6 +10,14 @@
   @if (me(); as user) {
     <div class="aira-user">
       <span class="aira-user__name">{{ user.username }}</span>
+      <!-- The clock every time on this console is printed on (`FRD-629`): said once, here, rather
+           than beside each of the hundreds of timestamps it governs. -->
+      <span
+        class="aira-user__clock"
+        data-testid="installation-clock"
+        title="Every time and every period on this console is on this clock"
+        >{{ clock() }}</span
+      >
       <!-- One chip per role. `data-role` carries the slug, so the role is assertable without
            depending on the wording. -->
       @for (role of roleChips(); track role.slug) {

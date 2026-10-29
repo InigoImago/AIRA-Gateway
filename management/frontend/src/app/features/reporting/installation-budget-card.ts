@@ -4,6 +4,7 @@ import { Budget } from '../../core/api/models';
 import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
+import { InstallationClock } from '../../core/ui/clock';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
@@ -29,6 +30,8 @@ const AMOUNT = /^\d+([.,]\d{1,6})?$/;
 export class InstallationBudgetCard implements OnInit {
   private readonly service = inject(UseCaseService);
   private readonly meService = inject(MeService);
+  /** The installation's clock (`FRD-629`), which every budget resets on. */
+  protected readonly clock = inject(InstallationClock).zone;
   private readonly confirmService = inject(ConfirmService);
   /** The page's single banner, not one of this panel's own. */
   protected readonly feedback = inject(PageFeedback);

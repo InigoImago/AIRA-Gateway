@@ -36,11 +36,7 @@
       {{ row.action === 'throttle' ? 'Throttled to ' + row.throttle_rpm + '/min' : 'Blocked' }} by
       <code>{{ row.author }}</code
       >{{ row.reason ? ' — ' + row.reason : '' }}.
-      {{
-        row.expires_at
-          ? 'Until ' + (row.expires_at | date: 'yyyy-MM-dd HH:mm') + '.'
-          : 'Until it is lifted.'
-      }}
+      {{ row.expires_at ? 'Until ' + (row.expires_at | zoned) + '.' : 'Until it is lifted.' }}
     </p>
   }
 
@@ -76,7 +72,7 @@
         <tbody>
           @for (event of events(); track event.id) {
             <tr>
-              <td class="nowrap">{{ event.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
+              <td class="nowrap">{{ event.created_at | zoned }}</td>
               <td>
                 {{ event.rule }}
                 <div class="muted text-sm">{{ event.kind }}</div>

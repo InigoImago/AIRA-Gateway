@@ -1,4 +1,3 @@
-import { formatDate } from '@angular/common';
 import { perMillion } from '../../core/api/me.service';
 import {
   CatalogModel,
@@ -7,9 +6,27 @@ import {
   ModelCheck,
   readRegions,
 } from '../../core/api/models';
+import { DEFAULT_CLOCK, inZone } from '../../core/ui/clock';
 
-/** How a moment is written in this console's tables — the `date` pipe's pattern, in code. */
-const WHEN = 'yyyy-MM-dd HH:mm';
+/**
+ * The price of a request whose prompt is longer than a stated length (`FRD-408`), as one line —
+ * or a dash for a model billed alike at every length.
+ */
+export function longContextOf(model: CatalogModel): string {
+  const threshold = model.long_context_threshold;
+  const input = model.long_context_input_price_per_million;
+  const output = model.long_context_output_price_per_million;
+  if (threshold == null || !input || !output) return '—';
+  const cached = model.long_context_cached_input_price_per_million;
+  const write = model.long_context_cache_write_price_per_million;
+  return [
+    `above ${threshold.toLocaleString('en-US')} tokens: input ${input}, output ${output}`,
+    cached ? `cached input ${cached}` : '',
+    write ? `cache write ${write}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
 
 /** One labelled fact in a model's detail panel. */
 export interface DetailField {
@@ -72,7 +89,11 @@ export function providerLabel(provider: GatewayProvider): string {
  * the regions — printed beside Provider and Platform they read as configuration, and no control
  * offers them. The regions are shown: they are where the model is addressed and its residency claim.
  */
-export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
+export function detailOf(
+  model: CatalogModel,
+  currency = '',
+  zone: string = DEFAULT_CLOCK,
+): DetailField[] {
   const dash = (value: unknown): string =>
     value === null || value === undefined || value === '' ? '—' : String(value);
   const json = (value: unknown): string =>
@@ -133,6 +154,11 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
       label: `Cache write ${perMillion(currency)}`,
       value: dash(model.cache_write_price_per_million),
     },
+    {
+      key: 'long_context_price',
+      label: `Above a prompt length ${perMillion(currency)}`,
+      value: longContextOf(model),
+    },
     { key: 'numeric_id', label: 'KIRA id', value: dash(model.numeric_id) },
     {
       key: 'approved',
@@ -143,7 +169,8 @@ export function detailOf(model: CatalogModel, currency = ''): DetailField[] {
     {
       key: 'updated_at',
       label: 'Last changed',
-      value: model.updated_at ? formatDate(model.updated_at, WHEN, 'en-US') : '—',
+      // On the installation's clock, as every moment on this console (`FRD-629`).
+      value: model.updated_at ? inZone(model.updated_at, zone) : '—',
     },
   ];
 }

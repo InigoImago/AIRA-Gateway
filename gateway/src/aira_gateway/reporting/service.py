@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -157,6 +157,25 @@ def _measures() -> list[Any]:
     ]
 
 
+#: The figures of a series point that are sums, and so add up across the hours folded into one
+#: of the installation's days (`ReportingService._zoned_points`).
+_SUMMED = (
+    "requests",
+    "prompt_tokens",
+    "completion_tokens",
+    "cached_input_tokens",
+    "total_tokens",
+    "cost_nanos",
+    "unpriced_requests",
+    "unmetered_requests",
+    "partial_usage_requests",
+    "failed_requests",
+)
+
+#: What is added up per hour to fold the series: the sums, and the two halves of an average.
+_FOLDED = (*_SUMMED, "latency_sum", "latency_count")
+
+
 def _figures(key: str, row: Any) -> Figures:
     return Figures(
         key=key,
@@ -190,6 +209,7 @@ class ReportingService:
         top: int = series_module.DEFAULT_TOP,
         person: str | None = None,
         people_limited_to: str | None = None,
+        zone: tzinfo = UTC,
     ) -> dict[str, Any]:
         """Totals and breakdowns for ``scope`` over ``[start, end)``.
 
@@ -236,8 +256,10 @@ class ReportingService:
                 )
             }
             report: dict[str, Any] = {
-                "from": start.isoformat(),
-                "to": end.isoformat(),
+                # On the installation's clock (`FRD-629`), the zone named beside them.
+                "from": start.astimezone(zone).isoformat(),
+                "to": end.astimezone(zone).isoformat(),
+                "time_zone": str(zone),
                 "totals": totals.as_dict(),
                 **{f"by_{name}": [row.as_dict() for row in rows] for name, rows in grouped.items()},
                 # One person across credentials (`FRD-606`). `by_member` stays keyed on `subject`,
@@ -257,6 +279,7 @@ class ReportingService:
                     ranked=grouped[split],
                     top=top,
                     person=person,
+                    zone=zone,
                 )
             return report
 
@@ -304,8 +327,10 @@ class ReportingService:
         ranked: list[Figures],
         top: int,
         person: str | None,
+        zone: tzinfo = UTC,
     ) -> dict[str, Any]:
-        """The period bucket by bucket, each bucket split into bands (`FRD-626`).
+        """The period bucket by bucket, each bucket split into bands (`FRD-626`), on the
+        installation's clock (`FRD-629`).
 
         Which bands get a colour is decided from the **breakdown this report already computed** for
         the same window and scope, not from a query of its own: two rankings of one period is two
@@ -324,26 +349,30 @@ class ReportingService:
         )
         kept = [row.key for row in order[:top]]
         folded = len(order) > top
-        bucket = series_module.bucket(granularity)
         band = series_module.band(split, kept)
+        if series_module.is_utc(zone):
+            bucket = series_module.bucket(granularity)
+            statement = self._window(
+                select(bucket.label("bucket"), band.label("key"), *_measures()),
+                scope,
+                start,
+                end,
+                person,
+            )
+            result = await session.execute(statement.group_by(bucket, band).order_by(bucket))
+            points = [
+                {
+                    "bucket": series_module.normalise(row.bucket, granularity),
+                    **_figures(row.key, row).as_dict(),
+                }
+                for row in result
+            ]
+        else:
+            points = await self._zoned_points(
+                session, scope, start, end, granularity, band, person, zone
+            )
 
-        statement = self._window(
-            select(bucket.label("bucket"), band.label("key"), *_measures()),
-            scope,
-            start,
-            end,
-            person,
-        )
-        result = await session.execute(statement.group_by(bucket, band).order_by(bucket))
-        points = [
-            {
-                "bucket": series_module.normalise(row.bucket, granularity),
-                **_figures(row.key, row).as_dict(),
-            }
-            for row in result
-        ]
-
-        buckets = series_module.axis(start, end, granularity)
+        buckets = series_module.axis(start, end, granularity, zone)
         # **Nothing is dropped for being off the axis.** The axis is arithmetic in this process and
         # the labels are text from the database; if they ever disagree, a column appears at the end
         # of the chart rather than a request's spend vanishing from it (`FRD-124`'s rule, one layer
@@ -354,6 +383,7 @@ class ReportingService:
         return {
             "granularity": granularity,
             "split": split,
+            "time_zone": str(zone),
             "buckets": buckets,
             # In the order the bands should be coloured and stacked, biggest first, with the folded
             # tail last — so a filter that changes the band count does not repaint the survivors.
@@ -361,6 +391,66 @@ class ReportingService:
             "folded": folded,
             "points": points,
         }
+
+    async def _zoned_points(
+        self,
+        session: AsyncSession,
+        scope: Scope,
+        start: datetime,
+        end: datetime,
+        granularity: series_module.Granularity,
+        band: Any,
+        person: str | None,
+        zone: tzinfo,
+    ) -> list[dict[str, Any]]:
+        """The series' points on a clock other than UTC: counted by the UTC hour in the database,
+        folded into the zone's days or hours here (`reporting.series`).
+
+        Every figure is a sum, or the largest of the hours' largest, and so folds exactly; the
+        average latency is folded from its sum and its count, never as an average of averages.
+        """
+        hour = series_module.bucket("hour")
+        statement = self._window(
+            select(
+                hour.label("bucket"),
+                band.label("key"),
+                *_measures(),
+                func.coalesce(func.sum(RequestLog.latency_ms), 0).label("latency_sum"),
+                func.count(RequestLog.latency_ms).label("latency_count"),
+            ),
+            scope,
+            start,
+            end,
+            person,
+        )
+        result = await session.execute(statement.group_by(hour, band).order_by(hour))
+        sums: dict[tuple[str, str], dict[str, int]] = {}
+        longest: dict[tuple[str, str], int] = {}
+        for row in result:
+            local = series_module.zoned_label(series_module.utc_hour(row.bucket), granularity, zone)
+            point = sums.setdefault((local, row.key), dict.fromkeys(_FOLDED, 0))
+            for name in _FOLDED:
+                point[name] += int(getattr(row, name) or 0)
+            if row.max_latency_ms is not None:
+                longest[(local, row.key)] = max(
+                    longest.get((local, row.key), 0), int(row.max_latency_ms)
+                )
+        return [
+            {
+                "bucket": local,
+                **Figures(
+                    key=key,
+                    **{name: point[name] for name in _SUMMED},
+                    avg_latency_ms=(
+                        round(point["latency_sum"] / point["latency_count"])
+                        if point["latency_count"]
+                        else None
+                    ),
+                    max_latency_ms=longest.get((local, key)),
+                ).as_dict(),
+            }
+            for (local, key), point in sums.items()
+        ]
 
     async def _by_person(
         self,

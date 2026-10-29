@@ -246,6 +246,18 @@ describe('UsageChart', () => {
     );
   });
 
+  it('names the clock the gateway counted the series on', () => {
+    // A series counted on Berlin's clock is Berlin's days, whatever the browser's zone (`FRD-629`).
+    const { element, find } = setup({
+      series: series({ time_zone: 'Europe/Berlin', points: [point({})] }),
+    });
+
+    expect(find('usage-grain')?.textContent).toContain('(Europe/Berlin)');
+    expect(element.querySelector('[data-testid="usage-days"] thead th')?.textContent?.trim()).toBe(
+      'Day (Europe/Berlin)',
+    );
+  });
+
   it('keeps the money in the day list whichever measure the picture draws', () => {
     // Switching the chart to Requests must not take the money off the list: the money is half the
     // sentence somebody opened this card to read.

@@ -8,9 +8,10 @@ Every guarantee this layer makes is a guarantee about order:
     reservation last                 or it is made against the model the caller *named*
 
 A surface parses its wire format and calls :func:`prepare_for_dispatch`; it never calls the steps
-itself (`test_surface_layering.py`). Verbs that cannot use the dispatch chain — streams and
-embeddings — resolve their adapter through :func:`resolve_direct_target`, which applies the same
-conditions (`test_every_dispatch_applies_the_conditions.py`).
+itself (`test_surface_layering.py`). Every verb then reaches its model along a chain that asks the
+same conditions at every hop — an answer or a stream (`pipeline.dispatch`), vectors
+(:func:`embed_along_chain`) or a ranking (:func:`rank`), each with the chain its kind has
+(`FRD-310`, `test_every_dispatch_applies_the_conditions.py`).
 """
 
 from __future__ import annotations
@@ -19,11 +20,13 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from aira_common.fallback import FallbackKind
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.api.serving.context import (
     catalog_of,
+    declared_routing,
     embedding_bounds,
     use_case_of,
 )
@@ -43,6 +46,13 @@ from aira_gateway.api.serving.controls import (
     refuse_unless_live,
     resolve_reasoning,
 )
+from aira_gateway.api.serving.fallbacks import (
+    embedding_fit,
+    embedding_requirements,
+    fallbacks_for,
+    ranking_fit,
+    ranking_requirements,
+)
 from aira_gateway.api.serving.pipeline_run import (
     reads_each_text,
     run_pipeline,
@@ -61,8 +71,13 @@ from aira_gateway.core.canonical import (
 from aira_gateway.embedding import check_shape as check_embedding_shape
 from aira_gateway.embedding import validate as validate_embedding
 from aira_gateway.explaining import TRAIL_STATE
-from aira_gateway.pipeline.dispatch import Fit, NoCapableModel, Permits, Skipped
+from aira_gateway.pipeline.dispatch import (
+    Fit,
+    Permits,
+    answer_with_fallback,
+)
 from aira_gateway.requirements import (
+    GenerationSupported,
     MediaTypesSupported,
     OutputCapAccepted,
     SamplingAccepted,
@@ -165,6 +180,14 @@ async def prepare_for_dispatch(
             raise GeminiHTTPError(404, f"Model '{canonical.model}' not found.", "NOT_FOUND")
     elif embed is not None:
         embed = await run_pipeline_over_texts(request, embed, trail)
+        # As for generation above: a model nothing serves is a 404 before anything is reserved.
+        declared = await catalog_of(request).declaration(embed.model)
+        if (
+            providers_of(request).provider_for(embed.model, declared.provider, declared.publisher)
+            is None
+        ):
+            raise GeminiHTTPError(404, f"Model '{embed.model}' not found.", "NOT_FOUND")
+        fallbacks = await fallbacks_for(request, FallbackKind.EMBED)
 
     served = canonical.model if canonical is not None else (embed.model if embed else "")
     declaration = await check_declaration(
@@ -240,7 +263,8 @@ async def _prepare_rerank(
         answers_in_tokens=False,
     )
     set_span_attributes({"aira.rerank.records": len(rerank.records)})
-    return Prepared(None, None, (), declaration, held, rerank=rerank)
+    fallbacks = await fallbacks_for(request, FallbackKind.RERANK)
+    return Prepared(None, None, fallbacks, declaration, held, rerank=rerank)
 
 
 async def fitted(
@@ -328,6 +352,10 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     registry = providers_of(request)
     catalog = catalog_of(request)
     checks = await installation_requirements(request)
+    if canonical is not None and canonical.speech is None:
+        # Every candidate writes text: a chain written for one kind of request may name a model
+        # of another, and it is passed over by name rather than called (`FRD-310`).
+        checks.append(GenerationSupported(catalog))
     if canonical is not None and canonical.media_types:
         checks.append(MediaTypesSupported(catalog, canonical.media_types))
     if canonical is not None and canonical.structured:
@@ -353,48 +381,73 @@ async def requirements_for(request: Request, canonical: CanonicalRequest | None)
     return permits(checks)
 
 
-async def resolve_direct_target(
-    request: Request, model: str, canonical: CanonicalRequest | None = None
-) -> Upstream:
-    """The adapter for a verb that **cannot use the dispatch chain**, with every condition applied.
+async def embed_along_chain(
+    request: Request, prepared: Prepared, trail: AuditTrail
+) -> list[list[float]]:
+    """Send a prepared embedding request along its chain (`FRD-310`), and say on ``trail`` which
+    model gave the vectors and who was passed over.
 
-    A stream cannot fall back once its first chunk is sent, and an embedding has nothing to fall
-    back to (another model's vector is no substitute). Both must still meet the conditions a chain
-    candidate meets — otherwise unapproved and unreleased models answer 200 on exactly these verbs.
-
-    ``model`` is the model **routing** chose, never the one typed, so the audit names the adapter
-    that actually served. ``canonical`` is ``None`` for an embedding, which selects only the
-    installation-level checks.
+    The chain is empty unless the installation set one and the use case follows it; each candidate
+    meets every condition of the installation and gives vectors of the width the model asked for
+    would have given, or is passed over by name (`fallbacks.embedding_fit`).
     """
-    permits = await requirements_for(request, canonical)
-    refusal = await permits(model)
-    if refusal is not None:
-        # The chain's own exception, so every verb answers and records alike.
-        raise NoCapableModel([Skipped(model, refusal)])
+    asked = prepared.embed
+    assert asked is not None
 
-    declared = await catalog_of(request).declaration(model)
-    provider = providers_of(request).provider_for(model, declared.provider, declared.publisher)
-    if provider is None:
-        raise GeminiHTTPError(404, f"Model '{model}' not found.", "NOT_FOUND")
-    return provider
+    # The one verb, called only on a candidate the chain let through — and marked where it is
+    # made, so each model tried leaves its own model-access record (`FRD-619`).
+    async def embedded(
+        provider: Upstream, embedding: CanonicalEmbeddingRequest
+    ) -> list[list[float]]:
+        with model_call_span(embedding.model, purpose="embed"):
+            return await provider.embed(embedding)
+
+    answered = await answer_with_fallback(
+        providers_of(request),
+        asked,
+        prepared.fallbacks,
+        embedded,
+        permits=await embedding_requirements(request),
+        routing_of=await declared_routing(request),
+        fit=embedding_fit(request, asked),
+    )
+    trail.served_by(answered.model, answered.candidate_index)
+    trail.passed_over(answered.skipped, answered.failed)
+    return answered.value
 
 
-async def rank(request: Request, prepared: Prepared) -> RankedRecords:
-    """Send a prepared ranking request to its model, with every condition a chain applies.
+async def rank(request: Request, prepared: Prepared, trail: AuditTrail) -> RankedRecords:
+    """Send a prepared ranking request along its chain (`FRD-310`), with every condition a chain
+    applies, and say on ``trail`` which model ranked and who was passed over.
 
-    Through `resolve_direct_target`, as an embedding is: another model's ranking is no substitute,
-    so there is nothing to fall back to — and an adapter that cannot rank is refused by name, as a
-    dialect that cannot say a request is (`FRD-147` FR-1).
+    An adapter that cannot rank is refused by name, as a dialect that cannot say a request is
+    (`FRD-147` FR-1) — passed over at a fallback, the refusal where no candidate is left.
     """
     rerank = prepared.rerank
     assert rerank is not None
-    provider = await resolve_direct_target(request, rerank.model)
-    if not can_rank(provider):
-        raise DialectUnsupported(
-            f"Model '{rerank.model}' is served by an adapter that cannot rank."
-        )
-    with model_call_span(rerank.model, purpose="rerank"):
-        return await provider.rerank(rerank)
+
+    # The one verb, called only on a candidate the chain let through. `RankingSupported` has asked
+    # whether its adapter ranks; asked again so a ranking is never sent where nothing can take it.
+    async def ranked(provider: Upstream, records: CanonicalRerankRequest) -> RankedRecords:
+        if not can_rank(provider):
+            raise DialectUnsupported(
+                f"Model '{records.model}' is served by an adapter that cannot rank."
+            )
+        with model_call_span(records.model, purpose="rerank"):
+            return await provider.rerank(records)
+
+    answered = await answer_with_fallback(
+        providers_of(request),
+        rerank,
+        prepared.fallbacks,
+        ranked,
+        permits=await ranking_requirements(request),
+        routing_of=await declared_routing(request),
+        fit=ranking_fit(request),
+    )
+    trail.served_by(answered.model, answered.candidate_index)
+    trail.passed_over(answered.skipped, answered.failed)
+    return answered.value
 
 
 def describe_on_the_span(

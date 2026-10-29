@@ -52,9 +52,29 @@ export interface PipelineStep {
   config: StepConfig;
 }
 
+/** A kind of request the installation keeps a fallback chain for (`FRD-310`). */
+export type FallbackKind = 'generate' | 'embed' | 'rerank';
+
+/** Every kind of request, in the order they are shown. */
+export const FALLBACK_KINDS: readonly FallbackKind[] = ['generate', 'embed', 'rerank'];
+
+/** Each kind's chain: model names in the order they are tried, `[]` for none. */
+export type FallbackChains = Record<FallbackKind, string[]>;
+
+/**
+ * What a use case does when a model cannot answer (`FRD-310`): follow the installation's chains,
+ * keep its own for text generation, or have none — the model it asked for, or the error.
+ */
+export type FallbackMode = 'default' | 'own' | 'none';
+
 export interface PipelineConfig {
   steps: PipelineStep[];
+  /** The use case's own chain for text generation, used under `fallback_mode: 'own'` only. */
   fallback_models: string[];
+  /** Absent from an older Management, which means `own` where a chain is named. */
+  fallback_mode?: FallbackMode;
+  /** The chain each kind of the use case's requests meets, as the server works it out. */
+  fallbacks?: FallbackChains;
   updated_at?: string;
 }
 

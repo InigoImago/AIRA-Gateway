@@ -270,6 +270,7 @@ NOT_PERSONAL_TABLES: dict[tuple[Plane, str], str] = {
     (Plane.MANAGEMENT, "auth_group_permissions"): "which permission a group carries",
     (Plane.MANAGEMENT, "guardian_groupobjectpermission"): "grants to groups, not to people",
     (Plane.MANAGEMENT, "catalog_model"): "the model catalogue",
+    (Plane.MANAGEMENT, "catalog_fallbackchain"): "which models stand in for which kind of request",
     (Plane.MANAGEMENT, "usecases_usecase_allowed_models"): "which models a use case may call",
     (Plane.MANAGEMENT, "pipelines_pipelineconfig"): "pipeline configuration",
     (Plane.MANAGEMENT, "anomalies_anomalyrule"): "rules, not their findings",
@@ -279,6 +280,7 @@ NOT_PERSONAL_TABLES: dict[tuple[Plane, str], str] = {
     (Plane.GATEWAY, "pipeline_configs"): "pipeline configuration",
     (Plane.GATEWAY, "anomaly_rules"): "rules, not their findings",
     (Plane.GATEWAY, "model_catalog"): "the model catalogue",
+    (Plane.GATEWAY, "fallback_chains"): "which models stand in for which kind of request",
     (Plane.GATEWAY, "roles"): "what a role may do",
     (Plane.GATEWAY, "retention_runs"): "counts of what a retention pass removed",
 }

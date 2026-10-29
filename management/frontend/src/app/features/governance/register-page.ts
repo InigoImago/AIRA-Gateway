@@ -1,10 +1,11 @@
-import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
 import { CatalogModel, Register, RegisterEntry } from '../../core/api/models';
+import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
+import { InstallationClock } from '../../core/ui/clock';
 import { InfoHint } from '../../core/ui/info-hint';
 import { Markdown, plainText } from '../../core/ui/markdown';
 import { displayCount } from '../../core/ui/money';
@@ -20,6 +21,7 @@ import {
 import { saveBlob } from '../../core/ui/save-blob';
 import { TableView } from '../../core/ui/table-view';
 import { TablePager } from '../../core/ui/table-pager';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /**
  * The register of processing activities (`FRD-608`): one comparable table of every visible use
@@ -33,7 +35,7 @@ import { TablePager } from '../../core/ui/table-pager';
  */
 @Component({
   selector: 'app-register-page',
-  imports: [DatePipe, FormsModule, InfoHint, Markdown, TablePager],
+  imports: [ZonedPipe, FormsModule, InfoHint, Markdown, TablePager],
   templateUrl: './register-page.html',
   providers: [PageFeedback],
 })
@@ -44,6 +46,9 @@ export class RegisterPage implements OnInit {
   protected readonly count = displayCount;
 
   private readonly service = inject(UseCaseService);
+  private readonly meService = inject(MeService);
+  /** The installation's clock (`FRD-629`): the days a period names, and the label they carry. */
+  private readonly clock = inject(InstallationClock).zone;
   protected readonly feedback = inject(PageFeedback);
 
   protected readonly register = signal<Register | null>(null);
@@ -131,10 +136,12 @@ export class RegisterPage implements OnInit {
   protected readonly canExport = computed(() => !!this.shown() && !this.exporting());
 
   /** The period the measured half is for, as a person reads it: first and last day included. */
-  protected readonly shownPeriod = computed(() => periodText(this.shown()));
+  protected readonly shownPeriod = computed(() => periodText(this.shown(), this.clock()));
 
   ngOnInit(): void {
-    this.applyPreset('this-month');
+    // Once the clock is known, as on the reporting page (`FRD-629`).
+    const thisMonth = () => this.applyPreset('this-month');
+    this.meService.get().subscribe({ next: thisMonth, error: thisMonth });
   }
 
   protected applyPreset(preset: Preset): void {
@@ -142,7 +149,7 @@ export class RegisterPage implements OnInit {
     if (preset === 'custom') {
       return;
     }
-    const window = windowFor(preset, new Date());
+    const window = windowFor(preset, new Date(), this.clock());
     this.from.set(window.from);
     this.to.set(window.to);
     this.load();

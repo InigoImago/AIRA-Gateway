@@ -73,6 +73,10 @@ core:
   # the prices in the model catalog — see `docs/DEVLOG.md` for the round where three screens said
   # something else.
   currency: EUR
+  # The installation's clock, an IANA name such as `Europe/Berlin`: where a budget's day and month
+  # begin, the days of every report and chart, and the clock every time in the console is shown
+  # on. Both services read it. UTC when unset; a change moves the period in progress once.
+  time_zone: UTC
   # Which Keycloak group confers which AIRA role (`ADR-0017`). Group membership is the **only**
   # source of a role; a realm role on the same token is not read. Management refuses to start
   # without a group for `global-admin`.

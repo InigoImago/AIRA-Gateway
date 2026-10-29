@@ -41,6 +41,10 @@
       </div>
     }
 
+    <!-- What answers when a model cannot (`FRD-310`): readable by everyone who reads the
+         catalogue, because a use case's administrator decides whether to follow it. -->
+    <app-fallback-chains-card [catalogued]="models()" [canEdit]="canEdit()" />
+
     <!-- While the editor is open it shows this outcome itself, where the reader is looking; a copy
          behind its backdrop would be a second report of the same thing. -->
     @if (feedback.error(); as message) {
@@ -171,7 +175,7 @@
                         <!-- Everything on file, not a chosen subset: the catalog is what the gateway
                              enforces. -->
                         <dl class="detail-grid">
-                          @for (field of detailOf(model, currency()); track field.label) {
+                          @for (field of detailOf(model, currency(), clock()); track field.label) {
                             <div>
                               <dt>{{ field.label }}</dt>
                               <dd [attr.data-testid]="'detail-' + field.key">{{ field.value }}</dd>

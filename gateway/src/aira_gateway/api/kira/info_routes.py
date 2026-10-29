@@ -10,12 +10,13 @@ from __future__ import annotations
 import csv
 import io
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
+from aira_common.clock import read_in
 from aira_common.models import Capability, ThinkingMode
 from aira_gateway.api.kira import BASE, errors, schemas
 from aira_gateway.api.kira.headers import surface_headers
@@ -27,6 +28,7 @@ from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import may_see_diagnosis
+from aira_gateway.state import clock_of
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -244,20 +246,22 @@ async def ki_usage(request: Request, principal: Principal = Depends(require_prin
 
 
 def _window(request: Request) -> tuple[datetime, datetime]:
-    """``startDatum``/``endDatum`` as a half-open UTC window, or the predecessor's refusal."""
+    """``startDatum``/``endDatum`` as a half-open window of UTC instants, or the predecessor's
+    refusal. A date without an offset is the installation's (`FRD-629`)."""
     start_raw = request.query_params.get("startDatum")
     end_raw = request.query_params.get("endDatum")
     for name, value in (("startDatum", start_raw), ("endDatum", end_raw)):
         if not value:
             raise errors.KiraError(400, errors.MISSING_QUERY_PARAM, f"'{name}' is required.")
+    zone = clock_of(request)
     try:
-        start = _instant(str(start_raw))
-        end = _instant(str(end_raw))
+        start = _instant(str(start_raw), zone)
+        end = _instant(str(end_raw), zone)
     except (ValueError, OverflowError, OSError) as exc:
         # 422, the predecessor's status: its dates are typed parameters, and a value that does not
         # parse reaches its validation handler (`FRD-146` FR-15).
         raise errors.KiraError(
-            422, errors.VALIDATION_ERROR, "Dates are ISO-8601 or seconds since 1970 (UTC)."
+            422, errors.VALIDATION_ERROR, "Dates are ISO-8601 or seconds since 1970."
         ) from exc
     if end <= start:
         raise errors.KiraError(
@@ -274,14 +278,15 @@ def _window(request: Request) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _instant(raw: str) -> datetime:
+def _instant(raw: str, zone: tzinfo) -> datetime:
     """An ISO-8601 date or time, or whole seconds since 1970 — both of which the predecessor
-    takes — **in UTC**. Seconds are UTC by definition, and a time without an offset is read as UTC;
-    one with an offset is converted, so the two ends of a window can always be compared."""
+    takes — as an instant **in UTC**. Seconds count from a moment, so they need no clock; a date or
+    time without an offset is read on the installation's (``zone``), as a report's window is
+    (`api.reporting.common`); one with an offset is converted. Either way the two ends of a window
+    can always be compared."""
     if raw.isdigit():
         return datetime.fromtimestamp(int(raw), UTC)
-    parsed = datetime.fromisoformat(raw)
-    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return read_in(datetime.fromisoformat(raw), zone).astimezone(UTC)
 
 
 def _csv(rows: list[dict[str, Any]]) -> str:

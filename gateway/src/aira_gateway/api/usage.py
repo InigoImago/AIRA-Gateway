@@ -14,11 +14,12 @@ Two endpoints, one question asked from two sides:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, tzinfo
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from aira_common.clock import week_ends, week_starts
 from aira_common.permissions import Permission
 from aira_gateway.auth.attribution import Attribution
 from aira_gateway.auth.dependencies import (
@@ -31,7 +32,7 @@ from aira_gateway.auth.principal import Principal
 from aira_gateway.budgets import keys
 from aira_gateway.budgets.service import BudgetService
 from aira_gateway.reporting.service import ReportingService
-from aira_gateway.state import budgets_of, settings_of
+from aira_gateway.state import budgets_of, clock_of, settings_of
 
 router = APIRouter(tags=["usage"])
 
@@ -94,11 +95,13 @@ async def my_budget(
       whether or not any budget exists. A use case with no budget still answers the question the
       feature was asked for ("what have I used"), and a client can show a figure without inventing
       a limit to put beside it.
-    - ``today`` and ``this_week`` — the same record over the current UTC day and the week since
+    - ``today`` and ``this_week`` — the same record over the current day and the week since
       Monday (`FRD-144`): a developer reading a sidebar asks how today went before they ask about
       the month, and a client cannot work either out from a monthly total.
     - ``currency`` — the unit the amounts are in, because the caller cannot work it out and a
       client that guesses puts a wrong unit beside a right number.
+    - ``time_zone`` — the clock every period and reset here is on (`AIRA_TIME_ZONE`, `FRD-629`),
+      and every moment is written with that clock's offset.
     - ``enforced`` — whether budgets refuse at all in this installation
       (``AIRA_ENFORCE_BUDGETS``). With enforcement off a limit is a figure and not a stop, and a
       client that drew a bar implying otherwise would be wrong in the direction that matters
@@ -120,7 +123,8 @@ async def my_budget(
     figures = await service.usage(use_case or "", subject=person) if use_case else []
     allowances = [row for row in figures if row["binds"]]
 
-    windows = _windows(datetime.now(UTC))
+    zone = clock_of(request)
+    windows = _windows(datetime.now(UTC), zone)
     reporting: ReportingService = request.app.state.reporting
     # Scoped to this caller's own traffic in their own use case: `person` narrows every figure
     # (`FRD-626` FR-15), so nothing here can carry a colleague's figures whatever the use case's
@@ -139,9 +143,16 @@ async def my_budget(
             # the one client this was built for prints costs with a `$` of its own
             # (`FRD-132` §11.7). No conversion happens anywhere — display only (`FRD-403`).
             "currency": settings_of(request).currency,
+            # The clock every period and reset below is on (`AIRA_TIME_ZONE`, `FRD-629`), so a
+            # client says "resets 1 Nov" on the date the installation means.
+            "time_zone": str(zone),
             "allowances": allowances,
             **{
-                name: {"from": start.isoformat(), "to": end.isoformat(), **figures}
+                name: {
+                    "from": start.astimezone(zone).isoformat(),
+                    "to": end.astimezone(zone).isoformat(),
+                    **figures,
+                }
                 for name, (start, end), figures in zip(
                     ("today", "this_week", "this_period"),
                     windows,
@@ -153,19 +164,19 @@ async def my_budget(
     )
 
 
-def _windows(now: datetime) -> tuple[tuple[datetime, datetime], ...]:
-    """Today, this week and this month — calendar windows, half-open and UTC.
+def _windows(now: datetime, zone: tzinfo = UTC) -> tuple[tuple[datetime, datetime], ...]:
+    """Today, this week and this month — calendar windows, half-open, on the installation's
+    clock (``zone``, `FRD-629`).
 
     Not the budget's periods: a budget counts by day or month, and these blocks are the record
-    rather than the counter. UTC because every counter and every reset time this endpoint reports
-    is UTC, and a "today" in another zone would disagree with the reset beside it. The week starts
-    on Monday (ISO 8601), and may begin in the previous month. Where a day and a month begin and
-    end is `budgets.keys`' to say, once.
+    rather than the counter. On the same clock as every counter and reset this endpoint reports, so
+    a "today" cannot disagree with the reset beside it. The week starts on Monday (ISO 8601), and
+    may begin in the previous month. Where a day and a month begin and end is `budgets.keys`' to
+    say, once, and where a week does `aira_common.clock`'s.
     """
-    day = keys.period_starts("day", now), keys.period_ends("day", now)
-    week_starts = day[0] - timedelta(days=day[0].weekday())
+    day = keys.period_starts("day", now, zone), keys.period_ends("day", now, zone)
     return (
         day,
-        (week_starts, week_starts + timedelta(days=7)),
-        (keys.period_starts("month", now), keys.period_ends("month", now)),
+        (week_starts(now, zone), week_ends(now, zone)),
+        (keys.period_starts("month", now, zone), keys.period_ends("month", now, zone)),
     )

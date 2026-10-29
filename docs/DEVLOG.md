@@ -5,6 +5,63 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Daily use: a fallback per kind of request, costs checked, one clock (2026-10-28)
+
+Three things the owner noticed in daily use: no default fallback model visible anywhere, costs that
+did not rise as expected, and time zones that could not be set.
+
+**Costs (`FRD-408`).** The gateway's arithmetic was checked line by line against the vendors' price
+lists and found right: integer nano-units, cache reads at their own rate, thinking billed as
+output, a fallback priced as the model that answered. What was wrong was around it.
+
+- **The figure the owner watches is OpenCode's, not ours.** The `opencode.json` the console wrote
+  carried `input` and `output` only, and OpenCode prices a cache hit at `cache_read` — **zero when
+  the key is absent**, read in the 1.19.3 and 2.0.32 binaries. An agentic session is 80–95 % cache
+  hits, so OpenCode showed a third to a sixth of what the gateway booked. The file now carries both
+  cache rates and the price above 200 000 tokens.
+- **A long prompt has its own price** at Google and Anthropic (Gemini 2.5/3.1 Pro above 200 000,
+  Claude Haiku 5.5 above 100 000) — every token of the request, not the part above. The catalogue
+  states the step; the gateway bills and reserves at the rates a prompt selects.
+- An unstated cache-write price was billed at the input rate, a quarter short of Anthropic's
+  five-minute rate; it is 1.25× now. A stream the connection or our own limit broke off before the
+  vendor's usage arrived is counted at the vendor like a stream the caller left. A non-streamed
+  Claude answer whose last event said `input_tokens: null` booked the prompt as free.
+- **Not settled here:** whether Google bills a broken-off stream (booked as a marked floor), and
+  whether the billing account's prices for Claude on a regional endpoint carry the premium the list
+  price does not — the billing-account reader takes the base SKU and no long-context SKU yet.
+
+**A fallback per kind (`FRD-310`, `ADR-0048`).** The installation keeps one chain per kind of request
+— text generation, embedding, ranking — on the Models page, empty by default, so a model that cannot
+answer stays the caller's error until somebody decides otherwise. A use case follows it, keeps its
+own, or has none. Every hop is asked its kind: before this, an embedding model in a generation chain
+was called for an answer it has none of, and its vendor's refusal read as an outage. An embedding
+falls back only to a model of the same vector width; an undeclared width admits none.
+
+**One clock (`FRD-629`, `ADR-0049`).** Every period counted in UTC while the console printed every
+time on the reader's browser, unlabelled: in Berlin, a request at 00:30 sat in yesterday's budget
+beside a timestamp saying today. And Django had no `TIME_ZONE`, so its serializers answered in
+Chicago's offset. Now `AIRA_TIME_ZONE` (default UTC) is the clock of budgets, reports, charts,
+exports, KIRA's usage window, the notice's monthly reminder, the console and the OpenCode plugin.
+
+- **The database still counts by the UTC hour** (`ADR-0028`), and the process folds hours into the
+  zone's days and hours: exact only where every local midnight is a UTC hour, so a zone part of an
+  hour off (India, Iran, Newfoundland — checked across 2000–2050) refuses to start. A latency
+  average is folded from its sum and its count, never as an average of the hours' averages
+  (`TZ-12`), and a folded day's spend is shown from the folded sum — the first draft carried the
+  first hour's formatted amount along beside the right integer.
+- **Python subtracts two datetimes in one zone by their wall clocks**: across the night the clocks
+  go back, midnight to midnight measured 24 hours, not 25. Every boundary is therefore an instant in
+  UTC, shown in the zone only where it is shown.
+- **A reset is written with the zone's offset** (`2026-11-01T00:00:00+01:00`) so a client reading its
+  date reads the installation's; the plugin read it in UTC and would have said 31 October.
+- The console's `date` pipe takes fixed offsets, not IANA names, so a `zoned` pipe replaces all
+  seventeen uses; it is impure because the zone arrives with `/v1/me` after the first render. The
+  header names the clock once; periods and buckets name it beside them.
+
+Mutations `CO-*`, `FB-*` and `TZ-*`; the anchors that moved under them were re-anchored.
+
+---
+
 ## A long session no longer ends at the console's proxy (2026-10-28)
 
 Reported by the owner: long agentic sessions break off past about 250 000 tokens, with Claude and

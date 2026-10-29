@@ -15,12 +15,12 @@
           (chosen)="load($event)"
         />
         <span class="muted" data-testid="privacy-edition"
-          >{{ current.labels['edition'] }}: {{ current.edition | date: 'yyyy-MM-dd' }}</span
+          >{{ current.labels['edition'] }}: {{ current.edition | zoned: 'day' }}</span
         >
         @if (current.acknowledged_at) {
           <span class="muted" data-testid="privacy-acknowledged"
             >{{ current.labels['acknowledged'] }}
-            {{ current.acknowledged_at | date: 'yyyy-MM-dd HH:mm:ss' }}</span
+            {{ current.acknowledged_at | zoned: 'second' }}</span
           >
         }
       </div>

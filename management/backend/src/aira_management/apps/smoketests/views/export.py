@@ -8,8 +8,10 @@ import re
 
 from django.http import HttpResponse
 
+from aira_common.clock import local_date, zone_named
 from aira_common.spreadsheet import safe_cell
 from aira_management.apps.smoketests.models import TestRun
+from aira_management.config.runtime import get_settings
 
 #: Everything a file name in `Content-Disposition` may carry; the rest becomes `_`. A model name is
 #: whatever the catalogue holds, and a quote in it adds a second `filename`, a newline a header.
@@ -36,8 +38,10 @@ def run_as_csv(run: TestRun) -> HttpResponse:
 
     A **BOM** so Excel reads UTF-8, **CRLF** per RFC 4180, every field quoted so a comma cannot
     shift a column — and every cell through `safe_cell`, because a model's own answer may begin
-    with `=` and become a formula without any attacker involved.
+    with `=` and become a formula without any attacker involved. Its moments and its file name's
+    date are on the installation's clock (`FRD-629`), as the console showed the run.
     """
+    zone = zone_named(get_settings().time_zone)
     buffer = io.StringIO()
     writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
     writer.writerow(COLUMNS)
@@ -53,12 +57,11 @@ def run_as_csv(run: TestRun) -> HttpResponse:
                 safe_cell(row.verdict),
                 safe_cell(row.note),
                 safe_cell(getattr(row.rated_by, "username", "") or ""),
-                safe_cell(row.rated_at.isoformat() if row.rated_at else ""),
+                safe_cell(row.rated_at.astimezone(zone).isoformat() if row.rated_at else ""),
             ]
         )
-    name = (
-        f"aira-smoketest-{_UNSAFE_IN_A_FILE_NAME.sub('_', run.model)}-{run.started_at.date()}.csv"
-    )
+    day = local_date(run.started_at, zone)
+    name = f"aira-smoketest-{_UNSAFE_IN_A_FILE_NAME.sub('_', run.model)}-{day}.csv"
     # A plain `HttpResponse`: DRF's `Response` re-encodes the body through a renderer and loses
     # the BOM.
     response = HttpResponse(

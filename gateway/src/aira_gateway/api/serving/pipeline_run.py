@@ -15,10 +15,11 @@ from typing import Any
 
 from fastapi import Request
 
+from aira_common.fallback import FallbackKind
 from aira_common.logging import get_logger
 from aira_common.observability import set_span_attributes
-from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.api.serving.context import attribution_of, declared_model, provenance
+from aira_gateway.api.serving.fallbacks import fallbacks_for, step_requirements
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, AuditTrail, Outcome, redaction_failed
 from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
@@ -29,7 +30,6 @@ from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.engine import PipelineEngine
 from aira_gateway.pipeline.engine.texts import TEXT_ONLY_STEPS
 from aira_gateway.pipeline.store import PipelineStore
-from aira_gateway.requirements import permits
 from aira_gateway.state import budgets_of, pricing_of
 
 _log = get_logger("aira_gateway")
@@ -49,7 +49,8 @@ async def run_pipeline(
     use_case = getattr(attribution_of(request), "use_case", None)
     pipeline = await store.get(use_case)
     if pipeline is None:
-        return canonical, (), ()
+        # No steps, and the installation's chain for text generation (`FRD-310`).
+        return canonical, await fallbacks_for(request, FallbackKind.GENERATE, read=False), ()
     rewrites: list[tuple[str, str]] = []
     try:
         outcome = await engine.run(
@@ -63,7 +64,7 @@ async def run_pipeline(
             # Lets a step call a model the catalogue knows and configuration does not (`FRD-507`).
             declaration_of=await declared_model(request),
             # And only one this request may reach: release, approval, residency, price.
-            permits=permits(await installation_requirements(request)),
+            permits=await step_requirements(request),
         )
     finally:
         # One site, on every way out: a blocking filter still spent tokens deciding to block.
@@ -83,7 +84,9 @@ async def run_pipeline(
             model=outcome.request.model,
             decisions=outcome.decisions,
         )
-    return outcome.request, outcome.fallback_models, tuple(outcome.notices)
+    # The chain the use case chose for text generation — its own, the installation's, or none.
+    fallbacks = await fallbacks_for(request, FallbackKind.GENERATE, pipeline)
+    return outcome.request, fallbacks, tuple(outcome.notices)
 
 
 async def run_pipeline_over_texts(
@@ -146,7 +149,7 @@ async def run_pipeline_over_strings(
             model_calls=trail.model_calls,
             rewrites=rewrites,
             declaration_of=await declared_model(request),
-            permits=permits(await installation_requirements(request)),
+            permits=await step_requirements(request),
         )
     finally:
         await record_pipeline_calls(request, trail)

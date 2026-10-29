@@ -11,6 +11,7 @@ import {
   ServedModel,
   ThinkingLevelCheck,
 } from '../types/catalog';
+import { FallbackChains, FallbackKind } from '../types/pipelines';
 import { ApiClientClass, seg } from './base';
 
 /**
@@ -67,6 +68,16 @@ export function withCatalog<T extends ApiClientClass>(Base: T) {
      */
     kiraModels(): Observable<KiraModel[]> {
       return this.http.get<KiraModel[]>(`${GW}/kira/api/external/models`);
+    }
+
+    /** The installation's fallback chain for each kind of request (`FRD-310`). */
+    fallbackChains(): Observable<FallbackChains> {
+      return this.http.get<FallbackChains>(`${API}/v1/fallback-chains/`);
+    }
+
+    /** Replace one kind's chain; answered with every kind's. Needs `catalog.write`. */
+    saveFallbackChain(kind: FallbackKind, models: string[]): Observable<FallbackChains> {
+      return this.http.put<FallbackChains>(`${API}/v1/fallback-chains/${seg(kind)}/`, { models });
     }
 
     /** Drafts of catalog entries from a public model list (`FRD-508`), for whoever writes the

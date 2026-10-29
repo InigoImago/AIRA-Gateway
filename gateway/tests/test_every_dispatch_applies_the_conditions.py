@@ -10,10 +10,11 @@ verbs did not use the chain:
     :streamGenerateContent   the chain returns a finished response, so a stream cannot use it
     :embedContent            there is nothing to fall back *to*, so nobody wrote one
 
-**The first of those is no longer true** (`ADR-0032`, `FRD-302` FR-6): `stream_with_fallback`
-opens the chain instead of awaiting it, so a streamed verb now walks the same candidates and asks
-the same conditions. The embedding keeps no chain, and its conditions come from
-`resolve_direct_target`.
+**Neither of those is true any longer.** `stream_with_fallback` opens the chain instead of
+awaiting it (`ADR-0032`, `FRD-302` FR-6), so a streamed verb walks the same candidates and asks the
+same conditions; and an embedding and a ranking walk them too, along a chain of their own kind
+(`answer_with_fallback`, `FRD-310`) — empty unless an installation sets one, and still the walk
+that asks.
 
 Measured on 2026-08-11 against the hermetic app — each refused by name on `:generateContent`,
 each **served with a 200** on both of the others:
@@ -22,8 +23,9 @@ each **served with a 200** on both of the others:
     a model the use case was never released (`FRD-308`)
 
 That is the `:embedContent` bypass of `FRD-405` for the third time, and the third time is what
-makes it a class rather than a mistake. The behaviour is fixed in `serving.resolve_direct_target`;
-this file is what stops a *fourth* verb being written without the question being asked.
+makes it a class rather than a mistake. The behaviour was fixed by a function that asked the
+conditions for the verbs with no chain, and is now the chain itself; this file is what stops a
+*fourth* verb being written without the question being asked.
 
 **The guard that existed asked the wrong question about the same line.**
 `test_every_model_call_is_accounted.py` already parses these call sites and already names
@@ -49,13 +51,13 @@ DISPATCHING = frozenset({"generate", "stream_generate", "embed"})
 #: The functions that apply the conditions. A dispatching call site has to be in the same function
 #: as one of these, or on the list below with a reason.
 #:
-#: - `_candidates` asks `permits` per hop and yields only the candidates that may be called. Both
-#:   forms of the chain walk it — `dispatch_with_fallback` for a response and
-#:   `stream_with_fallback` for a stream — which is how a chain refuses to substitute a candidate
-#:   that would answer differently, and why neither needs an exemption below.
-#: - `resolve_direct_target` asks it once, for the verbs that have no chain, and returns the
-#:   adapter — so the check cannot be separated from getting something to call.
-GATES = frozenset({"_candidates", "dispatch_with_fallback", "resolve_direct_target"})
+#: - `_candidates` asks `permits` per hop and yields only the candidates that may be called. Every
+#:   form of the chain walks it — `dispatch_with_fallback` for a response, `stream_with_fallback`
+#:   for a stream, `answer_with_fallback` for vectors and rankings — which is how a chain refuses to
+#:   substitute a candidate that would answer differently, and why none needs an exemption below.
+#: - `answer_with_fallback` takes the verb as a function and calls it only on what the walk let
+#:   through, so a dispatching call in the function that hands it over is gated by the hand-over.
+GATES = frozenset({"_candidates", "dispatch_with_fallback", "answer_with_fallback"})
 
 #: Dispatching calls that legitimately apply no condition, and why.
 #:
@@ -233,7 +235,7 @@ def test_every_dispatching_call_asks_the_conditions() -> None:
         "  " + "\n  ".join(ungated) + "\n\nResidency, approval, release, media types, thinking, "
         "schemas and tools are all one mechanism (`requirements.py`), and a verb that skips it "
         "skips all of them — silently, with a 200. Route the call through "
-        "`dispatch_with_fallback` or `resolve_direct_target`, or add it to `UNCONDITIONED` with "
+        "`dispatch_with_fallback` or `answer_with_fallback`, or add it to `UNCONDITIONED` with "
         "the reason it is not a caller's request."
     )
 
@@ -250,12 +252,11 @@ def test_every_gate_is_a_real_function() -> None:
     """`GATES` is matched by name, so a rename would make every site read as ungated — noisy and
     safe — while a **deleted** gate would make them read as gated by a name nothing defines. That
     is the direction worth asserting."""
-    serving = (SOURCE / "api" / "serving" / "prepare.py").read_text()
     dispatch = (SOURCE / "pipeline" / "dispatch.py").read_text()
 
-    assert "async def resolve_direct_target(" in serving
     assert "async def dispatch_with_fallback(" in dispatch
     assert "async def stream_with_fallback(" in dispatch
-    # The walk both forms of the chain share, and the only place `permits` is asked for them.
-    assert "async def _candidates(" in dispatch
+    assert "async def answer_with_fallback[" in dispatch
+    # The walk every form of the chain shares, and the only place `permits` is asked for them.
+    assert "async def _candidates[" in dispatch
     assert "refusal = await permits(model)" in dispatch

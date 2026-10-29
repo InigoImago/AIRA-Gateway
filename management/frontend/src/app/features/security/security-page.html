@@ -127,7 +127,7 @@
             <tbody>
               @for (event of events(); track event.id) {
                 <tr [class.is-open]="openEvent() === event.id">
-                  <td class="nowrap">{{ event.created_at | date: 'yyyy-MM-dd HH:mm' }}</td>
+                  <td class="nowrap">{{ event.created_at | zoned }}</td>
                   <td>
                     <!-- The row opens rather than widening: six columns is as much as a table can
                          be read at, and "why did this fire" is another six fields. -->
@@ -233,7 +233,7 @@
                         </div>
                         <div>
                           <dt>Detected at</dt>
-                          <dd>{{ event.created_at | date: 'yyyy-MM-dd HH:mm:ss' }}</dd>
+                          <dd>{{ event.created_at | zoned: 'second' }}</dd>
                         </div>
                         <div>
                           <dt>Finding id</dt>

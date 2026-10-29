@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**112 of 116 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**115 of 119 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -81,6 +81,7 @@ status that goes stale in the copy nobody opens.
 | [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ✅ Done — approval here; the pickers in FRD-308, the candidate list in FRD-507 |
 | [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built |
 | [309](FRD-309-pii-filter.md) | Replacing personal data before the prompt reaches the model | 3 (pipeline) | ✅ Built |
+| [310](FRD-310-a-fallback-chain-per-kind-of-request.md) | A fallback chain per kind of request, the installation's by default | 3 | ✅ Built |
 | [400](FRD-400-budget-model.md) | Budget model & distribution | 4 | ✅ Done |
 | [401](FRD-401-budget-enforcement.md) | Budget enforcement & usage accounting | 4 | ✅ Done |
 | [402](FRD-402-budget-ui.md) | Budget UI (set limits + view consumption) | 4 | ✅ Done |
@@ -89,6 +90,7 @@ status that goes stale in the copy nobody opens.
 | [405](FRD-405-rate-limiting.md) | Rate limiting, atomic budget reservation, and persistence off the hot path | 4 | ✅ Done |
 | [406](FRD-406-content-redaction.md) | Redaction of credentials in stored payloads | 4 | ✅ Done — credential half only |
 | [407](FRD-407-a-persons-own-budget.md) | A person's own budget, in the use case's hierarchy | 4 | ✅ Built |
+| [408](FRD-408-what-a-long-session-costs.md) | What a long session costs, counted where it is shown | 4 | ✅ Built |
 | [500](FRD-500-anomaly-rules.md) | Anomaly rules | 5 | ✅ Done |
 | [501](FRD-501-anomaly-detection-engine.md) | The detection engine | 5 | ✅ Done |
 | [502](FRD-502-security-console-and-traces.md) | The IT Security console, own warnings, and per-use-case traces | 5 | ✅ Done |
@@ -127,3 +129,4 @@ status that goes stale in the copy nobody opens.
 | [626](FRD-626-usage-over-time.md) | Usage over time: which model, when, what it cost | 6 (Governance & Analytics) | ✅ Done |
 | [627](FRD-627-strict-data-mode.md) | Strict data mode | 6 (reporting) | ✅ Built |
 | [628](FRD-628-say-what-happened.md) | Say what happened to a request | 6 (reporting) | ✅ Built |
+| [629](FRD-629-one-clock-for-the-installation.md) | One clock for the installation | 6 (Governance & Analytics) | ✅ Built |

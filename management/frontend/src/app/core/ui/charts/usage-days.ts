@@ -1,5 +1,6 @@
 import { Component, computed, input, signal } from '@angular/core';
 import { Granularity } from '../../api/types/reporting';
+import { DEFAULT_CLOCK } from '../clock';
 import { displayCount } from '../money';
 import { Day } from './usage-series';
 
@@ -44,6 +45,8 @@ export class UsageDays {
   readonly unit = input('');
   /** What one band is: "model", "outcome". Names the second column. */
   readonly noun = input('model');
+  /** The clock the rows are days or hours of (`FRD-629`), for the first column's heading. */
+  readonly clock = input(DEFAULT_CLOCK);
 
   protected readonly limit = SHOWN;
 

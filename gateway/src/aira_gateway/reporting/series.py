@@ -10,16 +10,22 @@ integration suite while the hermetic tests ran the other one. `date_trunc` is Po
 timestamp as ``YYYY-MM-DD HH:MM:SS…``, and a prefix of that text names the bucket. Postgres renders
 a ``timestamptz`` in the **session** time zone, which `db.base.build_engine` pins to UTC for
 exactly this reason (`ADR-0028`).
+
+**On the installation's clock** (`FRD-629`). Where that clock is not UTC, the database still counts
+by the UTC hour — the same portable prefix — and the hours are folded into the zone's days and hours
+here, over a bounded number of aggregates rather than rows. Exact because the zone is a whole number
+of hours off UTC at every moment (`aira_common.clock`), so every local bucket begins on a UTC hour.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any, Literal
 
 from sqlalchemy import String, case, cast, func, literal
 from sqlalchemy.sql.elements import ColumnElement
 
+from aira_common.clock import day_ends, day_starts
 from aira_gateway.db.models import RequestLog
 
 #: How wide a bucket is. Two, not a free-form interval: these are the periods budgets and the
@@ -114,19 +120,62 @@ def normalise(rendered: str, granularity: Granularity) -> str:
     return rendered[: _WIDTH[granularity]].replace(" ", "T")
 
 
-def axis(start: datetime, end: datetime, granularity: Granularity) -> list[str]:
-    """Every bucket in ``[start, end)``, including the empty ones.
+def axis(start: datetime, end: datetime, granularity: Granularity, zone: tzinfo = UTC) -> list[str]:
+    """Every bucket in ``[start, end)``, including the empty ones, on the installation's clock.
 
     **The empty ones are the point.** A histogram drawn only from buckets that have rows puts
     Monday beside Friday and calls it a week; a quiet day is a reading.
+
+    In UTC a bucket is a fixed width. In a zone with summer time it is not — the zone's days are
+    walked by **date**, and its hours by the UTC hour each begins on, so the day the clocks change
+    is one column of 23 or 25 hours and its repeated hour is two columns (`zoned_label`).
     """
-    width = step(granularity)
-    cursor = _floor(start, granularity)
-    labels: list[str] = []
+    if is_utc(zone):
+        width = step(granularity)
+        cursor = _floor(start, granularity)
+        labels: list[str] = []
+        while cursor < end:
+            labels.append(label(cursor, granularity))
+            cursor += width
+        return labels
+    if granularity == "day":
+        days: list[str] = []
+        cursor = day_starts(start, zone)
+        while cursor < end:
+            days.append(zoned_label(cursor, granularity, zone))
+            cursor = day_ends(cursor, zone)
+        return days
+    hours: list[str] = []
+    cursor = start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
     while cursor < end:
-        labels.append(label(cursor, granularity))
-        cursor += width
-    return labels
+        hours.append(zoned_label(cursor, granularity, zone))
+        cursor += timedelta(hours=1)
+    return hours
+
+
+def is_utc(zone: tzinfo) -> bool:
+    """Whether ``zone`` is UTC itself — the clock the database's buckets are already on."""
+    return zone is UTC
+
+
+def zoned_label(moment: datetime, granularity: Granularity, zone: tzinfo) -> str:
+    """What bucket ``moment`` falls in on the installation's clock (`FRD-629`).
+
+    A day is the zone's date. An hour is the zone's hour **with its offset** —
+    ``2026-10-25T02+02:00`` — because the hour the clocks go back happens twice, and two buckets
+    under one label would be one column holding two hours. Still an ISO-8601 form a client parses.
+    """
+    local = moment.astimezone(zone)
+    if granularity == "day":
+        return local.strftime("%Y-%m-%d")
+    offset = local.strftime("%z")
+    return f"{local.strftime('%Y-%m-%dT%H')}{offset[:3]}:{offset[3:]}"
+
+
+def utc_hour(rendered: str) -> datetime:
+    """An hour bucket as the database rendered it (``2026-10-25 01``), as the instant it begins —
+    in UTC, the session's zone (`ADR-0028`)."""
+    return datetime.strptime(rendered[: _WIDTH["hour"]], "%Y-%m-%d %H").replace(tzinfo=UTC)
 
 
 def _floor(moment: datetime, granularity: Granularity) -> datetime:

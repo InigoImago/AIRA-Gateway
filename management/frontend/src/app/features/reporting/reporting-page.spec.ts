@@ -16,6 +16,7 @@ import { SeriesRequest } from '../../core/api/clients/reporting';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { InstallationBudgetCard } from './installation-budget-card';
 import { ReportingPage } from './reporting-page';
+import { InstallationClock } from '../../core/ui/clock';
 import { isoDay, utcDay, windowFor } from '../../core/ui/periods';
 
 function row(over: Partial<ReportRow> = {}): ReportRow {
@@ -77,6 +78,7 @@ function setup(
   response: Answer = of(report()),
   csv?: Observable<Blob>,
   budgets: () => Observable<Budget[]> = () => of([] as Budget[]),
+  clock?: string,
 ) {
   TestBed.resetTestingModule();
   const calls: Array<{ from: string; to: string }> = [];
@@ -108,6 +110,8 @@ function setup(
       { provide: MeService, useValue: me },
     ],
   });
+  // What `/v1/me` would have named, before the page asks for its first window.
+  if (clock) TestBed.inject(InstallationClock).zone.set(clock);
   const fixture = TestBed.createComponent(ReportingPage);
   fixture.detectChanges();
   const element = fixture.nativeElement as HTMLElement;
@@ -156,6 +160,19 @@ describe('ReportingPage', () => {
       utcDay(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))),
     );
     expect(text()).toContain('Reporting');
+  });
+
+  it('asks for the installation’s month and says which clock its days are on', () => {
+    // 00:30 on 1 October in Berlin is still September in UTC (`FRD-629`).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-30T22:30:00Z') });
+    try {
+      const { calls, testid } = setup(of(report()), undefined, undefined, 'Europe/Berlin');
+
+      expect(calls[0]).toEqual({ from: '2026-10-01', to: '2026-11-01' });
+      expect(testid('report-period')?.textContent).toContain('(Europe/Berlin)');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders the totals and the chosen breakdown', () => {

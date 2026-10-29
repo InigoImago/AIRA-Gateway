@@ -1,6 +1,8 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Observable, Subject, of, throwError } from 'rxjs';
 import { CatalogModel, Register, RegisterEntry, RegisterModel } from '../../core/api/models';
+import { MeService } from '../../core/api/me.service';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { isoDay } from '../../core/ui/periods';
 import { RegisterPage } from './register-page';
@@ -108,7 +110,11 @@ function setup(
   };
   TestBed.configureTestingModule({
     imports: [RegisterPage],
-    providers: [{ provide: UseCaseService, useValue: service }],
+    providers: [
+      { provide: UseCaseService, useValue: service },
+      // The page asks for its first window once `/v1/me` has said which clock it is on.
+      { provide: MeService, useValue: { currency: signal(''), get: () => of({}) } },
+    ],
   });
   const fixture = TestBed.createComponent(RegisterPage);
   fixture.detectChanges();

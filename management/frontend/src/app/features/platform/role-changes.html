@@ -50,7 +50,7 @@
                   {{ openRow() === change.id ? '▾' : '▸' }}
                 </button>
               </td>
-              <td class="nowrap">{{ change.at | date: 'yyyy-MM-dd HH:mm' }}</td>
+              <td class="nowrap">{{ change.at | zoned }}</td>
               <td data-testid="change-actor">{{ change.actor }}</td>
               <td data-testid="change-role">{{ roleName(change) }}</td>
               <td data-testid="change-action">{{ actions[change.action] }}</td>

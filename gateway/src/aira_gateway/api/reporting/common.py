@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import calendar
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 
 from fastapi import APIRouter, Response
 
+from aira_common.clock import month_ends, month_starts, read_in
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.auth.principal import Principal
@@ -43,16 +43,18 @@ def scope_label(scope: Scope) -> str:
     return "all" if scope is None else "use_cases"
 
 
-def _parse(value: str, field: str) -> datetime:
-    """An ISO-8601 timestamp **in UTC**, or a 400. A naive one is read as UTC.
+def _parse(value: str, field: str, zone: tzinfo = UTC) -> datetime:
+    """An ISO-8601 timestamp as an instant **in UTC**, or a 400. One without an offset — a bare date
+    above all — is read on the installation's clock (``zone``, `FRD-629`), so `2026-10-01` means
+    that day's midnight where the installation is.
 
-    Converted, not merely labelled: every figure is in UTC (`ADR-0028`) and the series' buckets are
-    UTC text from the database, so a window kept in the caller's offset draws an axis its own rows
-    fall off — and SQLite, which drops an offset from a comparison, evaluates another window.
+    Converted, not merely labelled: the series' buckets are folded from UTC hours (`ADR-0028`), so a
+    window kept in the caller's offset draws an axis its own rows fall off — and SQLite, which
+    drops an offset from a comparison, evaluates another window.
     """
     try:
         parsed = datetime.fromisoformat(value)
-        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return read_in(parsed, zone).astimezone(UTC)
     except ValueError as exc:
         raise GeminiHTTPError(
             400, f"'{field}' is not an ISO-8601 timestamp.", "INVALID_ARGUMENT"
@@ -64,18 +66,14 @@ def _parse(value: str, field: str) -> datetime:
         ) from exc
 
 
-def _month_window(now: datetime) -> tuple[datetime, datetime]:
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    days = calendar.monthrange(start.year, start.month)[1]
-    return start, start + timedelta(days=days)
-
-
-def window(start: str | None, end: str | None, *, what: str) -> tuple[datetime, datetime]:
-    """``[from, to)`` from the query: the current calendar month by default, at most
-    `MAX_WINDOW_DAYS` long. ``what`` names the document in the refusal."""
-    default_start, default_end = _month_window(datetime.now(UTC))
-    window_start = _parse(start, "from") if start else default_start
-    window_end = _parse(end, "to") if end else default_end
+def window(
+    start: str | None, end: str | None, *, what: str, zone: tzinfo = UTC
+) -> tuple[datetime, datetime]:
+    """``[from, to)`` from the query: the current calendar month on the installation's clock by
+    default, at most `MAX_WINDOW_DAYS` long. ``what`` names the document in the refusal."""
+    now = datetime.now(UTC)
+    window_start = _parse(start, "from", zone) if start else month_starts(now, zone)
+    window_end = _parse(end, "to", zone) if end else month_ends(now, zone)
 
     if window_end <= window_start:
         raise GeminiHTTPError(400, "'to' must be after 'from'.", "INVALID_ARGUMENT")

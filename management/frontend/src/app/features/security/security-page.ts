@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Observable, catchError, forkJoin, map, of } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
@@ -12,6 +11,7 @@ import { WITHHELD_REASON, targetName } from '../../core/ui/withheld';
 import { describeAction, describeEvent, describeRule, figureText } from './rule-language';
 import { SecurityRulesPanel } from './security-rules-panel';
 import { SuspensionsPanel } from './suspensions-panel';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /** How often the console refreshes itself. Findings change at human speed. */
 const REFRESH_SECONDS = 15;
@@ -49,7 +49,7 @@ function hasExpired(row: Suspension, now: number): boolean {
  */
 @Component({
   selector: 'app-security-page',
-  imports: [DatePipe, SuspensionsPanel, SecurityRulesPanel],
+  imports: [ZonedPipe, SuspensionsPanel, SecurityRulesPanel],
   templateUrl: './security-page.html',
   providers: [PageFeedback, Live],
 })

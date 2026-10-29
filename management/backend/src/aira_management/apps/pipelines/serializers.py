@@ -13,6 +13,8 @@ from typing import Any
 
 from rest_framework import serializers
 
+from aira_common.fallback import FallbackKind, FallbackMode, can_serve, stored_mode
+from aira_common.models import BASELINE_CAPABILITIES, parse_capabilities
 from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
 from aira_common.pipelines import (
     CATEGORY_KEYS,
@@ -28,6 +30,7 @@ from aira_common.pipelines import (
     InjectionMode,
     ScanScope,
 )
+from aira_management.apps.catalog.models import Model
 from aira_management.apps.pipelines.models import PipelineConfig
 
 __all__ = [
@@ -210,10 +213,71 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
     return list(dict.fromkeys(named))
 
 
+def _check_fallback_mode(attrs: dict[str, Any]) -> None:
+    """What the use case does with the installation's fallback chains (`FRD-310`), and its own.
+
+    A save that does not say — an older console — means what such a pipeline always meant: its
+    own chain where it names one, the installation's otherwise. A chain of its own is used only
+    under `own`, so it is refused anywhere else rather than kept and shown as configured; `own`
+    with nothing in it would be `none` under another name.
+    """
+    chain = attrs.get("fallback_models", []) or []
+    mode = attrs.get("fallback_mode")
+    if mode is None:
+        attrs["fallback_mode"] = stored_mode(None, chain).value
+        return
+    if mode == FallbackMode.OWN and not chain:
+        raise serializers.ValidationError(
+            {
+                "fallback_models": [
+                    "A use case's own fallback chain names at least one model — or choose the "
+                    "installation's chains, or no fallback."
+                ]
+            }
+        )
+    if mode != FallbackMode.OWN and chain:
+        raise serializers.ValidationError(
+            {
+                "fallback_models": [
+                    f"A chain of the use case's own is used only when it keeps one, not under "
+                    f"'{mode}': choose its own chain, or leave the chain empty."
+                ]
+            }
+        )
+
+
+def _check_every_model_generates(named: list[str]) -> None:
+    """Every model a pipeline names must be able to answer a generation request (`FRD-310`).
+
+    A pipeline's models are its classifiers and redactors, which the gateway asks for text, and
+    the models a request is routed or falls back to — the request being one that generates. An
+    embedding model or a reranker in any of those places is passed over at every hop with that
+    reason; refused here, where somebody can still choose another.
+    """
+    found = {model.name: model for model in Model.objects.filter(name__in=named)}
+    unable = sorted(
+        name
+        for name, model in found.items()
+        if not can_serve(
+            parse_capabilities(model.capabilities) or BASELINE_CAPABILITIES, FallbackKind.GENERATE
+        )
+    )
+    if unable:
+        raise serializers.ValidationError(
+            {
+                "steps": [
+                    f"Cannot answer a generation request: {', '.join(unable)}. A pipeline's models "
+                    "classify, redact, or answer the request itself, and each of those writes text "
+                    "— an embedding model or a reranker cannot."
+                ]
+            }
+        )
+
+
 class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
     class Meta:
         model = PipelineConfig
-        fields = ["steps", "fallback_models", "updated_at"]
+        fields = ["steps", "fallback_models", "fallback_mode", "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_steps(self, value: Any) -> list[dict[str, Any]]:
@@ -243,6 +307,7 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
         can still fix it. Collected from **everywhere a model can be written** (`_models_named_in`).
         A pipeline that names no model saves even on a use case with nothing released.
         """
+        _check_fallback_mode(attrs)
         use_case = self.context.get("use_case")
         if use_case is None:
             return attrs
@@ -252,6 +317,7 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
         )
         if not named:
             return attrs
+        _check_every_model_generates(named)
         released = set(use_case.allowed_models.values_list("name", flat=True))
         withheld = sorted(name for name in named if name not in released)
         if withheld:

@@ -19,6 +19,7 @@ from aira_gateway.db.models.owned import (
 from aira_gateway.db.models.read_models import (
     AnomalyRuleRead,
     BudgetRead,
+    FallbackChainRead,
     ModelRead,
     PipelineConfigRead,
     RateLimitRead,
@@ -36,6 +37,7 @@ __all__ = [
     "Base",
     "BudgetRead",
     "BudgetUsage",
+    "FallbackChainRead",
     "ModelRead",
     "PayloadAccess",
     "PipelineConfigRead",

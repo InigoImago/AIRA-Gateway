@@ -5,6 +5,7 @@ import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
 import { PrivacyGate } from './core/privacy/privacy-gate';
+import { InstallationClock } from './core/ui/clock';
 import { Permission, can } from './core/auth/roles';
 
 @Component({
@@ -18,6 +19,9 @@ import { Permission, can } from './core/auth/roles';
 export class App implements OnInit {
   private readonly meService = inject(MeService);
   private readonly auth = inject(AuthService);
+
+  /** The installation's clock, from `/v1/me` (`FRD-629`). */
+  protected readonly clock = inject(InstallationClock).zone;
 
   protected readonly title = signal('AIRA Gateway');
   protected readonly me = signal<Me | null>(null);

@@ -80,7 +80,13 @@ def _membership_payload(usecase: UseCase, username: str, role: str) -> dict[str,
 
 
 def _pipeline_payload(slug: str, config: PipelineConfig) -> dict[str, Any]:
-    return {"use_case": slug, "steps": config.steps, "fallback_models": config.fallback_models}
+    return {
+        "use_case": slug,
+        "steps": config.steps,
+        "fallback_models": config.fallback_models,
+        # What the use case does with the installation's chains (`FRD-310`).
+        "fallback_mode": config.fallback_mode,
+    }
 
 
 def _api_key_payload(key: ApiKey) -> dict[str, Any]:

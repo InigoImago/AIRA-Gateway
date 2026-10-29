@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
+from aira_common.clock import day_ends, day_starts, month_ends, month_starts
 from aira_common.money import format_display
 from aira_gateway.budgets.errors import BudgetExceeded
 from aira_gateway.db.models import BudgetRead
@@ -56,36 +57,41 @@ _LIMIT_FIELDS = {"cost": "limit_cost_nanos", "requests": "limit_requests", "toke
 _AMOUNT_FIELDS = {"cost": "cost_nanos", "requests": "requests", "tokens": "tokens"}
 
 
-def period_key(period: str, now: datetime) -> str:
-    """The counter key for this moment: the **UTC** calendar day or month.
+def period_key(period: str, now: datetime, zone: tzinfo = UTC) -> str:
+    """The counter key for this moment: the calendar day or month **on the installation's clock**
+    (``zone``, `AIRA_TIME_ZONE`, `FRD-629`).
 
     Converted here rather than assumed of the caller, so the boundary does not depend on every
-    call site passing a UTC moment. The console's Period control tells readers it is UTC.
+    call site passing a moment in the right zone. The console labels every period with that clock.
     """
-    moment = now.astimezone(UTC)
+    moment = now.astimezone(zone)
     return moment.strftime("%Y-%m-%d") if period == "day" else moment.strftime("%Y-%m")
 
 
-def period_starts(period: str, now: datetime) -> datetime:
-    """The first moment of the counter `period_key` names — **UTC**, the other end of
-    `period_ends`, decided by the same arithmetic so the two cannot disagree about a boundary."""
-    moment = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    return moment if period == "day" else moment.replace(day=1)
+def period_starts(period: str, now: datetime, zone: tzinfo = UTC) -> datetime:
+    """The first moment of the counter `period_key` names — the other end of `period_ends`,
+    decided by the same clock so the two cannot disagree about a boundary. An instant in UTC, so
+    two boundaries subtract as the time between them (`aira_common.clock`)."""
+    return day_starts(now, zone) if period == "day" else month_starts(now, zone)
 
 
-def period_ends(period: str, now: datetime) -> datetime:
-    """When the counter `period_key` names is replaced by the next one — **UTC**, half-open.
+def period_ends(period: str, now: datetime, zone: tzinfo = UTC) -> datetime:
+    """When the counter `period_key` names is replaced by the next one — half-open, the zone's
+    next midnight: 23 or 25 hours on the days the clocks change, never a day's seconds added.
 
     Beside `period_key` because it is the same arithmetic read the other way, and a second place
     that decided where a month ends would eventually disagree with the place that decides where it
     begins. The answer is the *first moment of the next period*, which is the moment the counter
     resets: a caller asking "when does my allowance come back" is told that, not 23:59:59.
     """
-    moment = now.astimezone(UTC)
-    if period == "day":
-        return (moment + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    year, month = (moment.year + 1, 1) if moment.month == 12 else (moment.year, moment.month + 1)
-    return moment.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return day_ends(now, zone) if period == "day" else month_ends(now, zone)
+
+
+def resets_at(period: str, now: datetime, zone: tzinfo = UTC) -> str:
+    """`period_ends` as a caller is told it: ISO 8601 **with the zone's offset**, so a client
+    reading the date of a reset reads the installation's date — `2026-11-01T00:00:00+01:00`, where
+    the same instant in UTC would say 31 October."""
+    return period_ends(period, now, zone).astimezone(zone).isoformat()
 
 
 class Unbound(LookupError):
@@ -119,6 +125,7 @@ def exceeded(
     now: datetime,
     asked: Any | None = None,
     settled: Any | None = None,
+    zone: tzinfo = UTC,
 ) -> BudgetExceeded:
     """The refusal for ``budget``, breached on ``dimension`` (`cost`, `requests` or `tokens`).
 
@@ -130,7 +137,7 @@ def exceeded(
     a caller told "exhausted" would wait for the period to end.
     """
     scope, period = _scope_label(budget), budget.period
-    resets_at = period_ends(budget.period, now).isoformat()
+    resets = resets_at(budget.period, now, zone)
     limit = getattr(budget, _LIMIT_FIELDS[dimension])
     alone = getattr(asked, _AMOUNT_FIELDS[dimension], 0) if asked is not None else 0
     booked = getattr(settled, _AMOUNT_FIELDS[dimension], None) if settled is not None else None
@@ -145,7 +152,7 @@ def exceeded(
         )
     else:
         message = _BREACH_MESSAGES[dimension].format(scope=scope, period=period)
-    return BudgetExceeded(f"{message} It resets at {resets_at}.", resets_at=resets_at)
+    return BudgetExceeded(f"{message} It resets at {resets}.", resets_at=resets)
 
 
 def _amount(dimension: str, value: int) -> str:

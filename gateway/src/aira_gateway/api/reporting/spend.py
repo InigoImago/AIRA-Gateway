@@ -28,7 +28,7 @@ from aira_gateway.reporting.register_csv import filename as register_filename
 from aira_gateway.reporting.register_csv import render as render_register
 from aira_gateway.reporting.series import SPLITS, TooManyBuckets, resolve
 from aira_gateway.reporting.service import ReportingService, Scope
-from aira_gateway.state import sessionmaker_of, settings_of
+from aira_gateway.state import clock_of, sessionmaker_of, settings_of
 
 #: What may be asked of the series parameter. ``auto`` lets the window decide; the empty string is
 #: *no series at all*, which is what a caller who only wants the tables sends.
@@ -105,7 +105,8 @@ async def reporting(
     ``split`` says what the bands are (`FRD-626`). ``person`` narrows it to one person's own
     traffic, which is what a member's own card on a use case's page asks for.
     """
-    window_start, window_end = window(start, end, what="reporting")
+    zone = clock_of(request)
+    window_start, window_end = window(start, end, what="reporting", zone=zone)
     fmt = negotiate(request.headers.get("accept", ""))
     if fmt == "csv" and breakdown not in BREAKDOWNS:
         raise GeminiHTTPError(
@@ -172,6 +173,7 @@ async def reporting(
         # than kept as a claim (`tools/mutation_check.py`'s own note on a property enforced twice).
         person=person,
         people_limited_to=limited,
+        zone=zone,
     )
     report["person"] = person or None
     report["scope"] = scope_label(scope)
@@ -200,9 +202,8 @@ async def reporting(
         settings_of(request).currency,
         latency=not (strict_data and breakdown in PERSON_BREAKDOWNS),
     )
-    return csv_attachment(
-        body, filename(breakdown, window_start.isoformat(), window_end.isoformat())
-    )
+    # The file is named by the window's dates on the installation's clock, as its header states it.
+    return csv_attachment(body, filename(breakdown, str(report["from"]), str(report["to"])))
 
 
 @router.get("/v1beta/register")
@@ -219,23 +220,25 @@ async def register(
     although Management authors the configuration: the read-model carries that half (`UseCaseRead`)
     and the audit trail is the other.
     """
-    window_start, window_end = window(start, end, what="register")
+    zone = clock_of(request)
+    window_start, window_end = window(start, end, what="register", zone=zone)
     fmt = negotiate(request.headers.get("accept", ""))
     scope = visible_scope(principal, Permission.REPORT_READ_ALL)
     compiled = await RegisterService(
         sessionmaker_of(request), strict_data=settings_of(request).strict_data_mode
     ).compile(scope, window_start, window_end)
+    # The window as the installation's clock reads it (`FRD-629`), in the file and its name alike.
+    shown_from = window_start.astimezone(zone).isoformat()
+    shown_to = window_end.astimezone(zone).isoformat()
 
     if fmt == "csv":
-        body = render_register(compiled, window_start.isoformat(), window_end.isoformat())
-        return csv_attachment(
-            body, register_filename(window_start.isoformat(), window_end.isoformat())
-        )
+        body = render_register(compiled, shown_from, shown_to, zone)
+        return csv_attachment(body, register_filename(shown_from, shown_to))
 
     return JSONResponse(
         {
-            "from": window_start.isoformat(),
-            "to": window_end.isoformat(),
+            "from": shown_from,
+            "to": shown_to,
             "scope": scope_label(scope),
             **compiled.as_dict(),
         }

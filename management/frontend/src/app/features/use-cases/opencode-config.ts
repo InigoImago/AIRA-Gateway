@@ -25,9 +25,38 @@ const OPENCODE_CURRENCY = 'USD';
 export interface OpenCodeModel {
   name: string;
   limit?: { context: number; output: number };
-  cost?: { input: number; output: number };
+  cost?: OpenCodeCost;
   variants?: Record<string, OpenCodeVariant>;
 }
+
+/**
+ * What OpenCode multiplies its token counts by, per 1,000,000 tokens — both generations read these
+ * keys (`FRD-408`).
+ *
+ * **Every rate the gateway charges goes in.** OpenCode prices a rate it is not given at zero: it
+ * subtracts the cached tokens from the input and multiplies them by `cache_read`, so a file with
+ * only `input` and `output` showed every cache hit as free — in a long agentic session most of the
+ * prompt. The rates are the gateway's own (`pricing.Rates`): a cache price the catalogue states,
+ * else a read at the input price and a write at 1.25 times it.
+ */
+export interface OpenCodeCost extends OpenCodeRates {
+  /** The rates above 200,000 prompt tokens — the one length OpenCode's file can state. */
+  context_over_200k?: OpenCodeRates;
+}
+
+export interface OpenCodeRates {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+/** The one prompt length OpenCode's configuration can carry a second set of prices for. */
+const OPENCODE_LONG_CONTEXT = 200_000;
+
+/** A write at 1.25 times the input price where the catalogue states none — the gateway's rule
+ *  (`pricing.CACHE_WRITE_NUMERATOR`), so OpenCode adds up what the gateway charges. */
+const CACHE_WRITE_FACTOR = 1.25;
 
 /**
  * The level words OpenCode can send, least thinking first. Its Google client refuses any other
@@ -94,6 +123,47 @@ function labelled(model: string, currency: string, priced: boolean): string {
   return `${model} via AIRA (${unit})`;
 }
 
+/** One set of rates as OpenCode reads it, an absent cache price filled the way the gateway fills
+ *  it — never left out, which OpenCode would read as free. */
+function rates(
+  input: number,
+  output: number,
+  cached: number | null,
+  write: number | null,
+): OpenCodeRates {
+  return {
+    input,
+    output,
+    cache_read: cached ?? input,
+    cache_write: write ?? roundMicro(input * CACHE_WRITE_FACTOR),
+  };
+}
+
+/** A price to the catalogue's six places, so `1.25 * 0.3` is written `0.375` and not
+ *  `0.37500000000000006`. */
+function roundMicro(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+/**
+ * The rates above 200,000 prompt tokens, where the catalogue states that step (`FRD-408`).
+ * Another length — some Claude models step up at 100,000 — has no key in OpenCode's file, so the
+ * model gets none and OpenCode under-states requests past that length; the gateway's own figures,
+ * and the budget plugin that shows them, do not.
+ */
+function longContext(model: CatalogModel): OpenCodeRates | null {
+  if (model.long_context_threshold !== OPENCODE_LONG_CONTEXT) return null;
+  const input = priced(model.long_context_input_price_per_million);
+  const output = priced(model.long_context_output_price_per_million);
+  if (input === null || output === null) return null;
+  return rates(
+    input,
+    output,
+    priced(model.long_context_cached_input_price_per_million),
+    priced(model.long_context_cache_write_price_per_million),
+  );
+}
+
 /** A decimal string from the API as a number, or `null` for anything that is not one. */
 function priced(value: string | null | undefined): number | null {
   if (value === null || value === undefined || value.trim() === '') {
@@ -120,7 +190,16 @@ export function openCodeModel(model: CatalogModel, currency: string): OpenCodeMo
     entry.limit = { context, output };
   }
   if (hasPrice) {
-    entry.cost = { input: input as number, output: out as number };
+    entry.cost = rates(
+      input as number,
+      out as number,
+      priced(model.cached_input_price_per_million),
+      priced(model.cache_write_price_per_million),
+    );
+    const longer = longContext(model);
+    if (longer) {
+      entry.cost.context_over_200k = longer;
+    }
   }
   const variants = openCodeVariants(model.thinking);
   if (variants) {

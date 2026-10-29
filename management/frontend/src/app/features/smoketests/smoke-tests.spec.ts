@@ -1697,6 +1697,11 @@ describe('SmokeTests', () => {
     expect(names).toEqual([csvFileName(RUN)]);
     expect(csvFileName(RUN)).toMatch(/^aira-smoketest_uc-a_run-5_\d{4}-\d{2}-\d{2}\.csv$/);
     expect(csvFileName({ ...RUN, use_case: 'a b/c' })).toContain('_a_b_c_');
+    // Dated on the installation's clock, as the runs table shows it (`FRD-629`): 00:30 on
+    // 1 October in Berlin is still 30 September in UTC.
+    const lateRun = { ...RUN, started_at: '2026-09-30T22:30:00Z' };
+    expect(csvFileName(lateRun, 'Europe/Berlin')).toMatch(/_2026-10-01\.csv$/);
+    expect(csvFileName(lateRun)).toMatch(/_2026-09-30\.csv$/);
     vi.restoreAllMocks();
   });
 

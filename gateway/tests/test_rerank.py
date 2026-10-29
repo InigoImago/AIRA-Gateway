@@ -320,16 +320,27 @@ async def test_a_ranking_weighs_one_per_text_where_the_pipeline_reads_each() -> 
 
     weighed: dict[str, list[int]] = {}
     for name, steps in (
-        ("redacted", (PipelineStep(type=StepType.PII_FILTER, config={"model": "mock-1"}),)),
+        ("redacted", (PipelineStep(type=StepType.PII_FILTER, config={"model": "redactor-1"}),)),
         ("plain", ()),
     ):
         app = _app()
-        registry = ProviderRegistry([_Redactor()])
+        # The redactor writes text, which a reranker cannot: its own model (`FRD-310`).
+        registry = ProviderRegistry([_Redactor("mock-1", "redactor-1")])
         app.state.providers = registry
         app.state.pipeline_engine = PipelineEngine(registry)
         app.state.pipeline_store = _Store(*steps)
         with TestClient(app) as client:
             await _ranker(app)
+            async with app.state.db_sessionmaker() as session:
+                session.add(
+                    ModelRead(
+                        model="redactor-1",
+                        numeric_id=3002,
+                        capabilities=["generate"],
+                        approved=True,
+                    )
+                )
+                await session.commit()
             limits = app.state.rate_limits
             seen: list[int] = []
 

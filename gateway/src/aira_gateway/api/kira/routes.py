@@ -52,6 +52,7 @@ from aira_gateway.api.serving import (
     catalog_of,
     check_structured_result,
     declared_routing,
+    embed_along_chain,
     ensure_body_is_encodable,
     fitting,
     json_body,
@@ -61,7 +62,6 @@ from aira_gateway.api.serving import (
     record_refusal,
     refusal_reason,
     requirements_for,
-    resolve_direct_target,
     schema_bounds,
 )
 from aira_gateway.audit import AuditTrail
@@ -77,7 +77,6 @@ from aira_gateway.embedding import (
 from aira_gateway.explaining import REASON_HEADER, explain
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
-from aira_gateway.telemetry import model_call_span
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -276,13 +275,12 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
         async with accounting(
             request, trail, prepared, api="kira", operation="embed", started=started
         ) as acct:
-            # An embedding has no dispatch chain, so the conditions are applied here.
-            provider = await resolve_direct_target(request, model)
-            with model_call_span(str(embed_request.model), purpose="embed"):
-                vectors = await provider.embed(embed_request)
+            # Along the embedding's chain, every candidate meeting every condition (`FRD-310`).
+            vectors = await embed_along_chain(request, prepared, trail)
             # One vector, whatever the input shape: a list was joined into one text.
             payload = schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
-            acct.embedded(model, units=embed_request.size, vectors=vectors)
+            # Booked as the model that gave the vector, which for a fallback is not the one named.
+            acct.embedded(trail.served_model, units=embed_request.size, vectors=vectors)
         return JSONResponse(payload, headers=surface_headers(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
@@ -307,9 +305,9 @@ async def rerank(request: Request, principal: Principal = Depends(require_princi
         async with accounting(
             request, trail, prepared, api="kira", operation="rerank", started=started
         ) as acct:
-            ranked = await rank(request, prepared)
+            ranked = await rank(request, prepared, trail)
             payload = to_rerank_response(ranked).model_dump()
-            acct.ranked(model, units=prepared.rerank.units, records=ranked)
+            acct.ranked(trail.served_model, units=prepared.rerank.units, records=ranked)
         return JSONResponse(payload, headers=surface_headers(request))
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)

@@ -24,6 +24,7 @@ a redactor coaxed into answering would otherwise answer a prompt the next step r
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -31,6 +32,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_common.access import GrantRole
+from aira_common.fallback import FallbackKind
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.refusals import refusal_response as _refusal
@@ -44,7 +46,7 @@ from aira_gateway.api.serving import (
     refuse_unless_live,
     released_for,
 )
-from aira_gateway.api.serving.conditions import installation_requirements
+from aira_gateway.api.serving.fallbacks import fallbacks_for, step_requirements
 from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution, attribute
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
@@ -54,7 +56,7 @@ from aira_gateway.payloads import grant_role_in
 from aira_gateway.pipeline.config import Pipeline, problem_in
 from aira_gateway.pipeline.engine import DryRunResult, PipelineEngine
 from aira_gateway.pipeline.store import PipelineStore
-from aira_gateway.requirements import ModelApproved, permits
+from aira_gateway.requirements import ModelApproved
 from aira_gateway.state import providers_of, sessionmaker_of
 from aira_gateway.upstreams.base import ProviderRegistry
 
@@ -350,11 +352,14 @@ async def dry_run(
             declaration_of=await declared_model(request),
             past_blocks=payload.past_blocks,
             # Production's conditions on each step's model: a dry run is not a way round them.
-            permits=permits(await installation_requirements(request)),
+            permits=await step_requirements(request),
         )
     finally:
         # A filter that blocked still spent the tokens it took to decide that. There is no response
         # row — a dry run dispatches nothing — only the calls its steps made.
         await record_pipeline_calls(request, trail)
 
-    return _rendered(result, model_words=authors)
+    # The chain a request of this pipeline would fall back along: its own, the installation's, or
+    # none (`FRD-310`) — not merely the list the pipeline carries.
+    chain = await fallbacks_for(request, FallbackKind.GENERATE, pipeline)
+    return _rendered(replace(result, fallback_models=chain), model_words=authors)

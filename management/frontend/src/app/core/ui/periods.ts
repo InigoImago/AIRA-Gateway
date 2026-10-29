@@ -1,19 +1,19 @@
+import { DEFAULT_CLOCK, dayIn } from './clock';
+
 /**
- * What a named period means as a `[from, to)` pair of **UTC** days (`FRD-601`, `FRD-603`).
+ * What a named period means as a `[from, to)` pair of days **on the installation's clock**
+ * (`FRD-601`, `FRD-603`, `FRD-629`).
  *
- * UTC because every figure these windows select is counted in UTC: a budget or a per-person
- * allowance resets at UTC midnight and on the first of the UTC month, the gateway buckets its
- * series in UTC, and it reads a bare date as a UTC day. A window taken from the reader's own
- * calendar is a different window from the one the gateway counts against — after midnight east of
- * Greenwich, "today" would be a day that has not started for the counter that refuses. So the
- * window is the gateway's, and the screens say which clock it is on ({@link PERIOD_CLOCK}).
+ * That clock because every figure these windows select is counted on it: a budget or a per-person
+ * allowance resets at its midnight and on the first of its month, the gateway buckets its series
+ * on it, and it reads a bare date as one of its days. A window taken from the reader's own
+ * calendar is a different window from the one the gateway counts against — after midnight in a
+ * zone ahead of the installation's, "today" would be a day that has not started for the counter
+ * that refuses. So the window is the gateway's, and the screens say which clock it is on.
  *
  * Shared by the reporting screen, the register and a use case's overview, because the rules below
  * are off-by-one bugs that only appear at certain hours or on certain days.
  */
-
-/** The clock every period, bucket and budget on this console is counted in — for a label. */
-export const PERIOD_CLOCK = 'UTC';
 
 /** A period a person actually asks about, rather than two dates they have to compute. */
 export type Preset =
@@ -24,25 +24,33 @@ export type Preset =
  * local parts — `new Date(year, month, day)` — so the date is the one that was constructed.
  *
  * For calendar arithmetic on a date the reader typed. Not for "now": the day it is *now* is the
- * UTC day ({@link utcDay}), the one the gateway counts.
+ * installation's ({@link dayIn}), the one the gateway counts.
  */
 export function isoDay(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** The UTC day a moment falls on, as `YYYY-MM-DD` — what the gateway reads a bare date as. */
+/** The UTC day a moment falls on, as `YYYY-MM-DD`. Calendar arithmetic below runs on it. */
 export function utcDay(moment: Date): string {
   return moment.toISOString().slice(0, 10);
 }
 
-/** The `[from, to)` pair a preset means at `now`, as UTC days. `to` is exclusive throughout. */
-export function windowFor(preset: Preset, now: Date): { from: string; to: string } {
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const date = now.getUTCDate();
-  const day = (offset: number) => utcDay(new Date(Date.UTC(year, month, date + offset)));
-  const firstOf = (offset: number) => utcDay(new Date(Date.UTC(year, month + offset, 1)));
+/**
+ * The `[from, to)` pair a preset means at `now`, as days on the installation's clock (``zone``).
+ * `to` is exclusive throughout.
+ *
+ * Today is the zone's date; the days around it are calendar arithmetic on that date, done in UTC
+ * where no clock changes.
+ */
+export function windowFor(
+  preset: Preset,
+  now: Date,
+  zone: string = DEFAULT_CLOCK,
+): { from: string; to: string } {
+  const [year, month, date] = dayIn(now, zone).split('-').map(Number);
+  const day = (offset: number) => utcDay(new Date(Date.UTC(year, month - 1, date + offset)));
+  const firstOf = (offset: number) => utcDay(new Date(Date.UTC(year, month - 1 + offset, 1)));
   switch (preset) {
     // Not in the reporting picker: the consumption panel shows it beside the month, so "burning
     // through it right now" and "spent since the first" are two figures.
@@ -94,6 +102,6 @@ export function lastDayOf(to: string): string {
 
 /** A window as a person reads it — first and last day included, and the clock they are days on —
  *  or `''` before there is one. */
-export function periodText(window: DayWindow | null): string {
-  return window ? `${window.from} to ${lastDayOf(window.to)} (${PERIOD_CLOCK})` : '';
+export function periodText(window: DayWindow | null, zone: string = DEFAULT_CLOCK): string {
+  return window ? `${window.from} to ${lastDayOf(window.to)} (${zone})` : '';
 }

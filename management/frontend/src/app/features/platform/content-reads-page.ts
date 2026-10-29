@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -9,6 +8,7 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { CursorTableView } from '../../core/ui/cursor-table-view';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 /** One page of the log, which is all the browser ever holds of it. */
 const PAGE = 50;
@@ -47,7 +47,7 @@ const ACCESS_METHODS: Record<string, string> = {
 
 @Component({
   selector: 'app-content-reads-page',
-  imports: [DatePipe, FormsModule, RouterLink, TablePager],
+  imports: [ZonedPipe, FormsModule, RouterLink, TablePager],
   templateUrl: './content-reads-page.html',
   providers: [PageFeedback],
 })

@@ -83,3 +83,8 @@ and that was a statement about the **values** and not about the **session**. It 
 - **Follow-up.** If a percentile ever becomes worth a dialect-dependent expression (`FRD-601` §4.2's
   own open question), this ADR is the precedent for *not* doing it — and the text-prefix trick is
   the precedent for looking for the portable spelling first.
+
+> **Amended 2026-10-28 (`ADR-0049`).** The follow-up above is taken: an installation names its clock
+> (`AIRA_TIME_ZONE`), and every period begins on it. The session stays UTC and the bucket stays the
+> text prefix; on another clock the series counts by the UTC hour in SQL and folds the hours into
+> the zone's days and hours in the process, which is why a zone part of an hour off UTC is refused.

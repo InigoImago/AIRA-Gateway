@@ -57,6 +57,7 @@ services:
       AIRA_DRAIN_LEFT_STREAMS_SECONDS: ${AIRA_DRAIN_LEFT_STREAMS_SECONDS:-600}
       AIRA_STREAM_KEEPALIVE_SECONDS: ${AIRA_STREAM_KEEPALIVE_SECONDS:-15}
       AIRA_CURRENCY: ${AIRA_CURRENCY:-EUR}
+      AIRA_TIME_ZONE: ${AIRA_TIME_ZONE:-UTC}
       AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}
       AIRA_DETECT_ANOMALIES: ${AIRA_DETECT_ANOMALIES:-true}
       AIRA_ENFORCE_BUDGETS: ${AIRA_ENFORCE_BUDGETS:-true}
@@ -243,6 +244,7 @@ services:
       AIRA_API_KEY_MAX_DAYS: ${AIRA_API_KEY_MAX_DAYS:-180}
       AIRA_APP_NAME: ${AIRA_APP_NAME:-aira-management}
       AIRA_CURRENCY: ${AIRA_CURRENCY:-EUR}
+      AIRA_TIME_ZONE: ${AIRA_TIME_ZONE:-UTC}
       # **Both halves.** `build_directory()` needs the id *and* the secret and returns `None`
       # without either, so passing only the id made `FRD-209`'s directory search unreachable
       # in any containerised deployment: the console silently fell back to what Management

@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from aira_common.clock import zone_named
 from aira_common.counters import DegradationLog, ScriptRunner, build_runner
 from aira_common.logging import get_logger
 from aira_common.observability import redact_query_string
@@ -53,7 +54,7 @@ from aira_gateway.middleware import (
 from aira_gateway.persistence.redaction import build_redactor
 from aira_gateway.persistence.writer import RequestLogWriter
 from aira_gateway.pipeline.engine import PipelineEngine
-from aira_gateway.pipeline.store import PipelineStore
+from aira_gateway.pipeline.store import FallbackChains, PipelineStore
 from aira_gateway.pricing import PricingService
 from aira_gateway.ratelimit.buckets import (
     FallbackTokenBucket,
@@ -176,13 +177,19 @@ def _assemble_services(
     # readiness as slow as the slowest upstream and wake a scaled-to-zero endpoint on every check.
     app.state.upstream_probe = UpstreamProbe(registry, degradation)
     app.state.pipeline_store = PipelineStore(sessionmaker)
+    # The installation's fallback chain per kind of request (`FRD-310`).
+    app.state.fallback_chains = FallbackChains(sessionmaker)
     app.state.counters = counters
     app.state.degradation = degradation
+    # The installation's clock (`FRD-629`), once: the budgets count on it and every surface that
+    # names a period reads it (`state.clock_of`).
+    app.state.clock = zone_named(settings.time_zone)
     app.state.budgets = BudgetService(
         sessionmaker,
         enforce=settings.enforce_budgets,
         ledger=BudgetLedger(counters),
         degradation=degradation,
+        zone=app.state.clock,
     )
     app.state.rate_limits = RateLimitService(
         sessionmaker,

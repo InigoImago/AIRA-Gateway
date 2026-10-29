@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { errorMessage } from '../api/error-message';
 import { PrivacyNotice } from '../api/models';
@@ -7,6 +6,7 @@ import { Modal } from '../ui/modal';
 import { PrivacyLanguagePicker } from './privacy-language-picker';
 import { PrivacyNoticeBody } from './privacy-notice-body';
 import { PrivacyNoticeService } from './privacy-notice.service';
+import { ZonedPipe } from '../ui/zoned.pipe';
 
 /** What the shell says before a notice exists to take the words from. */
 const LOAD_FAILED = 'The privacy notice could not be loaded.';
@@ -25,7 +25,7 @@ const LOAD_FAILED = 'The privacy notice could not be loaded.';
  */
 @Component({
   selector: 'app-privacy-gate',
-  imports: [DatePipe, Modal, PrivacyLanguagePicker, PrivacyNoticeBody],
+  imports: [ZonedPipe, Modal, PrivacyLanguagePicker, PrivacyNoticeBody],
   templateUrl: './privacy-gate.html',
 })
 export class PrivacyGate implements OnInit {

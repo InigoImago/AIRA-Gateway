@@ -2,6 +2,7 @@ import { Component, computed, inject, input, output, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 import { MeService, unitSuffix } from '../../api/me.service';
 import { Granularity, SeriesSplit, UsageSeries } from '../../api/types/reporting';
+import { InstallationClock } from '../clock';
 import { InfoHint } from '../info-hint';
 import { Preset } from '../periods';
 import { CompositionBar } from './composition-bar';
@@ -106,6 +107,7 @@ export class UsageChart {
   readonly splitChange = output<SeriesSplit>();
 
   private readonly currency = inject(MeService).currency;
+  private readonly installation = inject(InstallationClock).zone;
 
   /** Which measure is drawn. A signal, not a property: this console is zoneless (`FRD-203` §4). */
   protected readonly metric = signal<Metric>('cost');
@@ -195,6 +197,12 @@ export class UsageChart {
 
   /** What the axis turned out to be, which `auto` only decides on the server. */
   protected readonly resolved = computed(() => this.series()?.granularity ?? null);
+
+  /**
+   * The clock the buckets are on, **as the series says** — the gateway decided it when it counted —
+   * and the installation's while there is no series to ask (`FRD-629`).
+   */
+  protected readonly clock = computed(() => this.series()?.time_zone ?? this.installation());
 
   protected setMetric(metric: string): void {
     this.metric.set(metric as Metric);

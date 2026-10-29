@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from aira_common.fallback import FallbackKind, FallbackMode, chain_for, stored_mode
 from aira_common.logging import get_logger
 from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
 from aira_common.pipelines import (
@@ -220,12 +221,26 @@ class PipelineStep:
 @dataclass(frozen=True, slots=True)
 class Pipeline:
     steps: tuple[PipelineStep, ...] = ()
+    #: The use case's own chain for text generation, used under ``FallbackMode.OWN`` only.
     fallback_models: tuple[str, ...] = ()
+    #: What the use case does with the installation's fallback chains (`FRD-310`); ``None`` where
+    #: nothing said, read as such a pipeline always meant (:attr:`mode`).
+    fallback_mode: FallbackMode | None = None
+
+    @property
+    def mode(self) -> FallbackMode:
+        """The use case's choice — its own chain where it names one and said nothing else."""
+        return stored_mode(self.fallback_mode, self.fallback_models)
 
     @property
     def is_empty(self) -> bool:
-        """Whether running this changes nothing."""
-        return not self.steps and not self.fallback_models
+        """Whether running this changes nothing — no step, and the installation's chains."""
+        return not self.steps and not self.fallback_models and self.mode is FallbackMode.DEFAULT
+
+    def chain_for(self, kind: FallbackKind, installation: tuple[str, ...]) -> tuple[str, ...]:
+        """The models a request of ``kind`` falls back to: this use case's choice, applied to
+        the installation's chain for that kind (`aira_common.fallback.chain_for`)."""
+        return chain_for(kind, self.mode, self.fallback_models, installation)
 
     @classmethod
     def from_dict(cls, data: Any) -> Pipeline:
@@ -263,7 +278,11 @@ class Pipeline:
             for m in _strings(chain, "pipeline", "fallback_models")[:MAX_FALLBACK_MODELS]
             if m
         )
-        return cls(steps=tuple(steps), fallback_models=fallbacks)
+        said = data.get("fallback_mode")
+        mode = None if said is None else stored_mode(said, fallbacks)
+        if said is not None and str(mode) != said:
+            _corrected("pipeline", "fallback_mode", f"{said!r} is not a mode")
+        return cls(steps=tuple(steps), fallback_models=fallbacks, fallback_mode=mode)
 
 
 def problem_in(data: Any) -> str | None:
@@ -293,6 +312,9 @@ def problem_in(data: Any) -> str | None:
         problem = _config_problem(StepType(step["type"]), config, f"{where}.config")
         if problem is not None:
             return problem
+    mode = data.get("fallback_mode")
+    if mode is not None and not _is_word(mode, FallbackMode):
+        return f"pipeline.fallback_mode must be one of {_words(FallbackMode)}."
     return _names_problem(data.get("fallback_models", []), "pipeline.fallback_models")
 
 

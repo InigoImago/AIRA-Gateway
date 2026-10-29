@@ -13,6 +13,7 @@ failure. `test_app_state_is_typed.py` requires every read outside this module to
 
 from __future__ import annotations
 
+from datetime import tzinfo
 from typing import TYPE_CHECKING
 
 from fastapi import Request
@@ -82,6 +83,14 @@ def writer_of(request: Request) -> RequestLogWriter:
     """The off-path audit writer (`FRD-405` §4.4)."""
     writer: RequestLogWriter = request.app.state.log_writer
     return writer
+
+
+def clock_of(request: Request) -> tzinfo:
+    """The installation's clock (`AIRA_TIME_ZONE`, `FRD-629`): where its days, weeks and months
+    begin. Resolved once at start-up from settings that were validated, so it cannot refuse a
+    request."""
+    clock: tzinfo = request.app.state.clock
+    return clock
 
 
 def providers_of(request: Request) -> ProviderRegistry:

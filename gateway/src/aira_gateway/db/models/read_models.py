@@ -112,6 +112,22 @@ class PipelineConfigRead(Base):
     use_case: Mapped[str] = mapped_column(String(64), primary_key=True)
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     fallback_models: Mapped[list[str]] = mapped_column(JSON, default=list)
+    #: What the use case does with the installation's fallback chains (`FRD-310`). NULL from an
+    #: older Management, read by `aira_common.fallback.stored_mode`.
+    fallback_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FallbackChainRead(Base):
+    """The installation's fallback chain for one kind of request (`FRD-310`).
+
+    No row is an empty chain: a model that cannot answer is then the caller's error.
+    """
+
+    __tablename__ = "fallback_chains"
+
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    models: Mapped[list[str]] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -198,12 +214,27 @@ class ModelRead(Base):
     provider: Mapped[str] = mapped_column(String(64), default="")
     input_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     output_price_per_million_nanos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    #: What a cache read and a cache write cost (`FRD-133`). Absent means the ordinary input rate,
-    #: which never under-bills.
+    #: What a cache read and a cache write cost (`FRD-133`). Absent, a read is charged at the
+    #: ordinary input rate and a write at 1.25x it (`pricing.Rates`).
     cached_input_price_per_million_nanos: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
     cache_write_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    #: The longest prompt, in tokens, the prices above apply to, and the prices of a request whose
+    #: prompt is longer (`FRD-408`). All NULL for a model priced alike at every length.
+    long_context_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    long_context_input_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    long_context_output_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    long_context_cached_input_price_per_million_nanos: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    long_context_cache_write_price_per_million_nanos: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
 

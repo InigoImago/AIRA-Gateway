@@ -130,6 +130,11 @@ DATABASES = build_databases(_settings, _use_sqlite)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 USE_TZ = True
+# Every timestamp the API answers is written in UTC, an instant any client reads the same way.
+# Stated because Django's default is America/Chicago, which a serializer field would answer in.
+# The installation's own clock (`AIRA_TIME_ZONE`) is the console's to show and the periods' to
+# begin on (`FRD-629`).
+TIME_ZONE = "UTC"
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],

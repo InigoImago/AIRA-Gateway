@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import {
   Component,
   DestroyRef,
@@ -15,6 +14,7 @@ import { UseCaseService } from '../../core/api/use-case.service';
 import { Live } from '../../core/ui/live';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { WITHHELD_REASON, targetAtStart, targetName } from '../../core/ui/withheld';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 const REFRESH_SECONDS = 20;
 
@@ -57,7 +57,7 @@ interface Poll {
  */
 @Component({
   selector: 'app-warnings-tab',
-  imports: [DatePipe],
+  imports: [ZonedPipe],
   templateUrl: './warnings-tab.html',
   // On the component, so the poll ends with the panel (see `traces-tab.ts`).
   providers: [Live],

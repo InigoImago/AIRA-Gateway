@@ -22,7 +22,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from aira_common.permissions import Permission
-from aira_management.apps.catalog import reference
+from aira_management.apps.catalog import fallback, reference
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.serializers import ModelSerializer
 from aira_management.apps.usecases.events import emit
@@ -92,6 +92,17 @@ def _payload(model: Model) -> dict[str, Any]:
         "output_price_per_million": _price(model.output_price_per_million),
         "cached_input_price_per_million": _price(model.cached_input_price_per_million),
         "cache_write_price_per_million": _price(model.cache_write_price_per_million),
+        "long_context_threshold": model.long_context_threshold,
+        "long_context_input_price_per_million": _price(model.long_context_input_price_per_million),
+        "long_context_output_price_per_million": _price(
+            model.long_context_output_price_per_million
+        ),
+        "long_context_cached_input_price_per_million": _price(
+            model.long_context_cached_input_price_per_million
+        ),
+        "long_context_cache_write_price_per_million": _price(
+            model.long_context_cache_write_price_per_million
+        ),
         "capabilities": list(model.capabilities or []),
         "publisher": model.publisher,
         "platform": model.platform,
@@ -156,6 +167,8 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
             emit("model.deleted", {"name": name})
             for usecase in releasing:
                 emit("usecase.upserted", _snapshot(usecase))
+            # And out of the installation's fallback chains (`FRD-310`), which name it by name.
+            fallback.forget(name)
 
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """Upsert by name, so re-posting a price corrects it instead of colliding.

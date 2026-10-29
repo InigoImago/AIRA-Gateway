@@ -8,8 +8,8 @@
       <caption class="sr-only" [textContent]="caption()"></caption>
       <thead>
         <tr>
-          <!-- UTC: the clock the gateway buckets in, and the one every budget resets on. -->
-          <th scope="col">{{ bucketLabel() }} (UTC)</th>
+          <!-- The clock the gateway bucketed on, and the one every budget resets on. -->
+          <th scope="col">{{ bucketLabel() }} ({{ clock() }})</th>
           <th scope="col">{{ nounLabel() }}</th>
           <th scope="col">Requests</th>
           <!-- **Spend before the token split**, and not for emphasis. On a phone this table scrolls

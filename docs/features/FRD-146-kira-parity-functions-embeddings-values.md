@@ -135,6 +135,7 @@ confirm or correct it.
   by person in columns an index can answer. Any credential holder may call this, so it must not
   cost more than the figure it returns. Both ends of the window are compared in UTC: a date without
   an offset is read as UTC, one with an offset converted.
+  *Changed by `FRD-629`:* a date without an offset is read on the installation's clock.
 - **FR-22 CSV** when the caller sends `Accept: text/csv`: the same columns, UTF-8 with a BOM.
 
 ## 5. Design & Architecture

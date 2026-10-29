@@ -95,6 +95,11 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
   report, so such a stream is unknown rather than booked at zero.
   Counting sends the request and the received answer to the same vendor and region a second time;
   the privacy notice says so (`FRD-625`, edition 2026-10-13).
+  > **Widened 2026-10-28 (`FRD-408` FR-6).** The same count applies to a stream that **broke
+  > off** after its first chunk with nothing reported, where the connection or this gateway's
+  > time limit ended it rather than the vendor — which answers on, and bills, on its side.
+  > The row keeps its failure status. A running total reported before such a break is booked
+  > and marked `partial`. A vendor's own error ends the answer, and nothing is counted.
 - **FR-7** A stream whose caller left is **read to its end first** (`ADR-0041`). The upstream's
   chunks are read by a task of their own (`api/serving/pump.py`), and each is observed for the
   accounting as it is read — before it is handed on, and whether or not it ever is. When the caller

@@ -108,10 +108,14 @@ async def test_a_cache_write_costs_more_than_ordinary_input(sessions) -> None:
     assert cost > to_nanos("10.00"), "a cache write priced as ordinary input under-bills"
 
 
-async def test_an_undeclared_cache_price_falls_back_to_the_input_rate(sessions) -> None:
+async def test_an_undeclared_cache_price_is_never_free_and_never_below_the_bill(sessions) -> None:
     """**Not to zero.** `FRD-403`'s rule one field in: a rate nobody has declared is not a free
-    one. Falling back to the ordinary input rate is what the system did before these columns
-    existed, so an installation that declares nothing keeps exactly its previous figures."""
+    one. A read falls back to the ordinary input rate, which can only over-state it.
+
+    A **write** falls back to 1.25x that rate (`FRD-408`): it used to fall back to the input rate as
+    well, under the claim that this "never under-bills" — true of a read, and a quarter short of
+    every write, because the one provider that reports writes (Anthropic) bills a five-minute write
+    at 1.25x. 600k reads at 10.00 and 400k writes at 12.50."""
     await _priced(sessions, cached=None, write=None)
     usage = CanonicalUsage(
         prompt_tokens=1_000_000,
@@ -122,7 +126,58 @@ async def test_an_undeclared_cache_price_falls_back_to_the_input_rate(sessions) 
 
     cost = await PricingService(sessions).cost_nanos("m1", usage)
 
-    assert cost == to_nanos("10.00")
+    assert cost == to_nanos("6.00") + to_nanos("5.00")
+
+
+async def test_a_long_prompt_is_billed_at_its_own_rates_for_every_token(sessions) -> None:
+    """`FRD-408`: past the stated length, **every** token of the request — the answer and the cached
+    prefix too — is billed at the second set, as Google and Anthropic bill it. Gemini 2.5 Pro's
+    figures: 1.25/10/0.125 per million, and 2.50/15/0.25 above 200 000 prompt tokens."""
+    async with sessions() as session:
+        session.add(
+            ModelRead(
+                model="pro",
+                input_price_per_million_nanos=to_nanos("1.25"),
+                output_price_per_million_nanos=to_nanos("10"),
+                cached_input_price_per_million_nanos=to_nanos("0.125"),
+                long_context_threshold=200_000,
+                long_context_input_price_per_million_nanos=to_nanos("2.5"),
+                long_context_output_price_per_million_nanos=to_nanos("15"),
+                long_context_cached_input_price_per_million_nanos=to_nanos("0.25"),
+            )
+        )
+        await session.commit()
+    pricing = PricingService(sessions)
+    long = CanonicalUsage(
+        prompt_tokens=250_000, completion_tokens=3_000, cached_input_tokens=230_000
+    )
+    at_the_length = long.model_copy(
+        update={"prompt_tokens": 200_000, "cached_input_tokens": 180_000}
+    )
+
+    # 20k fresh at 2.50 + 230k cached at 0.25 + 3k out at 15 = 0.05 + 0.0575 + 0.045.
+    assert await pricing.cost_nanos("pro", long) == to_nanos("0.1525")
+    # At the length itself the ordinary rates apply: "longer than", not "at least".
+    assert await pricing.cost_nanos("pro", at_the_length) == to_nanos("0.0775")
+
+
+async def test_a_length_without_a_complete_second_set_bills_the_ordinary_rates(sessions) -> None:
+    """Half a second set is no second set: an event carrying a length and one price is read as the
+    ordinary rates at every length, never as a price nobody stated."""
+    async with sessions() as session:
+        session.add(
+            ModelRead(
+                model="half",
+                input_price_per_million_nanos=to_nanos("1"),
+                output_price_per_million_nanos=to_nanos("2"),
+                long_context_threshold=100,
+                long_context_input_price_per_million_nanos=to_nanos("50"),
+            )
+        )
+        await session.commit()
+    usage = CanonicalUsage(prompt_tokens=1_000_000, completion_tokens=0)
+
+    assert await PricingService(sessions).cost_nanos("half", usage) == to_nanos("1")
 
 
 async def test_a_request_with_no_cache_costs_exactly_what_it_did_before(sessions) -> None:

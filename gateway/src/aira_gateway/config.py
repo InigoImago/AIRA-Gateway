@@ -92,9 +92,11 @@ class GatewaySettings(BaseAiraSettings):
     #: under a cost limit, only a model with no price — is here, in the FRD and in the refusal.
     enforce_priced_models: bool = True
     #: Count a stream the caller left before its vendor reported usage, at the vendor's own free
-    #: counting endpoint, and book that floor (`FRD-128` FR-6). Off sends nothing a second time,
-    #: and such a stream stays unknown — booked as nothing. On by default: a cancelled stream was
-    #: billed, and a budget that cannot see it is a budget an agent client walks through.
+    #: counting endpoint, and book that floor (`FRD-128` FR-6) — and one that broke off because this
+    #: gateway stopped waiting or the connection was lost, while the vendor answered on
+    #: (`FRD-408`). Off sends nothing a second time, and such a stream stays unknown — booked as
+    #: nothing. On by default: such a stream was billed, and a budget that cannot see it is a
+    #: budget an agent client walks through.
     count_cancelled_streams: bool = True
     #: How long a stream whose caller left is read on, for the vendor's own figure of what the
     #: answer cost (`ADR-0041`). Several dialects report usage only in a stream's last chunk, so a

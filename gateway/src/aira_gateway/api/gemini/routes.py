@@ -42,6 +42,7 @@ from aira_gateway.api.serving import (
     check_structured_result,
     declared_routing,
     deprecation_headers,
+    embed_along_chain,
     ensure_body_is_encodable,
     fitting,
     json_body,
@@ -49,7 +50,6 @@ from aira_gateway.api.serving import (
     prepare_for_dispatch,
     record_refusal,
     requirements_for,
-    resolve_direct_target,
     schema_bounds,
     served_models,
     with_pings,
@@ -62,7 +62,6 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
-from aira_gateway.telemetry import model_call_span
 
 router = APIRouter(tags=["gemini"])
 
@@ -243,14 +242,12 @@ async def _embed(
 ) -> Response:
     embed_request = prepared.embed
     assert embed_request is not None
-    # An embedding has no chain to carry the conditions, so they are applied here.
-    provider = await resolve_direct_target(request, str(embed_request.model))
     started = time.monotonic()
     async with accounting(
         request, trail, prepared, api="gemini", operation=method, started=started
     ) as acct:
-        with model_call_span(str(embed_request.model), purpose="embed"):
-            vectors = await provider.embed(embed_request)
+        # Along the embedding's chain, every candidate meeting every condition (`FRD-310`).
+        vectors = await embed_along_chain(request, prepared, trail)
         payload = (
             schemas.BatchEmbedContentsResponse(
                 embeddings=[schemas.ContentEmbedding(values=values) for values in vectors]
@@ -260,7 +257,8 @@ async def _embed(
                 embedding=schemas.ContentEmbedding(values=vectors[0] if vectors else [])
             ).model_dump()
         )
-        acct.embedded(model, units=embed_request.size, vectors=vectors)
+        # Booked as the model that gave the vectors, which for a fallback is not the one named.
+        acct.embedded(trail.served_model, units=embed_request.size, vectors=vectors)
     return JSONResponse(payload, headers=headers)
 
 

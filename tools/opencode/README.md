@@ -120,11 +120,13 @@ from OpenCode. What the answer says that a tally cannot:
 
 - `remaining_*` is `null` where that dimension is **not capped** — not a large number, so a bar
   drawn from it cannot invent a limit nobody set;
-- `period_ends` is when the counter resets, which is the question that follows a refusal;
+- `period_ends` is when the counter resets, which is the question that follows a refusal — written
+  with the offset of the installation's clock, so its date is the installation's;
 - `enforced: false` means the limits are **figures and not stops** in this installation
   (`AIRA_ENFORCE_BUDGETS`), so a full-looking bar would be a lie;
 - `today`, `this_week` and `this_period` are what the audit trail says you spent today, since Monday
-  and this month, in UTC — with or without a budget.
+  and this month, on the installation's clock (`time_zone`, UTC unless the installation set
+  another) — with or without a budget.
 
 ### 3. Inside the session: the budget plugin
 

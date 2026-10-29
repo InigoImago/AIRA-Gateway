@@ -69,6 +69,8 @@ interface.
   (Monday to Monday) beside `this_period` (the month), each `{from, to}` and the reporting totals,
   narrowed to the caller like the month. UTC, as every reset time beside them. One session, three
   totals queries (`ReportingService.totals`), without the breakdowns a report screen needs.
+  *Changed by `FRD-629`:* on the installation's clock; the plugin reads a reset's date as the gateway wrote
+  it and names the clock the answer gives.
 - **FR-2 — the sidebar.** *AIRA budget*: the dimension that refuses first across every allowance
   that binds the caller, as a 20-cell bar with its percentage and `N of M <unit> left` (or `… over the
   limit`), whose counter and when it resets; then *Today*, *This week*, *This month* as cost and

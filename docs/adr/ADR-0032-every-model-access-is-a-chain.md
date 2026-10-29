@@ -90,6 +90,11 @@ says which happened — `skipped` for a condition, `failed` for an attempt.
 
 **4. An embedding keeps no chain.** Unchanged, and for the reason above.
 
+> **Amended 2026-10-28 (`ADR-0048`).** An embedding has a chain now — the installation's, empty
+> unless it sets one — held to a rule this section did not have: a stand-in must give vectors of
+> the width the model asked for would have given. The reason above still stands, and is said where
+> the chain is set: two models' vectors are not comparable at any width.
+
 ## Consequences
 
 - Positive: a use case's chain now covers the traffic that actually streams, which is most

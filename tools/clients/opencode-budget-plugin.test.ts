@@ -127,7 +127,10 @@ describe("the arithmetic", () => {
     expect(plugin.bar(0.5, 10)).toBe("█████░░░░░")
     expect(plugin.bar(-1, 4)).toBe("░░░░")
     expect(plugin.resets("2026-11-01T00:00:00+00:00")).toBe("1 Nov")
+    // Midnight in Berlin is the 31st in UTC: the date the gateway wrote is the one meant.
+    expect(plugin.resets("2026-11-01T00:00:00+01:00")).toBe("1 Nov")
     expect(plugin.resets("not a date")).toBeNull()
+    expect(plugin.resets("2026-13-45T00:00:00+01:00")).toBeNull()
     expect(plugin.resets(null)).toBeNull()
   })
 
@@ -321,6 +324,14 @@ describe("the /budget dialog", () => {
     expect(drawn).toContain("    This month  7.87 EUR        310       310k")
     expect(drawn).toContain("    From the audit trail, in UTC. The limits count what enforcement reads.")
     expect(drawn).toContain("  https://gw.example")
+  })
+
+  test("says which clock the periods are on, as the gateway names it", async () => {
+    const answer = budget({ time_zone: "Europe/Berlin", allowances: [allowance({ limit_requests: 40, used_requests: 34, remaining_requests: 6, period_ends: "2026-11-01T00:00:00+01:00" })] })
+    const reading = () => ({ budget: answer, problem: null, at: null, busy: false })
+    const drawn = lines(await frame(() => createComponent(plugin.Details, { host: host(), reading, where: () => "https://gw.example" }), 90, 30))
+    expect(drawn).toContain("    From the audit trail, in Europe/Berlin. The limits count what enforcement reads.")
+    expect(drawn).toContain("    use case · per day · resets 1 Nov")
   })
 
   test("says what is wrong when the gateway cannot be read", async () => {

@@ -35,6 +35,11 @@ export interface Me {
   /** The unit every money figure is in (`AIRA_CURRENCY`). Read through `MeService.currency`. */
   currency?: string;
   /**
+   * The installation's clock, an IANA name such as `Europe/Berlin` (`AIRA_TIME_ZONE`, `FRD-629`).
+   * Read through `MeService.timeZone`.
+   */
+  time_zone?: string;
+  /**
    * Whether to offer the pipeline-tests screen (`ADR-0020`).
    *
    * The server's `MayRunTests`: an object-level answer (administration of a use case) that neither

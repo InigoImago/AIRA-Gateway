@@ -230,10 +230,16 @@ function labelFor(bucket: string, granularity: UsageSeries['granularity']): stri
 
 /**
  * The unambiguous form of a bucket: what the tooltip and the table say. An hour names its clock —
- * the gateway buckets in UTC, and "14:00" read as local time is off by the reader's offset.
+ * "14:00" read on the reader's own is off by the difference between the two (`FRD-629`).
+ *
+ * On UTC an hour is `2026-09-01 14:00 UTC`. On another clock the gateway writes each hour with its
+ * offset, and the title keeps it — `2026-10-25 02:00 UTC+02:00` and `… UTC+01:00` are the two
+ * hours the clocks go back through, which the zone's name alone could not tell apart.
  */
 function titleFor(bucket: string, granularity: UsageSeries['granularity']): string {
-  return granularity === 'hour' ? `${bucket.slice(0, 10)} ${bucket.slice(11, 13)}:00 UTC` : bucket;
+  if (granularity !== 'hour') return bucket;
+  const offset = bucket.slice(13);
+  return `${bucket.slice(0, 10)} ${bucket.slice(11, 13)}:00 UTC${offset}`;
 }
 
 /**

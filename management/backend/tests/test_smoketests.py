@@ -12,6 +12,7 @@ case. Testing a model is then a use case that model is released to.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from typing import Any
 
@@ -32,7 +33,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from rest_framework.test import APIClient
 
-from .conftest import role_claims
+from .conftest import role_claims, setting
 
 pytestmark = pytest.mark.django_db
 
@@ -1066,6 +1067,25 @@ def test_the_export_is_named_with_nothing_a_header_cannot_carry(catalogue, model
     assert disposition.count("filename=") == 1
     name = disposition.split('filename="', 1)[1].rstrip('"')
     assert re.fullmatch(r"aira-smoketest-[A-Za-z0-9._-]+-\d{4}-\d{2}-\d{2}\.csv", name), name
+
+
+def test_the_export_is_dated_and_timed_on_the_installations_clock(catalogue) -> None:
+    """A run started at 00:30 on 1 October in Berlin is that day's run, in its file name as on the
+    console (`FRD-629`) — UTC would date it 30 September."""
+    _runnable()
+    sec = _runner()
+    run = Run.objects.create(
+        model="m", use_case=UC, requested_by=get_user_model().objects.get(username="sec")
+    )
+    half_past_midnight = dt.datetime(2026, 9, 30, 22, 30, tzinfo=dt.UTC)
+    Run.objects.filter(pk=run.pk).update(started_at=half_past_midnight)
+    Result.objects.create(run=run, case=catalogue[0], verdict="pass", rated_at=half_past_midnight)
+
+    with setting(time_zone="Europe/Berlin"):
+        response = sec.get(f"{RUNS}{run.pk}/export/")
+
+    assert response["Content-Disposition"].endswith('-2026-10-01.csv"')
+    assert "2026-10-01T00:30:00+02:00" in response.content.decode("utf-8")
 
 
 # ---- appending to the catalogue (`F4-3`) ---------------------------------------------------------

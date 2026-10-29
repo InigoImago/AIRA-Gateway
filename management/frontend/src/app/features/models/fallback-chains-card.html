@@ -1,0 +1,78 @@
+<div class="card" data-testid="fallback-chains">
+  <h3 class="section-title">
+    When a model cannot answer
+    <app-info-hint label="Fallback chains" testid="fallback-chains" [wide]="true">
+      A request whose model cannot answer — an outage, a quota, a model its provider retired — gets
+      that error, unless a chain names models to try instead. The chains here are the
+      installation's, one for each kind of request. A use case follows them unless its pipeline
+      keeps a chain of its own for text generation or chooses no fallback at all, and every model in
+      a chain is used only where the use case has it released: a chain here is not a release. The
+      answer names the model that gave it, and so does the request's row.
+    </app-info-hint>
+  </h3>
+  <p class="muted lead" data-testid="fallback-chains-summary">
+    @if (stored(); as chains) {
+      @if (configured() === 0) {
+        No chain is set: a model that cannot answer is an error, for every kind of request.
+      } @else {
+        {{ configured() }} of {{ kinds.length }} kinds of request fall back. An empty chain means no
+        fallback: the error goes to the caller.
+      }
+    } @else if (!loadError()) {
+      Loading the chains…
+    }
+  </p>
+
+  @if (loadError(); as message) {
+    <p class="callout callout--danger" role="alert" data-testid="fallback-chains-error">
+      {{ message }}
+      <button type="button" class="btn btn--sm" (click)="load()">Try again</button>
+    </p>
+  } @else if (stored()) {
+    @for (kind of kinds; track kind) {
+      <div class="field" [attr.data-testid]="'fallback-' + kind">
+        <app-multi-select
+          [label]="label(kind)"
+          [testid]="'fallback-picker-' + kind"
+          [options]="choices(kind)"
+          [selected]="drafts()[kind]"
+          [disabled]="!canEdit() || busy()"
+          placeholder="type part of a model name…"
+          emptyHint="No approved model in the catalogue can serve this kind of request."
+          (changed)="choose(kind, $event)"
+        />
+        @if (kind === 'embed') {
+          <!-- The owner's concern, said where the chain is set (`FRD-310`): two models' vectors
+               live in two spaces, so a stand-in can answer and still be wrong for an index. -->
+          <span class="field__hint" data-testid="fallback-embed-warning">
+            Vectors from two different models are not comparable: a search against an index built
+            with one returns wrong matches for the other's vectors, with no error. A stand-in is
+            used only if it gives vectors of the width the model asked for gives — never a model
+            that writes text. Set this only where your use cases do not search a stored index, or
+            for the same model served elsewhere.
+          </span>
+        } @else if (kind === 'generate') {
+          <span class="field__hint">
+            Only models that write text — or speak, for a spoken answer. A use case may replace this
+            chain with its own, in its pipeline.
+          </span>
+        } @else {
+          <span class="field__hint">Only rerankers.</span>
+        }
+        @if (canEdit()) {
+          <div class="row">
+            <button
+              type="button"
+              class="btn btn--sm btn--primary"
+              [disabled]="!changed(kind) || busy()"
+              (click)="save(kind)"
+              [attr.data-testid]="'fallback-save-' + kind"
+            >
+              Save
+            </button>
+          </div>
+        }
+      </div>
+    }
+  }
+</div>

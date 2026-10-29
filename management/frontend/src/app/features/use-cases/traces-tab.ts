@@ -1,4 +1,3 @@
-import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -16,6 +15,7 @@ import { modeOf } from './data-protection-panel';
 import { readableJson } from '../../core/ui/readable-json';
 import { WhatHappenedPanel } from './what-happened-panel';
 import { outcomeLabel, outcomeSentence, pipelineDecided } from './what-happened';
+import { ZonedPipe } from '../../core/ui/zoned.pipe';
 
 const REFRESH_SECONDS = 10;
 const PAGE = 50;
@@ -49,7 +49,7 @@ const OUTCOMES = [
  */
 @Component({
   selector: 'app-traces-tab',
-  imports: [DatePipe, FormsModule, InfoHint, RouterLink, WhatHappenedPanel],
+  imports: [ZonedPipe, FormsModule, InfoHint, RouterLink, WhatHappenedPanel],
   templateUrl: './traces-tab.html',
   // `Live` on the component so its timer stops with the panel. `PageFeedback` comes from the page:
   // one banner per page, not one per panel.

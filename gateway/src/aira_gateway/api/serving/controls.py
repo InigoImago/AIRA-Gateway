@@ -476,9 +476,12 @@ async def estimate(
 
 
 def _reserved_cost(tokens: int, output: int, price: Price) -> int:
-    """``output`` of the reserved ``tokens`` at the output rate, the rest at the input rate."""
-    return cost_nanos(output, price.output_per_million_nanos) + cost_nanos(
-        tokens - output, price.input_per_million_nanos
+    """``output`` of the reserved ``tokens`` at the output rate, the rest at the input rate — the
+    rates of the set the estimated prompt selects (`FRD-408`), or a long prompt reserves half of
+    what it is billed."""
+    rates = price.rates_for(tokens - output)
+    return cost_nanos(output, rates.output_per_million_nanos) + cost_nanos(
+        tokens - output, rates.input_per_million_nanos
     )
 
 

@@ -76,8 +76,8 @@ The notice states all three plainly. Whether to change the behaviour is a separa
   language in place. The console's own words around the notice come from the same file.
 - **FR-4 When it is due** (`AIRA_PRIVACY_NOTICE_MODE`, decided on the server):
   `once` — when this person has not acknowledged this version; `monthly` (default) — that, or their
-  last acknowledgement of it is before the first of the current month (UTC); `always` — every start
-  of the console. A **changed** version is due in every mode. The reason (`first`, `changed`,
+  last acknowledgement of it is before the first of the current month (UTC; *Changed by `FRD-629`:* on
+  the installation's clock); `always` — every start of the console. A **changed** version is due in every mode. The reason (`first`, `changed`,
   `month`, `always`) is shown in the window.
 - **FR-5 The acknowledgement** names the version and language read. A version that is not the
   current one is refused (`409`) — the console then shows the current notice and keeps asking. One

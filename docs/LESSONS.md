@@ -1300,6 +1300,14 @@ reading code.
   tag as a lightweight ref at the commit — **restore the precondition and then assert it**, so the
   next version of that tool stops the release instead of changing what it publishes.
 
+  *A key left out of a file another tool reads is a value that tool chooses.* The `opencode.json`
+  the console writes carried an input and an output price per model. OpenCode prices a cache hit
+  at `cache_read`, and an absent key is zero — read in its 1.19.3 and 2.0.32 binaries — so an
+  agentic session, mostly cache hits, showed a third to a sixth of what the gateway booked, and the
+  owner read OpenCode's figure as ours. Our own stack had the same shape: Django's `TIME_ZONE`,
+  never written, is America/Chicago, and every serializer answered in it. **For every key another
+  tool reads from us, ask what it does when the key is absent — then write the key.**
+
 - **A blank buffer is a prompt to improvise, and what gets improvised restates the question.**
   Twice now: `v0.1.0`'s annotation was `Release v0.1.0`, and the first draft of `v0.1.1`'s notes
   described the tooling rather than the release. Neither was carelessness — a required free-text
@@ -2409,6 +2417,12 @@ reading code.
   being listed in `AIRA_VERTEX_MODELS` at all, so **no real model name is safe to assume unserved**.
   Ask about something nothing can claim: a name no adapter registers reaches the same branch and
   cannot be falsified by a credential somebody adds next month.
+- **A rule about time tested in UTC is untested.** Every CI runner's clock is UTC, where a local day
+  and a UTC day are the same day and every day is 24 hours long. Test a clock with summer time, on
+  the nights it changes: a day there is 23 or 25 hours, and an hour happens twice. That is where
+  Python's own trap shows — **two datetimes in one zone subtract by their wall clocks**, so midnight
+  to midnight across the night the clocks go back measured 24 hours, not 25. Keep every boundary as
+  an instant in UTC and convert only where it is shown (`aira_common.clock`).
 - **A unit test that reads the developer's machine is a test about that machine** — a `.env` on
   disk, a stack that happens to be running, a Redis holding last run's bucket. *That last one is
   not hypothetical:* `redis_url` defaults to the address `make up` publishes, so the hermetic

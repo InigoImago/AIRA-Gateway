@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import UTC, tzinfo
 
 from aira_common.spreadsheet import safe_cell
 from aira_gateway.reporting.csv_export import BOM
@@ -95,8 +96,9 @@ def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def render(register: Register, start: str, end: str) -> str:
-    """The register as RFC 4180 CSV, with the window stated in its own header."""
+def render(register: Register, start: str, end: str, zone: tzinfo = UTC) -> str:
+    """The register as RFC 4180 CSV, with the window stated in its own header and every moment on
+    the installation's clock (``zone``, `FRD-629`)."""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
 
@@ -142,7 +144,7 @@ def render(register: Register, start: str, end: str) -> str:
         writer.writerow(["ran_at", "payloads_cleared", "rows_deleted"])
         writer.writerow(
             [
-                safe_cell(erasure.ran_at.isoformat()),
+                safe_cell(erasure.ran_at.astimezone(zone).isoformat()),
                 safe_cell(erasure.payloads_cleared),
                 safe_cell(erasure.rows_deleted),
             ]

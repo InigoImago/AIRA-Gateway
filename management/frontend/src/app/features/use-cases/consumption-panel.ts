@@ -1,10 +1,10 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
 import { unitSuffix } from '../../core/api/me.service';
 import { RouterLink } from '@angular/router';
 import { ReportRow, UseCaseConsumption } from '../../core/api/models';
+import { InstallationClock } from '../../core/ui/clock';
 import { InfoHint } from '../../core/ui/info-hint';
 import { displayCount } from '../../core/ui/money';
-import { PERIOD_CLOCK } from '../../core/ui/periods';
 
 /** One figure in the card: what it is called, what it says, and what it counts. */
 interface Stat {
@@ -59,7 +59,7 @@ export class ConsumptionPanel {
   readonly currency = input('');
 
   /** The clock both windows are on — the budgets', so these figures and the limits agree. */
-  protected readonly clock = PERIOD_CLOCK;
+  protected readonly clock = inject(InstallationClock).zone;
 
   protected readonly monthStats = computed(() => this.statsFor(this.consumption().month));
   protected readonly todayStats = computed(() => this.statsFor(this.consumption().today));

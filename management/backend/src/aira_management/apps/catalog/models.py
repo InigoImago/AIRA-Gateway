@@ -20,6 +20,8 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from aira_common.fallback import FallbackKind
+
 
 class Model(models.Model):
     """A model AIRA knows about, and what it costs."""
@@ -59,8 +61,9 @@ class Model(models.Model):
     )
 
     # What a prompt cache costs (`FRD-133`): rates rather than a multiplier, because vendors quote
-    # them differently and a rate can be copied off a price list. Null means "charge the ordinary
-    # input rate", which never under-bills — deliberately not "free".
+    # them differently and a rate can be copied off a price list. Null is never "free": a read is
+    # then charged at the ordinary input rate and a write at 1.25x it, Anthropic's rate — the one
+    # provider that reports writes (`FRD-408`).
     cached_input_price_per_million = models.DecimalField(
         max_digits=12,
         decimal_places=6,
@@ -76,6 +79,50 @@ class Model(models.Model):
         blank=True,
         validators=[MinValueValidator(Decimal("0"))],
         help_text="Price per 1,000,000 input tokens written into the provider's prompt cache",
+    )
+
+    # What a request costs whose prompt is longer than a stated length (`FRD-408`): Google and
+    # Anthropic bill such a request — every token of it, the answer too — at a second set of rates,
+    # 200,000 tokens on every model that has one. Null throughout for a model priced alike at every
+    # length. The same rules as the ordinary prices: input and output together or neither, and an
+    # absent cache price read the same way.
+    long_context_threshold = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="The longest prompt, in tokens, the ordinary prices apply to",
+    )
+    long_context_input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 input tokens of a request whose prompt is longer",
+    )
+    long_context_output_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 output tokens of a request whose prompt is longer",
+    )
+    long_context_cached_input_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 cached input tokens of a request whose prompt is longer",
+    )
+    long_context_cache_write_price_per_million = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Price per 1,000,000 tokens written into the cache by a request whose prompt is "
+        "longer",
     )
 
     # -- what it can do, and within what bounds (FRD-114) ---------------------------------
@@ -151,3 +198,28 @@ class Model(models.Model):
         return (
             self.input_price_per_million is not None and self.output_price_per_million is not None
         )
+
+
+class FallbackChain(models.Model):
+    """The installation's fallback chain for one kind of request (`FRD-310`, `ADR-0048`).
+
+    One row per kind, and no row is an empty chain: a model that cannot answer is then the
+    caller's error, which is the default. A use case follows these chains unless it keeps its own
+    for text generation or refuses fallback altogether (`pipelines.PipelineConfig.fallback_mode`),
+    and a request reaches only the models of a chain its use case has been released.
+    """
+
+    kind = models.CharField(
+        max_length=16,
+        unique=True,
+        choices=[(kind.value, kind.value) for kind in FallbackKind],
+    )
+    #: Model names, in the order they are tried, each catalogued and able to serve ``kind``.
+    chain = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["kind"]
+
+    def __str__(self) -> str:
+        return f"fallback for {self.kind}"

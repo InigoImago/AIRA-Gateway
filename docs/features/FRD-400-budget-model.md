@@ -26,6 +26,9 @@ enforcement (FRD-401) and UI (FRD-402) follow.
     whose callers, models and operators sit in several, and the counter key is literally
     `strftime("%Y-%m-%d")` / `%Y-%m` of `datetime.now(UTC)`.
 
+    *Changed by `FRD-629`:* the boundary is the installation's clock (`AIRA_TIME_ZONE`), UTC unless
+    set — the key is the date on that clock, and a day the clocks change is 23 or 25 hours long.
+
     Stated because it is a couple of hours away from the reader's calendar, in both directions,
     and the difference is invisible until it is expensive: in central Europe traffic at 00:30
     local counts against yesterday's daily budget, and a monthly budget that ran out goes on

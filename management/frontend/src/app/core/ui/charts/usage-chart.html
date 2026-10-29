@@ -2,8 +2,10 @@
   <div class="spread">
     <h3 class="section-title">{{ heading() }}</h3>
     @if (resolved(); as grain) {
-      <!-- UTC, the clock the gateway buckets in and every budget here resets on. -->
-      <span class="muted" data-testid="usage-grain"> One column per {{ grain }} (UTC) </span>
+      <!-- The clock the gateway bucketed on, which every budget here resets on (`FRD-629`). -->
+      <span class="muted" data-testid="usage-grain">
+        One column per {{ grain }} ({{ clock() }})
+      </span>
     }
   </div>
   <p class="muted lead">
@@ -168,6 +170,7 @@
           [granularity]="chart.granularity"
           [unit]="unit()"
           [noun]="noun()"
+          [clock]="clock()"
         />
       </details>
     </div>

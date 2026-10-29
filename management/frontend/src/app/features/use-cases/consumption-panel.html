@@ -40,7 +40,7 @@
 
     <div class="stack" style="margin-top: 1rem">
       <div>
-        <p class="muted text-sm window-label">This month ({{ clock }})</p>
+        <p class="muted text-sm window-label">This month ({{ clock() }})</p>
         <dl class="stat-row">
           @for (stat of monthStats(); track stat.key) {
             <div class="stat">
@@ -60,7 +60,7 @@
         </dl>
       </div>
       <div>
-        <p class="muted text-sm window-label">Today ({{ clock }})</p>
+        <p class="muted text-sm window-label">Today ({{ clock() }})</p>
         <dl class="stat-row">
           @for (stat of todayStats(); track stat.key) {
             <div class="stat">

@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { Observable, of, throwError } from 'rxjs';
-import { DryRunResult, PipelineConfig } from '../../core/api/models';
+import { CatalogModel, DryRunResult, FallbackChains, PipelineConfig } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
 import { PipelineEditor } from './pipeline-editor';
@@ -22,6 +22,7 @@ interface Editor {
   config: () => PipelineConfig;
   select: (index: number | 'fallback') => void;
   setFallbackModels: (models: string[]) => void;
+  modelChoices: () => { value: string; label: string }[];
   released: () => string[];
   selectedIndex: () => number;
   summarize: (step: { type: string; config: Record<string, unknown> }) => string;
@@ -75,6 +76,10 @@ interface Options {
   mayCall?: boolean | 'absent';
   /** What the use case has been released (`FRD-308`). */
   released?: string[];
+  /** The catalogue, for what each model can do (`FRD-310`); none unless a case says. */
+  catalogue?: Observable<CatalogModel[]>;
+  /** The installation's fallback chains (`FRD-310`); none set unless a case says. */
+  chains?: Observable<FallbackChains>;
 }
 
 /**
@@ -132,6 +137,8 @@ function setup(given: Partial<PipelineConfig>, options: Options = {}) {
                   ],
                 })),
           getPipeline: () => options.loads?.shift() ?? options.load ?? of(initial),
+          models: () => options.catalogue ?? of([]),
+          fallbackChains: () => options.chains ?? of({ generate: [], embed: [], rerank: [] }),
           savePipeline: (_slug: string, config: PipelineConfig) => {
             saved = config;
             return options.save ?? of(config);
@@ -1204,9 +1211,15 @@ describe('PipelineEditor interactions', () => {
     expect(harness.component.config().steps.length).toBe(1);
   });
 
-  it('selects the fallback node from the graph', () => {
+  it('selects the fallback node from the graph, and offers a chain of its own on request', () => {
     const harness = setup({ steps: [], fallback_models: [] });
     html(harness).querySelector<HTMLElement>('.node--fallback')?.click();
+    harness.fixture.detectChanges();
+    expect(html(harness).querySelector('[data-testid="fallback-mode"]')).not.toBeNull();
+    // The installation's chains by default: the picker for a chain of its own waits to be asked.
+    expect(html(harness).querySelector('#insp-fallback')).toBeNull();
+
+    html(harness).querySelector<HTMLInputElement>('[data-testid="fallback-mode-own"]')?.click();
     harness.fixture.detectChanges();
     expect(html(harness).querySelector('#insp-fallback')).not.toBeNull();
   });
@@ -1717,5 +1730,122 @@ describe('PipelineEditor — a step reaches a chain', () => {
     // In this mode the patterns are not on screen: an option pointing "below" points at nothing.
     expect(el(harness).querySelector('#insp-patterns')).toBeNull();
     expect(empty.textContent).not.toContain('below');
+  });
+});
+
+/**
+ * What a use case does when a model cannot answer (`FRD-310`): the installation's chains, a chain
+ * of its own for text generation, or none — and only models that write text are ever offered for a
+ * pipeline, because every model a pipeline names classifies, redacts or answers.
+ */
+describe('PipelineEditor — when a model cannot answer (FRD-310)', () => {
+  function html(harness: { fixture: { nativeElement: unknown } }): HTMLElement {
+    return harness.fixture.nativeElement as HTMLElement;
+  }
+
+  const CATALOGUE: CatalogModel[] = [
+    { name: 'mock-1', capabilities: ['generate'] },
+    { name: 'backup-1', capabilities: ['generate'] },
+    { name: 'emb-1', capabilities: ['embed'] },
+  ];
+  const CHAINS: FallbackChains = { generate: ['backup-1'], embed: ['emb-1'], rerank: [] };
+  const released = ['mock-1', 'backup-1', 'emb-1'];
+
+  function inspect(given: Partial<PipelineConfig>, options: Options = {}) {
+    const harness = setup(given, {
+      released,
+      catalogue: of(CATALOGUE),
+      chains: of(CHAINS),
+      ...options,
+    });
+    html(harness).querySelector<HTMLElement>('.node--fallback')?.click();
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  const effective = (harness: ReturnType<typeof setup>, kind: string) =>
+    html(harness).querySelector(`[data-testid="fallback-effective-${kind}"]`)?.textContent ?? '';
+
+  it("follows the installation's chains by default and says what each kind meets", () => {
+    const harness = inspect({ steps: [], fallback_models: [] });
+
+    expect(html(harness).querySelector('[data-testid="fallback-node"]')?.textContent).toContain(
+      "installation's: backup-1",
+    );
+    expect(effective(harness, 'generate')).toContain('backup-1');
+    expect(effective(harness, 'embed')).toContain('emb-1');
+    expect(effective(harness, 'rerank')).toContain('no fallback');
+  });
+
+  it('keeps a chain of its own for text generation only, and saves it under its mode', () => {
+    const harness = inspect({ steps: [], fallback_models: [] });
+    html(harness).querySelector<HTMLInputElement>('[data-testid="fallback-mode-own"]')?.click();
+    harness.component.setFallbackModels(['mock-1']);
+    harness.fixture.detectChanges();
+
+    expect(effective(harness, 'generate')).toContain('mock-1');
+    expect(effective(harness, 'embed')).toContain('emb-1');
+    harness.component.save();
+    expect(harness.getSaved()).toMatchObject({ fallback_mode: 'own', fallback_models: ['mock-1'] });
+  });
+
+  it('chooses no fallback, sends no chain with it, and gives the chain back on return', () => {
+    const harness = inspect({ steps: [], fallback_models: ['backup-1'], fallback_mode: 'own' });
+
+    html(harness).querySelector<HTMLInputElement>('[data-testid="fallback-mode-none"]')?.click();
+    harness.fixture.detectChanges();
+    expect(html(harness).querySelector('[data-testid="fallback-node"]')?.textContent).toContain(
+      'no fallback',
+    );
+    expect(effective(harness, 'embed')).toContain('no fallback');
+    harness.component.save();
+    expect(harness.getSaved()).toMatchObject({ fallback_mode: 'none', fallback_models: [] });
+
+    html(harness).querySelector<HTMLInputElement>('[data-testid="fallback-mode-own"]')?.click();
+    harness.fixture.detectChanges();
+    expect(harness.component.config().fallback_models).toEqual(['backup-1']);
+  });
+
+  it("marks a model of the installation's chain this use case was not released", () => {
+    const harness = inspect({ steps: [], fallback_models: [] }, { released: ['mock-1', 'emb-1'] });
+
+    expect(effective(harness, 'generate')).toContain('not released here');
+  });
+
+  it('offers only models that write text, for a chain and for a step', () => {
+    const harness = inspect({ steps: [], fallback_models: [] });
+
+    expect(harness.component.modelChoices().map((choice) => choice.value)).toEqual([
+      'backup-1',
+      'mock-1',
+    ]);
+    harness.component.addStep('pii_filter');
+    harness.fixture.detectChanges();
+    const offered = [...html(harness).querySelectorAll('select option')].map(
+      (option) => (option as HTMLOptionElement).value,
+    );
+    expect(offered).not.toContain('emb-1');
+  });
+
+  it('names a stored model that cannot write text, rather than showing a blank choice', () => {
+    const harness = inspect({
+      steps: [{ type: 'pii_filter', config: { model: 'emb-1' } }],
+      fallback_models: [],
+    });
+    harness.component.select(0);
+    harness.fixture.detectChanges();
+
+    expect(html(harness).textContent).toContain('emb-1 (cannot write text)');
+  });
+
+  it("says so where the installation's chains could not be loaded", () => {
+    const harness = inspect(
+      { steps: [], fallback_models: [] },
+      { chains: throwError(() => ({ status: 503 })) },
+    );
+
+    expect(
+      html(harness).querySelector('[data-testid="fallback-effective-unknown"]'),
+    ).not.toBeNull();
   });
 });

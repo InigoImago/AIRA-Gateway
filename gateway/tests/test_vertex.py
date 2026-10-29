@@ -622,6 +622,58 @@ async def test_an_anthropic_request_carries_the_bearer_and_is_sent_as_a_stream()
     assert seen["body"]["max_tokens"] == 2048, "max_tokens is required and must always be sent"
 
 
+async def test_a_null_in_the_last_events_usage_takes_no_count_away() -> None:
+    """Anthropic's `MessageDeltaUsage` types the input counts as nullable. Merged with `update`, a
+    `message_delta` saying `"input_tokens": null` replaced the 942 tokens `message_start` reported
+    with nothing, and every Claude request a caller did not stream was booked as a prompt of zero
+    (`FRD-408`). Each count is taken only as a number, as the stream's reader always took it."""
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg",
+                "role": "assistant",
+                "usage": {
+                    "input_tokens": 12,
+                    "cache_read_input_tokens": 900,
+                    "cache_creation_input_tokens": 30,
+                    "output_tokens": 1,
+                },
+            },
+        },
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "hi"}},
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {
+                "input_tokens": None,
+                "cache_read_input_tokens": None,
+                "cache_creation_input_tokens": None,
+                "output_tokens": 41,
+            },
+        },
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+    adapter = VertexAnthropicAdapter(
+        _transport(
+            lambda request: httpx.Response(
+                200, text=body, headers={"content-type": "text/event-stream"}
+            )
+        ),
+        [VertexModel("eu", "anthropic", "claude-1")],
+        default_max_tokens=2048,
+    )
+
+    answer = await adapter.generate(_request())
+
+    assert answer.usage is not None
+    assert (answer.usage.prompt_tokens, answer.usage.cached_input_tokens) == (942, 900)
+    assert (answer.usage.cache_write_tokens, answer.usage.completion_tokens) == (30, 41)
+
+
 async def test_a_whole_answer_is_put_together_as_the_provider_sent_it() -> None:
     """Thoughts, text and a function call, its arguments in fragments, the usage in two halves —
     read into the answer the non-streamed endpoint would have given, by the one reader of answers

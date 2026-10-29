@@ -54,7 +54,7 @@ async def rank_records(project: str, location: str, config: str, request: Reques
         async with accounting(
             request, trail, prepared, api="gemini", operation="rerank", started=started
         ) as acct:
-            ranked = await rank(request, prepared)
+            ranked = await rank(request, prepared, trail)
             payload = schemas.RankResponse(
                 records=[
                     schemas.RankedRecordOut(
@@ -66,7 +66,8 @@ async def rank_records(project: str, location: str, config: str, request: Reques
                     for record in ranked
                 ]
             ).model_dump(exclude_none=True)
-            acct.ranked(parsed.model, units=prepared.rerank.units, records=ranked)
+            # Booked as the model that ranked, which for a fallback is not the one named.
+            acct.ranked(trail.served_model, units=prepared.rerank.units, records=ranked)
         return JSONResponse(payload)
     except REFUSALS as exc:
         response = refusal_response(exc, request)

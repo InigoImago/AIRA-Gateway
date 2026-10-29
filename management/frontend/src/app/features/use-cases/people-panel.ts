@@ -1,9 +1,9 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
 import { unitSuffix } from '../../core/api/me.service';
 import { Budget, BudgetUsage, PersonRow } from '../../core/api/models';
+import { InstallationClock } from '../../core/ui/clock';
 import { InfoHint } from '../../core/ui/info-hint';
 import { displayAmount, displayCount, nanosOf, storedAmount } from '../../core/ui/money';
-import { PERIOD_CLOCK } from '../../core/ui/periods';
 
 /** One person's row, ready to render: their totals, the two halves, and what is left. */
 interface PersonView {
@@ -350,8 +350,11 @@ export class PeoplePanel {
 
   protected readonly sharedPeriod = computed(() => this.shared()?.period ?? 'month');
 
+  /** The installation's clock (`FRD-629`), which the allowance resets on. */
+  private readonly clock = inject(InstallationClock).zone;
+
   protected readonly windowLabel = computed(
-    () => `${this.period() === 'day' ? 'today' : 'this month'} (${PERIOD_CLOCK})`,
+    () => `${this.period() === 'day' ? 'today' : 'this month'} (${this.clock()})`,
   );
 
   /**
@@ -366,12 +369,12 @@ export class PeoplePanel {
    */
   protected readonly windowReason = computed(() =>
     this.period() === 'day'
-      ? `Today in ${PERIOD_CLOCK}, because the per-person allowance on this use case resets at
-         midnight ${PERIOD_CLOCK} — a remainder is only meaningful against the period it is measured
-         in. For a longer view, use the period control on the usage chart above.`
-      : `This month in ${PERIOD_CLOCK}, which is the period the per-person allowance on this use case
-         is measured in. For a shorter or longer view, use the period control on the usage chart
-         above.`,
+      ? `Today in ${this.clock()}, because the per-person allowance on this use case resets at
+         midnight ${this.clock()} — a remainder is only meaningful against the period it is
+         measured in. For a longer view, use the period control on the usage chart above.`
+      : `This month in ${this.clock()}, which is the period the per-person allowance on this use
+         case is measured in. For a shorter or longer view, use the period control on the usage
+         chart above.`,
   );
 
   protected readonly view = computed<PersonView[]>(() =>

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.db import transaction
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from aira_common.fallback import FallbackKind, FallbackMode, chain_for
+from aira_management.apps.catalog import fallback
 from aira_management.apps.pipelines.models import PipelineConfig
 from aira_management.apps.pipelines.serializers import PipelineConfigSerializer
 from aira_management.apps.usecases.events import emit
@@ -25,8 +29,12 @@ class PipelineMixin(UseCaseViewBase):
             if config is None:
                 # No row is still a pipeline — one with no steps — so it answers the serializer's
                 # shape, field for field, rather than a 404.
-                return Response({"steps": [], "fallback_models": []})
-            return Response(PipelineConfigSerializer(config).data)
+                return Response(
+                    _with_chains(
+                        {"steps": [], "fallback_models": [], "fallback_mode": FallbackMode.DEFAULT}
+                    )
+                )
+            return Response(_with_chains(dict(PipelineConfigSerializer(config).data)))
 
         if not self._may_manage(usecase):
             raise PermissionDenied("You cannot edit the pipeline of this use case.")
@@ -41,4 +49,21 @@ class PipelineMixin(UseCaseViewBase):
         with transaction.atomic():
             config = serializer.save()
             emit("pipeline.upserted", _pipeline_payload(usecase.slug, config))
-        return Response(PipelineConfigSerializer(config).data)
+        return Response(_with_chains(dict(PipelineConfigSerializer(config).data)))
+
+
+def _with_chains(pipeline: dict[str, Any]) -> dict[str, Any]:
+    """The pipeline, and the chain each kind of its requests falls back to (`FRD-310`).
+
+    Worked out here, by the function the gateway resolves a request's chain with, so the console
+    shows the chain a request meets rather than a second reading of the rule. The release still
+    applies at every hop: a model the use case was not released is passed over there.
+    """
+    mode = FallbackMode(pipeline["fallback_mode"])
+    own = list(pipeline.get("fallback_models") or [])
+    installation = fallback.chains()
+    pipeline["fallbacks"] = {
+        kind.value: list(chain_for(kind, mode, own, installation[kind.value]))
+        for kind in FallbackKind
+    }
+    return pipeline

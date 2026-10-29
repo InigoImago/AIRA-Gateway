@@ -42,6 +42,7 @@ MIRRORS: dict[str, tuple[str, str]] = {
     "rate_limits": ("ratelimits/models.py", "RateLimit"),
     "anomaly_rules": ("anomalies/models.py", "AnomalyRule"),
     "model_catalog": ("catalog/models.py", "Model"),
+    "fallback_chains": ("catalog/models.py", "FallbackChain"),
     "roles": ("roles/models.py", "StoredRole"),
     "api_keys": ("apikeys/models.py", "ApiKey"),
 }

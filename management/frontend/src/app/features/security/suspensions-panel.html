@@ -227,9 +227,7 @@
                   }
                 </td>
                 <td class="nowrap">
-                  {{
-                    row.expires_at ? (row.expires_at | date: 'yyyy-MM-dd HH:mm') : 'until lifted'
-                  }}
+                  {{ row.expires_at ? (row.expires_at | zoned) : 'until lifted' }}
                 </td>
                 <td>
                   <code>{{ row.author }}</code>
@@ -303,10 +301,10 @@
                       }
                     </td>
                     <td class="nowrap">
-                      {{ row.created_at ? (row.created_at | date: 'yyyy-MM-dd HH:mm') : '—' }}
+                      {{ row.created_at ? (row.created_at | zoned) : '—' }}
                     </td>
                     <td class="nowrap">
-                      {{ endedAt(row) ? (endedAt(row) | date: 'yyyy-MM-dd HH:mm') : '—' }}
+                      {{ endedAt(row) ? (endedAt(row) | zoned) : '—' }}
                       <div class="muted text-sm">
                         {{ row.lifted_at ? 'lifted by ' + row.lifted_by : 'expired' }}
                       </div>
