@@ -337,7 +337,8 @@ class MailNotifier:
     async def _owe_anomaly_mail(
         self, session: AsyncSession, use_cases: dict[str, UseCaseRead], moment: datetime
     ) -> None:
-        """A notice per new finding of a use case whose administrators asked (`FRD-409` FR-6)."""
+        """A notice per new finding of a use case whose administrators left the mail on
+        (`FRD-409` FR-6)."""
         asking = sorted(slug for slug, row in use_cases.items() if row.mail_admins_on_anomalies)
         if not asking:
             return

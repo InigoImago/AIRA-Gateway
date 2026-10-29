@@ -454,7 +454,7 @@ entities above rather than entities of their own.
   the register — and IT Security's views there (`FRD-502`).
 - **Alerting**: anomaly-driven alerts feeding incident response. *As built:* a rule's action is
   alert, throttle or block (`FRD-503`), and an alert is a finding in the console. A use case's
-  administrators may have its findings mailed to them (`FRD-409`); the mail names the rule and
+  administrators are mailed its findings unless they switch it off (`FRD-409`); the mail names the rule and
   the measurement, never the person. No webhook.
 - **Vendor portability**: apps emit vendor-neutral **OTLP** and only talk to the Collector, so the
   backend is swappable without app changes — a production move to **Dynatrace, Grafana Cloud,

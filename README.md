@@ -308,7 +308,7 @@ Details: [**Testing**](docs/TESTING.md).
   one is what is stored, the per-use-case storage switch, `payload_visibility`, and a record of
   every read.
 - **Mail is the only alert channel.** A person is mailed when their budget crosses a threshold its
-  use case set, and a use case's administrators about its shared budget and, if they ask, its
+  use case set, and a use case's administrators about its shared budget and its
   anomaly findings — through a relay the installation names. No webhook, no chat.
 - **No Kubernetes or Helm charts.**
 - **Microsoft Foundry is untested against a real Azure subscription.**

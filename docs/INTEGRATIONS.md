@@ -765,8 +765,8 @@ What decides how it behaves:
 ## 4b. A mail relay — optional
 
 With a relay, the gateway mails a person when their own budget crosses one of their use case's
-thresholds, a use case's administrators when its shared budget does, and — where they switched it
-on — the administrators when one of the use case's anomaly rules finds something. The thresholds are
+thresholds, a use case's administrators when its shared budget does, and the administrators when
+one of the use case's anomaly rules finds something — unless they switched that off. The thresholds are
 the use case's, set by its administrators; a new one mails at 100 %, the moment a budget is used up.
 
 | What | Why | Without it |

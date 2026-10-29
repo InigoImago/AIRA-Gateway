@@ -43,6 +43,15 @@ and `RL8`/`FX-L-14` were re-anchored onto the refactored group lookup. A new liv
 used-up budget's mail through the showcase's new mail catcher (Mailpit) to the development realm's
 address for that person. It runs only in CI, which points the gateway at the catcher.
 
+**Then, the owner's follow-up.** Administrators are now mailed their use case's anomaly findings
+without asking: `mail_admins_on_anomalies` is on by default on both planes, and the Warnings tab
+switches it off (`ML-21`, `ML-22`). The privacy notice says *unless switched off*. Checked live,
+outside the suites. The round ran in two gateway instances at once against a throwaway Postgres,
+a real Mailpit and the development Keycloak, read-only. One instance sent three mails and the other
+none. Addresses came from Keycloak, and a granted group was resolved to its members; its service
+account has no address and was left out. A member who does not administer got no administrator
+mail, the finding mail named nobody, and a second round sent nothing again.
+
 **What the round found on the way.** `0016`'s announcement test compared a historical migration's
 frozen event with today's views, so any later field broke it. Now it names the fields added since,
 together with what their absence reads as. That is exactly the condition under which no

@@ -169,13 +169,14 @@ class UseCase(models.Model):
         ),
     )
     #: Whether the administrators are mailed when one of this use case's anomaly rules finds
-    #: something (`FRD-409` FR-6). Off by default: a mail nobody asked for is noise.
+    #: something (`FRD-409` FR-6). On by default: the administrators are the ones who can act on
+    #: a finding, and a use case that does not want the mail switches it off.
     mail_admins_on_anomalies = models.BooleanField(
-        default=False,
+        default=True,
         help_text=(
             "Mail this use case's administrators when one of its anomaly rules finds something "
-            "(FRD-409). The mail names the rule and what it measured, never a person, key or "
-            "address."
+            "(FRD-409). On by default. The mail names the rule and what it measured, never a "
+            "person, key or address."
         ),
     )
     retention_days = models.PositiveSmallIntegerField(

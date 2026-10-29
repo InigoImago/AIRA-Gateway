@@ -1,5 +1,5 @@
 """Two use case settings for mail (`FRD-409`): at which shares of a budget a mail goes out, `[100]`
-by default, and whether the administrators hear of the use case's anomaly findings, off by default.
+by default, and whether the administrators hear of the use case's anomaly findings, on by default.
 
 Both defaults are what the gateway reads for an event without the fields, so no use case needs
 announcing again: each one reads on the gateway exactly as it is stored here.
@@ -34,11 +34,11 @@ class Migration(migrations.Migration):
             model_name="usecase",
             name="mail_admins_on_anomalies",
             field=models.BooleanField(
-                default=False,
+                default=True,
                 help_text=(
                     "Mail this use case's administrators when one of its anomaly rules finds "
-                    "something (FRD-409). The mail names the rule and what it measured, never a "
-                    "person, key or address."
+                    "something (FRD-409). On by default. The mail names the rule and what it "
+                    "measured, never a person, key or address."
                 ),
             ),
         ),

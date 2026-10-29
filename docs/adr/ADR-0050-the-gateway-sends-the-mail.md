@@ -9,7 +9,7 @@
 ## Context
 
 People are to be told by mail when a budget crosses a threshold, and a use case's administrators,
-if they choose, when one of the use case's anomaly rules fires. The address is to come from the
+unless they switch it off, when one of the use case's anomaly rules fires. The address is to come from the
 person's Keycloak profile.
 
 The facts both mails start from are the **gateway's**. The budget counters sit in its Redis and its

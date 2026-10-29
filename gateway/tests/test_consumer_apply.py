@@ -780,13 +780,13 @@ async def test_the_mail_settings_arrive_as_management_set_them(make_session) -> 
 
 
 async def test_an_event_without_them_reads_as_the_default_both_planes_share(make_session) -> None:
-    """An older Management says nothing: a mail when a budget is used up, none about findings."""
+    """An older Management says nothing: a mail when a budget is used up, and about findings."""
     async with make_session() as session:
         await apply_event(session, "usecase.upserted", {"slug": "uc", "name": "N"})
     (row,) = await _all(make_session, UseCaseRead)
     assert row.budget_mail_thresholds is None
     assert row.mail_thresholds == (100,)
-    assert row.mail_admins_on_anomalies is False
+    assert row.mail_admins_on_anomalies is True
 
 
 async def test_no_thresholds_is_kept_as_no_mail_not_read_as_the_default(make_session) -> None:

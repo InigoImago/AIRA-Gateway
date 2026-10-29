@@ -20644,7 +20644,7 @@ MUTATIONS = [
     ),
     Mutation(
         "ML-8",
-        "only a use case whose administrators asked mails its findings",
+        "only a use case whose administrators left the mail on mails its findings",
         "gateway/src/aira_gateway/mail/notifier.py",
         "asking = sorted(slug for slug, row in use_cases.items() if row.mail_admins_on_anomalies)",
         "asking = sorted(use_cases)",
@@ -20745,6 +20745,22 @@ MUTATIONS = [
         "this.mailEnabled.set(me.mail_enabled === true);",
         "this.mailEnabled.set(false);",
         "management/frontend/src/app/features/use-cases/use-case-detail.spec.ts",
+    ),
+    Mutation(
+        "ML-21",
+        "an event without the switch reads as mail about findings on, Management's default",
+        "gateway/src/aira_gateway/consumer/apply.py",
+        'bool(payload.get("mail_admins_on_anomalies", True))',
+        'bool(payload.get("mail_admins_on_anomalies", False))',
+        "gateway/tests/test_consumer_apply.py",
+    ),
+    Mutation(
+        "ML-22",
+        "a new use case mails its administrators about findings unless they switch it off",
+        "management/backend/src/aira_management/apps/usecases/models.py",
+        "    mail_admins_on_anomalies = models.BooleanField(\n        default=True,",
+        "    mail_admins_on_anomalies = models.BooleanField(\n        default=False,",
+        "management/backend/tests/test_mail_settings_of_a_use_case.py",
     ),
 ]
 

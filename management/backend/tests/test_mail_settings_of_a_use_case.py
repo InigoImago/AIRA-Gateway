@@ -52,14 +52,14 @@ def use_case_and_admin():
     return usecase, get_user_model().objects.get(pk=admin.pk)
 
 
-def test_a_new_use_case_mails_when_a_budget_is_used_up_and_not_about_findings(
+def test_a_new_use_case_mails_when_a_budget_is_used_up_and_about_findings(
     use_case_and_admin,
 ) -> None:
     usecase, admin = use_case_and_admin
     body = _client(admin).get(f"{BASE}coding/").json()
 
     assert body["budget_mail_thresholds"] == [100]
-    assert body["mail_admins_on_anomalies"] is False
+    assert body["mail_admins_on_anomalies"] is True
 
 
 def test_its_administrator_sets_both_and_the_gateway_hears_of_it(
@@ -69,7 +69,7 @@ def test_its_administrator_sets_both_and_the_gateway_hears_of_it(
 
     resp = _client(admin).patch(
         f"{BASE}coding/",
-        {"budget_mail_thresholds": [100, 50, 80], "mail_admins_on_anomalies": True},
+        {"budget_mail_thresholds": [100, 50, 80], "mail_admins_on_anomalies": False},
         format="json",
     )
 
@@ -79,7 +79,7 @@ def test_its_administrator_sets_both_and_the_gateway_hears_of_it(
     assert usecase.budget_mail_thresholds == [50, 80, 100]
     (upserted,) = [p for kind, p in captured_events if kind == "usecase.upserted"]
     assert upserted["budget_mail_thresholds"] == [50, 80, 100]
-    assert upserted["mail_admins_on_anomalies"] is True
+    assert upserted["mail_admins_on_anomalies"] is False
 
 
 def test_no_thresholds_at_all_is_a_choice_the_gateway_hears_as_such(
@@ -126,9 +126,9 @@ def test_a_member_who_does_not_administer_it_cannot_change_them(use_case_and_adm
     UseCaseMembership.objects.create(use_case=usecase, user=member, role=UseCaseMembership.USER)
 
     resp = _client(member).patch(
-        f"{BASE}coding/", {"mail_admins_on_anomalies": True}, format="json"
+        f"{BASE}coding/", {"mail_admins_on_anomalies": False}, format="json"
     )
 
     assert resp.status_code == 403
     usecase.refresh_from_db()
-    assert usecase.mail_admins_on_anomalies is False
+    assert usecase.mail_admins_on_anomalies is True

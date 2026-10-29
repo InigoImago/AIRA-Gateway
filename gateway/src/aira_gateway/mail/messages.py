@@ -173,8 +173,8 @@ def anomaly_mail(
     )
     lines += [
         "",
-        f"You receive this mail as an administrator of {name}, whose administrators asked for "
-        "mail about its anomaly findings.",
+        f"You receive this mail as an administrator of {name}. Its administrators can switch "
+        "this mail off on the use case's Warnings tab.",
     ]
     return _message(sender, to, subject, lines)
 

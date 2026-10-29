@@ -347,7 +347,7 @@ The configuration history is the item something waits on: `FRD-616` can stream o
 recorded, and the control plane records almost nothing about who changed it. Alert delivery waited
 on a decision rather than on code — who gets told — and the owner made it (`FRD-409`): mail to the
 person whose own budget crosses a threshold its use case set, to the administrators about the shared
-budget, and to them about the use case's findings where they ask, naming nobody. The installation's
+budget, and to them about the use case's findings unless they switch that off, naming nobody. The installation's
 own budget and a global rule's finding about one person stay in the console; no channel but mail is
 built. `FRD-127` needs no new mechanism, only the two changes named in §3.3. Everything else is
 breadth.

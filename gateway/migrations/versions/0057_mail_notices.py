@@ -2,7 +2,7 @@
 and the table of mails owed.
 
 The two columns are what an event from an older Management leaves at their defaults: NULL
-thresholds read as `[100]` (`aira_common.mail`), and no mail about findings.
+thresholds read as `[100]` (`aira_common.mail`), and mail about findings on.
 
 Revision ID: 0057_mail_notices
 Revises: 0056_fallback_chains
@@ -26,7 +26,7 @@ def upgrade() -> None:
             sa.Column(
                 "mail_admins_on_anomalies",
                 sa.Boolean(),
-                server_default=sa.false(),
+                server_default=sa.true(),
                 nullable=False,
             )
         )

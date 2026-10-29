@@ -32,7 +32,7 @@ is not stored.
   crossed at once, only the highest is sent.
 - A per-person counter is mailed to that person: the budget each member has, or one set for them
   alone. The use case's shared budget is mailed to its administrators.
-- A switch per use case, off by default, that mails its administrators when its anomaly rules
+- A switch per use case, on by default, that mails its administrators when its anomaly rules
   find something: one mail per use case and round, naming no person, key or address.
 - Off unless the installation configures a relay. Nothing refuses to start without one.
 - English.
@@ -81,7 +81,8 @@ is not stored.
   dimension (cost in the installation's currency), when the budget resets on the installation's
   clock, and what happens at the limit: requests refused until the reset, or nothing where the
   installation does not enforce budgets. It never gives another person's figures.
-- **FR-6 Anomalies.** A use case has `mail_admins_on_anomalies`, false by default. When it is on,
+- **FR-6 Anomalies.** A use case has `mail_admins_on_anomalies`, true by default: the administrators are
+  told without having to ask, and may switch it off. When it is on,
   every finding recorded for the use case goes to its administrators: one mail per use case and
   round, listing for each new finding the rule, its kind, the value measured against the threshold,
   over how many requests and minutes, what was done, and whether it concerned a person, a key or
@@ -141,7 +142,7 @@ sequenceDiagram
 ## 6. Data Model
 
 - Management: `UseCase.budget_mail_thresholds` (a list of integers, default `[100]`) and
-  `UseCase.mail_admins_on_anomalies` (default false).
+  `UseCase.mail_admins_on_anomalies` (default true).
 - Gateway read model: `use_cases.budget_mail_thresholds` (JSON; NULL, from an older Management, is
   read as the default) and `use_cases.mail_admins_on_anomalies`.
 - Gateway `mail_notices`, one row per mail owed: `kind` (`budget` or `anomaly`), `use_case`,

@@ -199,8 +199,8 @@ Management reads the first four as well: the privacy notice states them
 ### Mail
 
 The gateway mails a person when their own budget crosses one of their use case's thresholds, a use
-case's administrators when its shared budget does, and — where a use case's administrators switch it
-on — its administrators when one of its anomaly rules finds something. It looks once a minute, mails
+case's administrators when its shared budget does, and its administrators when one of its anomaly
+rules finds something, unless they switched that off on the Warnings tab. It looks once a minute, mails
 each crossing once, and reads every address from Keycloak when it sends, through the directory
 account above; nothing about an address is kept. **Off until both of the first two are set**:
 without them nothing is checked or stored, and nothing refuses to start.

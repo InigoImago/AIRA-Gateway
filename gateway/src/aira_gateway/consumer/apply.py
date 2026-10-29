@@ -201,7 +201,7 @@ def _usecase_fields(payload: dict[str, Any]) -> dict[str, Any]:
         "allowed_models": _released_models(payload),
         # `FRD-409`. Absent is the default both planes share, and so is no mail about findings.
         "budget_mail_thresholds": _mail_thresholds(payload),
-        "mail_admins_on_anomalies": bool(payload.get("mail_admins_on_anomalies", False)),
+        "mail_admins_on_anomalies": bool(payload.get("mail_admins_on_anomalies", True)),
     }
 
 

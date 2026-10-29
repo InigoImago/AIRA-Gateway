@@ -39,7 +39,7 @@ MIGRATION = importlib.import_module(
 #: (`FRD-409`). Its announcement cannot carry them, and need not while a use case nobody changed
 #: holds exactly that value: a field added later whose default differs needs an announcement of its
 #: own, and belongs here only once it has one.
-ADDED_SINCE = {"budget_mail_thresholds": [100], "mail_admins_on_anomalies": False}
+ADDED_SINCE = {"budget_mail_thresholds": [100], "mail_admins_on_anomalies": True}
 
 
 # Off, because the migration is history: it ran once, with its own frozen copy of the event, and

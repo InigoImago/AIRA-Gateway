@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -85,7 +86,7 @@ class UseCaseRead(Base):
     )
     #: Whether the administrators are mailed the use case's anomaly findings (`FRD-409` FR-6).
     mail_admins_on_anomalies: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=false()
+        Boolean, default=True, server_default=true()
     )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

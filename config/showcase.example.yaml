@@ -179,7 +179,7 @@ directory:
   # client_secret: → Vault.
 
 # Mail: a person when their own budget crosses one of their use case's thresholds, a use case's
-# administrators about its shared budget and, where they switched it on, about what its anomaly
+# administrators about its shared budget and about what its anomaly
 # rules find. Off until both `smtp.host` and `mail.from` are set; every address is read from
 # Keycloak through the directory account above when the mail is sent. `console.url` lets a mail
 # link the tab it is about.
