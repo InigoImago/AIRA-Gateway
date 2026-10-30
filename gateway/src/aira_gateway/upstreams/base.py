@@ -21,6 +21,7 @@ from aira_gateway.core.canonical import (
     CanonicalResponse,
     RankedRecords,
 )
+from aira_gateway.technical import provider_facts
 from aira_gateway.upstreams.diagnosis import Diagnosis
 
 _log = get_logger("aira_gateway.upstreams")
@@ -77,6 +78,10 @@ class UpstreamError(Exception):
     **this gateway** stopped: its time limit for an answer (`504`) or its own connection pool
     (`503`). Not ``status_code``, which decides a regional failover (`regions`) — a second region
     asked after a time limit would start the same long answer again, and both would be billed.
+
+    ``facts`` is what the answer stated about itself in codes — its status, reason word, the
+    provider's request id, `Retry-After`, the host — for the request's technical record
+    (`technical.provider_facts`, `FRD-630`). Never a sentence: those stay in ``message``.
     """
 
     def __init__(
@@ -86,12 +91,14 @@ class UpstreamError(Exception):
         diagnosis: Diagnosis | None = None,
         *,
         gateway_status: int | None = None,
+        facts: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.diagnosis = diagnosis
         self.gateway_status = gateway_status
+        self.facts: dict[str, Any] = facts if facts is not None else {}
 
 
 class DialectUnsupported(Exception):
@@ -174,6 +181,7 @@ def stream_failure(error: Any) -> UpstreamError:
     return UpstreamError(
         f"The model provider broke off the answer mid-stream{f': {kind}' if kind else ''}.{reason}",
         status,
+        facts=provider_facts(status=status, reason=kind or None, where="in_stream"),
     )
 
 

@@ -31,6 +31,7 @@ from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import passed_over_by
 from aira_gateway.shielding import uninterrupted
 from aira_gateway.state import budgets_of, pricing_of, settings_of
+from aira_gateway.technical import technical_of
 
 _log = get_logger("aira_gateway")
 
@@ -232,12 +233,14 @@ async def accounting(
             yield state
         except asyncio.CancelledError, GeneratorExit:
             # The caller left: nobody else will write a row, so this exit must.
+            technical_of(request).mark("caller_left")
             raise
         except REFUSALS:
             record = False
             raise
-        except BaseException:
+        except BaseException as exc:
             state.failed(500, Outcome.INTERNAL_ERROR)
+            technical_of(request).failed(exc)
             raise
         finally:
             await uninterrupted(
@@ -267,6 +270,12 @@ async def _settle_and_record(
 ) -> None:
     model = state.model or prepared.model
     cost: int | None = None
+    technical = technical_of(request)
+    if state.produced and not technical.reached("provider_first_chunk"):
+        # An answer read whole has no first chunk of its own: it arrived, finished, just now. A
+        # stream marked both as it read them — or never saw its end, which is no reason to claim
+        # one now.
+        technical.mark("provider_finished")
     try:
         if state.unreported is not None and not state.produced:
             await _count_what_was_left(request, state)
@@ -409,6 +418,7 @@ async def _write_refusal(
     chain = passed_over_by(exc)
     if chain is not None:
         trail.passed_over(list(chain.skipped), list(chain.failed))
+    technical_of(request).failed(exc)
     await record_request(
         request,
         operation=trail.operation,

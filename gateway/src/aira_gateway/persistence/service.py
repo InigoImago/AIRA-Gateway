@@ -97,6 +97,7 @@ class RequestLogService:
         flagged: bool = False,
         tool_calls: dict[str, Any] | None = None,
         degraded: dict[str, str] | None = None,
+        technical: dict[str, Any] | None = None,
         provider: str | None = None,
         publisher: str | None = None,
         region: str | None = None,
@@ -133,6 +134,7 @@ class RequestLogService:
             tool_calls=tool_calls,
             # `{}` means "nothing was degraded" and is kept apart from NULL, "we did not look".
             degraded=degraded,
+            technical=technical,
             provider=provider,
             publisher=publisher,
             region=region,

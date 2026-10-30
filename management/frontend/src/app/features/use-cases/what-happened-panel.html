@@ -40,6 +40,9 @@
     <p class="callout callout--warning text-sm" data-testid="degraded">{{ line }}</p>
   }
 
+  <!-- The same request in codes and numbers, for whoever has to find where it broke (`FRD-630`). -->
+  <app-technical-details [trace]="trace()" />
+
   @if (tryLink(); as link) {
     <p class="text-sm">
       <a [routerLink]="link" data-testid="try-pipeline">Try the pipeline with your own text →</a>

@@ -38,6 +38,8 @@ from aira_gateway.explaining import (
 )
 from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.persistence.writer import PendingLog
+from aira_gateway.technical import STATE_KEY as TECHNICAL_STATE
+from aira_gateway.technical import Technical
 
 #: A leading ``/uc/<slug>`` and the path after it.
 _USE_CASE_PATH = re.compile(r"^/uc/([^/]+)(/.*)$")
@@ -295,6 +297,9 @@ class RequestIdMiddleware:
             return
         state = scope.setdefault("state", {})
         request_id = state.setdefault("request_id", new_id())
+        # The request's technical record (`FRD-630`), counting from here: what went out, and when,
+        # is seen nowhere better than at this send.
+        technical = state.setdefault(TECHNICAL_STATE, Technical())
 
         async def send_explained(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -317,6 +322,11 @@ class RequestIdMiddleware:
                 )
                 message = {**message, "headers": headers}
             await send(message)
+            # Counted once the server took it: a write the caller was gone for never arrived.
+            if message["type"] == "http.response.start":
+                technical.mark("response_started")
+            elif message["type"] == "http.response.body":
+                technical.wrote(len(message.get("body", b"")))
 
         await self.app(scope, receive, send_explained)
 

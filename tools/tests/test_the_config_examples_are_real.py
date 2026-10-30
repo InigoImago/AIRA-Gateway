@@ -113,6 +113,7 @@ NOT_A_SETTING = {
     # missing from these files until somebody asked whether the console read them, and why
     # `test_the_examples_configure_the_console` exists below.
     "AIRA_OIDC_CLIENT_ID",
+    "AIRA_TRACE_URL",
     "AIRA_CSP_CONNECT_SRC",
     "AIRA_MANAGEMENT_UPSTREAM",
     "AIRA_GATEWAY_UPSTREAM",

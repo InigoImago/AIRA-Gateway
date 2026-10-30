@@ -17,4 +17,5 @@
 window.__AIRA_CONFIG__ = {
   issuer: 'http://localhost:8080/realms/aira',
   clientId: 'aira-gateway',
+  traceUrl: '',
 };

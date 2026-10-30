@@ -194,6 +194,8 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 requested_model=call.model,
                 provenance=await provenance(request, call.model),
                 api=trail.api,
+                # A step's call, not the request: the request's own row carries its record.
+                technical=False,
             )
             await budgets_of(request).book_side_call(
                 getattr(attribution, "use_case", None),

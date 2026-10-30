@@ -1,21 +1,5 @@
 import { AuthConfig } from 'angular-oauth2-oidc';
-
-/**
- * What a deployment may set without rebuilding the bundle (`public/runtime-config.js`), so one
- * build serves every environment.
- */
-interface RuntimeConfig {
-  issuer?: string;
-  clientId?: string;
-}
-
-/**
- * Read at the point of use, not at import: the bundle loads before anything can arrange for
- * `runtime-config.js` to be there, and a module-level read would fix the console's identity then.
- */
-function runtimeConfig(): RuntimeConfig {
-  return (window as unknown as { __AIRA_CONFIG__?: RuntimeConfig }).__AIRA_CONFIG__ ?? {};
-}
+import { runtimeConfig } from '../runtime-config';
 
 /**
  * OIDC client configuration (ADR-0007).

@@ -77,6 +77,7 @@ from aira_gateway.embedding import (
 from aira_gateway.explaining import REASON_HEADER, explain
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
+from aira_gateway.technical import technical_of
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -181,6 +182,7 @@ async def streaming_chat(
                 # the request was issued. A quiet model is a comment, never an event (`keepalive`).
                 async for chunk in with_pings(stream.chunks, quiet):
                     if chunk is TICK:
+                        technical_of(request).keepalive()
                         yield PING
                         continue
                     assert isinstance(chunk, CanonicalChunk)

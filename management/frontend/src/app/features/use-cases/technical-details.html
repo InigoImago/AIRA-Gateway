@@ -1,0 +1,103 @@
+<details class="technical" data-testid="technical" [open]="failed()">
+  <summary class="technical__summary">Technical details</summary>
+
+  @if (record(); as rec) {
+    <p class="technical__phase" data-testid="technical-phase">
+      {{ phase() }} <code class="muted">{{ rec.phase }}</code>
+    </p>
+
+    @if (timeline().length) {
+      <table class="technical__timeline" data-testid="technical-timeline">
+        <caption class="muted text-sm">
+          Milliseconds since the request arrived
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Milestone</th>
+            <th scope="col" class="num">at</th>
+            <th scope="col" class="num">after the one before</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of timeline(); track row.key) {
+            <tr [attr.data-milestone]="row.key">
+              <td>{{ row.label }}</td>
+              <td class="num">
+                <code>{{ row.ms }}</code>
+              </td>
+              <td class="num muted">{{ row.delta === null ? '' : '+' + row.delta }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+
+    <dl class="technical__facts">
+      @for (fact of connection(); track fact.label) {
+        <dt>{{ fact.label }}</dt>
+        <dd data-testid="technical-connection">{{ fact.value }}</dd>
+      }
+      @if (sent(); as line) {
+        <dt>To the caller</dt>
+        <dd data-testid="technical-sent">{{ line }}</dd>
+      }
+      @for (fact of provider(); track fact.label) {
+        <dt>{{ fact.label }}</dt>
+        <dd data-testid="technical-provider">
+          <code>{{ fact.value }}</code>
+        </dd>
+      }
+      @if (chain(); as line) {
+        <dt>Exception</dt>
+        <dd data-testid="technical-chain">
+          <code>{{ line }}</code>
+        </dd>
+      }
+      @if (rec.exception?.errno; as code) {
+        <dt>Operating system</dt>
+        <dd data-testid="technical-errno">
+          <code>{{ code }}</code>
+        </dd>
+      }
+      @if (rec.exception?.at; as at) {
+        <dt>Raised at</dt>
+        <dd data-testid="technical-at">
+          <code>{{ at }}</code>
+        </dd>
+      }
+    </dl>
+  } @else {
+    <p class="muted text-sm" data-testid="technical-none">
+      No technical record: the request was refused before anything happened to it, or was recorded
+      before AIRA kept one.
+    </p>
+  }
+
+  @if (trace().trace_id; as id) {
+    <p class="technical__trace text-sm">
+      <span class="muted">Trace:</span>
+      @if (traceLink(); as link) {
+        <a [href]="link" target="_blank" rel="noopener" data-testid="technical-trace-link"
+          ><code>{{ id }}</code></a
+        >
+      } @else {
+        <code data-testid="technical-trace-id">{{ id }}</code>
+      }
+    </p>
+  }
+
+  <p class="technical__copy">
+    <button type="button" class="btn btn--sm" data-testid="technical-copy" (click)="copy()">
+      Copy for a ticket
+    </button>
+    @if (copied()) {
+      <span class="muted text-sm" role="status">Copied.</span>
+    }
+    @if (copyFailure(); as why) {
+      <span class="text-sm is-danger" role="alert" data-testid="technical-copy-failure">{{
+        why
+      }}</span>
+    }
+  </p>
+  <pre class="technical__text" data-testid="technical-text">{{ text() }}</pre>
+</details>

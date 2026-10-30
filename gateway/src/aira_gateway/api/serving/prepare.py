@@ -91,6 +91,7 @@ from aira_gateway.requirements import (
     set_sampling,
 )
 from aira_gateway.state import providers_of, settings_of
+from aira_gateway.technical import technical_of
 from aira_gateway.telemetry import model_call_span
 from aira_gateway.thinking import ThinkingRejected, check_budget_fits, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
@@ -225,6 +226,8 @@ async def prepare_for_dispatch(
     )
     # Last, so the span describes what will actually be dispatched, not what the caller sent.
     describe_on_the_span(canonical, embed)
+    # Every control passed: what follows is the model chain (`FRD-630`).
+    technical_of(request).mark("dispatched")
     return Prepared(canonical, embed, fallbacks, declaration, reservation, notices, asked)
 
 
@@ -264,6 +267,7 @@ async def _prepare_rerank(
     )
     set_span_attributes({"aira.rerank.records": len(rerank.records)})
     fallbacks = await fallbacks_for(request, FallbackKind.RERANK)
+    technical_of(request).mark("dispatched")
     return Prepared(None, None, fallbacks, declaration, held, rerank=rerank)
 
 

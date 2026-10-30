@@ -5,6 +5,35 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A request explained to a technician (2026-10-30)
+
+Long OpenCode sessions with Claude ended in `499`s: OpenCode reported `ECONNRESET` while reading the
+answer, AIRA reported that the caller's connection had closed. Neither side had closed it, and
+nothing in either record said when the connection went, after what silence, or what the provider was
+doing — the row's latency was the provider's whole answer, read to its end after the caller had gone.
+The owner asked for failures to be shown technically, with the real error and the trace, without
+breaking strict data mode (`FRD-630`).
+
+**What a request keeps now.** `request_logs.technical`: the phase it ended in, each milestone in
+milliseconds from arrival (chain started, provider's first chunk and finish, status sent, last byte
+to the caller, caller's connection closed, recorded), the bytes, writes and keepalives that reached
+the caller, the provider's status, error word, its own request id, `Retry-After` and host, and the
+exception chain by class with the operating system's word. The console shows it under *Technical
+details*, copies it for a ticket, and links the trace where `AIRA_TRACE_URL` names a viewer.
+
+**Strict data mode by construction.** No provider message and no exception text is kept — either can
+quote the prompt or a URL with a key — and every text value must be a code, checked when the row is
+written. The ticket text leaves out the person. The privacy notice names the column (edition
+2026-10-30).
+
+**Found on the way.** `caller_left` was first taken where the stream's exit decides to drain, which
+after a drain is long past the moment; it is now taken when the body is cancelled. And a test whose
+model spoke the moment the caller left recorded both in the same millisecond, which is a true record
+of either order; the test now lets the model speak well after.
+
+**Not done.** A proxy in front is invisible to a timeline measured inside the gateway; what the
+record shows is when the gateway last wrote and when it saw the close, which is what places the cut.
+
 ## A sign-in that does not flicker (2026-10-30)
 
 The owner found the console's failed sign-in hard to look at: the page shook several times before it

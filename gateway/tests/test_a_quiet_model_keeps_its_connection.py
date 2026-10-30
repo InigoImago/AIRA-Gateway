@@ -602,6 +602,151 @@ def test_zero_waits_for_the_first_word_and_sends_nothing_meanwhile(
     assert GEMINI_KEEPALIVE not in wire.bodies and KIRA_KEEPALIVE not in wire.bodies
 
 
+# == the technical record says what the wire carried (`FRD-630`) =================================
+
+
+def _timeline(row: RequestLog) -> dict[str, int]:
+    assert row.technical is not None, "a streamed request keeps its technical record"
+    return dict(row.technical["timeline_ms"])
+
+
+@pytest.mark.parametrize(
+    ("url", "body", "keepalive"),
+    [(GEMINI_SSE, GEMINI_BODY, GEMINI_KEEPALIVE), (KIRA, KIRA_BODY, KIRA_KEEPALIVE)],
+    ids=["gemini", "kira"],
+)
+def test_a_completed_stream_records_what_it_sent_and_when(
+    running: Any, url: str, body: dict[str, Any], keepalive: bytes
+) -> None:
+    """Every byte the caller received, every keepalive among them, and the milestones in order —
+    counted where they left, so the row and the wire cannot disagree."""
+    quiet = _Quiet(QUIET)
+    app = _app(quiet)
+    client = running(app)
+
+    wire = client.portal.call(  # type: ignore[attr-defined]
+        lambda: _drive(app, url, body, until=_status_and(keepalive, 2), then=quiet.speak.set)
+    )
+
+    [row] = client.portal.call(_rows, app)  # type: ignore[attr-defined]
+    record = row.technical
+    assert record is not None and record["phase"] == "completed"
+    assert record["to_caller"] == {
+        "bytes": sum(len(piece) for piece in wire.bodies),
+        "writes": len(wire.bodies),
+        "keepalives": wire.keepalives(keepalive),
+    }
+    timeline = _timeline(row)
+    assert (
+        timeline["dispatched"]
+        <= timeline["response_started"]
+        <= timeline["provider_first_chunk"]
+        <= timeline["provider_finished"]
+        <= timeline["recorded"]
+    ), timeline
+    assert "caller_left" not in timeline
+    assert "exception" not in record
+
+
+def test_a_caller_who_leaves_mid_answer_is_recorded_with_the_moment_and_the_last_byte(
+    running: Any,
+) -> None:
+    """The question a `499` leaves open — who closed, and after what silence — is answered by the
+    milestones: the caller left after the model's first word, and after the last keepalive."""
+    quiet = _Quiet(QUIET, pause_after_first=True)
+    app = _app(quiet)
+    client = running(app)
+    leave = asyncio.Event()
+
+    def said_and_then_kept_alive(wire: _Wire) -> bool:
+        spoke = next((i for i, piece in enumerate(wire.bodies) if piece.startswith(b"data:")), None)
+        return spoke is not None and wire.bodies[spoke + 1 :].count(GEMINI_KEEPALIVE) >= 2
+
+    client.portal.call(  # type: ignore[attr-defined]
+        lambda: _drive(
+            app,
+            GEMINI_SSE,
+            GEMINI_BODY,
+            until=said_and_then_kept_alive,
+            then=leave.set,
+            leave=leave,
+        )
+    )
+
+    [row] = client.portal.call(_rows, app)  # type: ignore[attr-defined]
+    assert (row.status, row.outcome) == (499, "client_gone")
+    assert row.technical is not None and row.technical["phase"] == "mid_answer"
+    timeline = _timeline(row)
+    assert timeline["provider_first_chunk"] <= timeline["last_byte_to_caller"]
+    assert timeline["last_byte_to_caller"] <= timeline["caller_left"] <= timeline["recorded"]
+    assert "provider_finished" not in timeline
+    assert row.technical["to_caller"]["keepalives"] >= 2
+
+
+def test_a_caller_who_leaves_before_the_first_word_was_waiting_for_the_provider(
+    running: Any,
+) -> None:
+    """Read to its end after the caller left (`ADR-0041`): the provider finished *after* they had
+    gone, which the timeline shows — and the phase stays where the caller was."""
+    quiet = _Quiet(QUIET)
+    app = _app(quiet, drain_left_streams_seconds=5)
+    client = running(app)
+    leave = asyncio.Event()
+
+    def go_away() -> None:
+        leave.set()
+        # Well after the caller has gone, so the two cannot share a millisecond: speaking at once,
+        # the model's first word and the departure are read in the same one, and either order is
+        # then a true record.
+        asyncio.get_running_loop().call_later(0.2, quiet.speak.set)
+
+    client.portal.call(  # type: ignore[attr-defined]
+        lambda: _drive(
+            app,
+            GEMINI_SSE,
+            GEMINI_BODY,
+            until=_status_and(GEMINI_KEEPALIVE, 1),
+            then=go_away,
+            leave=leave,
+        )
+    )
+
+    [row] = client.portal.call(_rows, app)  # type: ignore[attr-defined]
+    assert row.technical is not None and row.technical["phase"] == "waiting_for_provider", (
+        json.dumps(row.technical)
+    )
+    timeline = _timeline(row)
+    assert timeline["caller_left"] <= timeline["provider_first_chunk"]
+    assert timeline["caller_left"] <= timeline["provider_finished"]
+
+
+def test_a_chain_that_runs_out_after_the_status_records_the_providers_status_and_the_chain(
+    running: Any,
+) -> None:
+    quiet = _Quiet(QUIET, fails=503)
+    app = _app(quiet)
+    client = running(app)
+
+    client.portal.call(  # type: ignore[attr-defined]
+        lambda: _drive(
+            app,
+            GEMINI_SSE,
+            GEMINI_BODY,
+            until=_status_and(GEMINI_KEEPALIVE, 2),
+            then=quiet.speak.set,
+        )
+    )
+
+    [row] = client.portal.call(_rows, app)  # type: ignore[attr-defined]
+    record = row.technical
+    assert record is not None and record["phase"] == "waiting_for_provider"
+    # The status the provider failed with, and the class a technician searches for: an error a
+    # provider stated, so no line of this gateway's own is named.
+    assert record["provider"] == {"status": 503}
+    assert record["exception"] == {"chain": ["aira_gateway.upstreams.base.UpstreamError"]}
+    assert record["to_caller"]["keepalives"] == 2
+
+
 # == the parts =====================================================================================
 
 

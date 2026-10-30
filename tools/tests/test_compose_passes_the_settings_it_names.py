@@ -154,6 +154,7 @@ COMPOSE_ONLY = {
     # Written into `runtime-config.js` by the console's entrypoint, and read by the browser rather
     # than by any settings class.
     "AIRA_OIDC_CLIENT_ID",
+    "AIRA_TRACE_URL",
 }
 
 #: The settings whose absence from the stack is invisible until somebody configures one — every

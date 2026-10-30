@@ -152,6 +152,40 @@ export interface Trace {
   degraded?: Record<string, string> | null;
   /** The message the caller was given, when the request did not succeed. Details only. */
   error?: string | null;
+  /**
+   * The request's technical course (`FRD-630`) — codes and numbers only, never a provider's or an
+   * exception's text. Details only; `null` for a request refused before anything happened to it,
+   * absent from an older gateway.
+   */
+  technical?: TechnicalRecord | null;
+}
+
+/** Where a request ended, by the milestones it reached. */
+export type TechnicalPhase =
+  | 'completed'
+  | 'before_dispatch'
+  | 'waiting_for_provider'
+  | 'mid_answer'
+  | 'after_provider_finished';
+
+/** One request's technical course, as the gateway records it. Every member may be absent. */
+export interface TechnicalRecord {
+  phase: TechnicalPhase | string;
+  /** Milliseconds from the request's arrival to each milestone it reached. */
+  timeline_ms: Partial<Record<string, number>>;
+  /** What reached the caller, counted as it left the gateway. */
+  to_caller?: { bytes: number; writes: number; keepalives: number };
+  /** What the provider's answer stated about itself. */
+  provider?: {
+    status?: number;
+    reason?: string;
+    request_id?: string;
+    retry_after?: string;
+    host?: string;
+    where?: string;
+  };
+  /** The exception chain by class, the operating system's error word, the gateway's own line. */
+  exception?: { chain?: string[]; errno?: string; at?: string };
 }
 
 /**

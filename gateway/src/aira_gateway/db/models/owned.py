@@ -112,6 +112,10 @@ class RequestLog(Base):
     tool_calls: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: Which controls were running on a fallback while this request was handled (`FRD-405`).
     degraded: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    #: Where the request ended, its milestones in milliseconds, what reached the caller, and what it
+    #: failed with — **codes and numbers only**, never a sentence from a provider or an exception
+    #: (`technical`, `FRD-630`). NULL for a request refused before anything happened to it.
+    technical: Mapped[Any | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     #: The message the caller was given when the request did not succeed (`FRD-628` FR-4) — kept,
     #: because under strict data mode it is often all that explains a request to the people who run
     #: it. Bounded and redacted as payloads are; NULL for a request that succeeded.

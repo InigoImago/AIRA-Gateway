@@ -196,6 +196,11 @@ mail:
 console:
   url: ''                  # e.g. https://aira.example.com
 
+# Where the console opens a request's trace, with `{trace_id}` in place of the id — a Grafana
+# Explore or Tempo address. Empty: the console shows the id and copies it, without a link.
+trace:
+  url: ''                  # e.g. https://grafana.example.com/explore?…{trace_id}…
+
 # The model reference the console fills a new catalog entry from: a public list's limits,
 # capabilities and list prices, for an administrator to check. Empty answers from the copy this
 # release ships; `https://models.dev/api.json` reads today's list — Management's one outbound call

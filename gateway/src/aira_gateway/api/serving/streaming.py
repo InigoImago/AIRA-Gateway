@@ -52,6 +52,7 @@ from aira_gateway.explaining import MODEL_HEADER, withhold
 from aira_gateway.pipeline.dispatch import Streaming, passed_over_by
 from aira_gateway.shielding import uninterrupted
 from aira_gateway.state import drains_of, settings_of
+from aira_gateway.technical import technical_of
 from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
@@ -170,6 +171,8 @@ class StreamAccounting:
         self._region_seen = False
         self._failure: Exception | None = None
         self._delivered = False
+        #: The request's technical record (`FRD-630`): the provider's milestones are seen here.
+        self._technical = technical_of(request)
         self._payload: dict[str, Any] | None = None
         if isinstance(streamed, Opening):
             # The response begins before any model answered (`ADR-0046`), so its headers cannot
@@ -210,6 +213,9 @@ class StreamAccounting:
 
     def _observe(self, chunk: CanonicalChunk) -> None:
         """What the vendor sent, as it is **read** — whether or not the caller receives it."""
+        self._technical.mark("provider_first_chunk")
+        if chunk.finish_reason:
+            self._technical.mark("provider_finished")
         if chunk.usage is not None:
             # A running total on some dialects, the final figure on others: the last one is it.
             self.usage = chunk.usage
@@ -253,6 +259,7 @@ class StreamAccounting:
         tried and passed over, as a refusal's row does (`FRD-302` FR-11).
         """
         self._failure = exc
+        self._technical.failed(exc)
         chain = passed_over_by(exc)
         if chain is not None:
             self._trail.passed_over(list(chain.skipped), list(chain.failed))
@@ -295,6 +302,11 @@ class StreamAccounting:
             ) as acct:
                 try:
                     yield
+                except asyncio.CancelledError, GeneratorExit:
+                    # The moment the caller went (`FRD-630`) — before the drain, which goes on
+                    # reading after they have gone, and whatever the upstream did meanwhile.
+                    self._technical.mark("caller_left")
+                    raise
                 finally:
                     try:
                         if self._caller_left():
@@ -322,6 +334,7 @@ class StreamAccounting:
                 started=self._started,
             ) as acct:
                 try:
+                    self._technical.mark("caller_left")
                     held.enter_context(drains_of(self._request).held())
                     await self._drain()
                 finally:

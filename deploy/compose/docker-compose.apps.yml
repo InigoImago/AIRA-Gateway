@@ -510,6 +510,8 @@ services:
       # therefore one change here, not a JavaScript file inside a built image plus a header.
       AIRA_OIDC_ISSUER: ${AIRA_OIDC_ISSUER:-http://localhost:${AIRA_PUBLISH_KEYCLOAK_PORT:-8080}/realms/aira}
       AIRA_OIDC_CLIENT_ID: ${AIRA_OIDC_CLIENT_ID:-aira-gateway}
+      # Where a request's trace opens, `{trace_id}` in place of the id; empty, it is not linked.
+      AIRA_TRACE_URL: ${AIRA_TRACE_URL:-}
       # Only for a deployment that needs something the derivation cannot guess — a second origin,
       # a websocket host. Left empty, the issuer's origin is used.
       AIRA_CSP_CONNECT_SRC: ${AIRA_CSP_CONNECT_SRC:-}

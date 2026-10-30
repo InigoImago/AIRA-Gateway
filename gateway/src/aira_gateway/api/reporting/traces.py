@@ -92,8 +92,9 @@ def _out_of_scope() -> dict[str, object]:
 #: each candidate model decided, which controls were running on a fallback, and the message the
 #: caller was given. Content-free by construction — `pipeline_decisions` keeps the safe keys only
 #: (`audit.decision_summary`) — so they go wherever the row goes, strict data mode withholding the
-#: person on them as on the row.
-DETAIL_FIELDS = ("pipeline_decisions", "degraded", "error")
+#: person on them as on the row. `technical` is codes and numbers only (`technical`, `FRD-630`):
+#: where the request ended, its milestones, what reached the caller, and what it failed with.
+DETAIL_FIELDS = ("pipeline_decisions", "degraded", "error", "technical")
 
 #: The label the row's name is read under, so it can never collide with a listed field.
 _OWNER_NAME = "_owner_name"

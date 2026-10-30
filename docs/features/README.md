@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**116 of 120 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**117 of 121 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -131,3 +131,4 @@ status that goes stale in the copy nobody opens.
 | [627](FRD-627-strict-data-mode.md) | Strict data mode | 6 (reporting) | ✅ Built |
 | [628](FRD-628-say-what-happened.md) | Say what happened to a request | 6 (reporting) | ✅ Built |
 | [629](FRD-629-one-clock-for-the-installation.md) | One clock for the installation | 6 (Governance & Analytics) | ✅ Built |
+| [630](FRD-630-a-request-explained-to-a-technician.md) | A request explained to a technician | 6 (reporting) | ✅ Built |

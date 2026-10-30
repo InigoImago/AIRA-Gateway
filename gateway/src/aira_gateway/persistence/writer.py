@@ -87,6 +87,8 @@ class PendingLog:
     flagged: bool = False
     tool_calls: dict[str, Any] | None = None
     degraded: dict[str, str] | None = None
+    #: The request's technical record (`technical`, `FRD-630`): codes and numbers only.
+    technical: dict[str, Any] | None = None
     provider: str | None = None
     publisher: str | None = None
     region: str | None = None
@@ -287,6 +289,7 @@ class RequestLogWriter:
                 flagged=entry.flagged,
                 tool_calls=entry.tool_calls,
                 degraded=entry.degraded,
+                technical=entry.technical,
                 provider=entry.provider,
                 publisher=entry.publisher,
                 region=entry.region,

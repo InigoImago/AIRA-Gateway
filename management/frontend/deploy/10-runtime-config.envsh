@@ -23,13 +23,19 @@
 
 issuer="${AIRA_OIDC_ISSUER:-http://localhost:8080/realms/aira}"
 client="${AIRA_OIDC_CLIENT_ID:-aira-gateway}"
+# Where the console opens a request's trace (`FRD-630`), `{trace_id}` in place of the id. A Grafana
+# Explore address carries quotes and braces, so backslashes and single quotes are escaped for the
+# JavaScript string below; the console itself links only an `http(s)` address that names the id.
+trace_url=$(printf '%s' "${AIRA_TRACE_URL:-}" | sed -e 's/\\/\\\\/g' -e "s/'/\\\\'/g")
 
 cat > /usr/share/nginx/html/runtime-config.js <<EOF
-/* Written at container start from AIRA_OIDC_ISSUER / AIRA_OIDC_CLIENT_ID. Do not edit in place:
- * the next start overwrites it. Nothing secret belongs here — it is served to every browser. */
+/* Written at container start from AIRA_OIDC_ISSUER / AIRA_OIDC_CLIENT_ID / AIRA_TRACE_URL. Do not
+ * edit in place: the next start overwrites it. Nothing secret belongs here — it is served to every
+ * browser. */
 window.__AIRA_CONFIG__ = {
   issuer: '${issuer}',
   clientId: '${client}',
+  traceUrl: '${trace_url}',
 };
 EOF
 

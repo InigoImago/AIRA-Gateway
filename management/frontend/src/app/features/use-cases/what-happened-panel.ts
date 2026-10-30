@@ -1,6 +1,7 @@
 import { Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Trace } from '../../core/api/models';
+import { TechnicalDetails } from './technical-details';
 import { degradedLine, outcomeParty, outcomeSentence, storyOf } from './what-happened';
 
 /**
@@ -12,7 +13,7 @@ import { degradedLine, outcomeParty, outcomeSentence, storyOf } from './what-hap
  */
 @Component({
   selector: 'app-what-happened',
-  imports: [RouterLink],
+  imports: [RouterLink, TechnicalDetails],
   templateUrl: './what-happened-panel.html',
   styleUrl: './what-happened-panel.scss',
 })

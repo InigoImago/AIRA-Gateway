@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from aira_gateway.technical import provider_facts
 from aira_gateway.upstreams.base import UpstreamError, upstream_reason
 from aira_gateway.upstreams.diagnosis import from_response as diagnosis_of_response
 from aira_gateway.upstreams.diagnosis import from_transport as diagnosis_of_transport
@@ -93,10 +94,35 @@ def refused(response: httpx.Response, name: str) -> UpstreamError:
         f"{name} returned {response.status_code}.{detail}{said}{gone}",
         response.status_code,
         diagnosis,
+        facts=provider_facts(
+            status=response.status_code,
+            reason=diagnosis.reason if diagnosis else None,
+            headers=response.headers,
+            host=_host_of(response),
+        ),
     )
 
 
+def _host_of(carrier: httpx.Response | httpx.HTTPError) -> str | None:
+    """The host an exchange was addressed to — never its path or query, which can carry a key."""
+    try:
+        return carrier.request.url.host or None
+    except RuntimeError:  # httpx raises when a response or an exception carries no request
+        return None
+
+
 def unreachable(exc: httpx.HTTPError, name: str) -> UpstreamError:
+    """No answer, or an answer that broke off: :func:`_unreachable`, with the host and the cause
+    word as facts for the request's technical record (`FRD-630`) — the exception chain itself is
+    read there, from the error's own `__cause__`."""
+    error = _unreachable(exc, name)
+    error.facts = provider_facts(
+        reason=error.diagnosis.reason if error.diagnosis else None, host=_host_of(exc)
+    )
+    return error
+
+
+def _unreachable(exc: httpx.HTTPError, name: str) -> UpstreamError:
     """No answer, or an answer that broke off: the exception's type, never its text, which can
     carry a URL with a credential in it — and, where the chain shows it, why (`FRD-141`).
 

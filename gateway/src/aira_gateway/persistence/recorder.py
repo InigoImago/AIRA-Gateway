@@ -19,6 +19,7 @@ from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.errors import loggable
 from aira_gateway.persistence.writer import PendingLog
 from aira_gateway.state import settings_of, writer_of
+from aira_gateway.technical import technical_of
 
 _log = get_logger("aira_gateway.persistence")
 
@@ -119,8 +120,12 @@ async def record_request(
     provenance: tuple[str, str, str] | None = None,
     api: str,
     error: str | None = None,
+    technical: bool = True,
 ) -> None:
     """Queue a request/response record with its attribution for persistence.
+
+    ``technical`` is ``False`` for a row that is not the request's own — a pipeline step's call,
+    made on its behalf: the request's technical record (`FRD-630`) describes the request.
 
     ``outcome`` defaults to ``served``; a refusal passes its own from :mod:`aira_gateway.audit`.
     ``api`` has **no default**: it travels on the :class:`AuditTrail`, set once by the surface
@@ -184,6 +189,7 @@ async def record_request(
         flagged=was_flagged(pipeline_decisions, outcome),
         tool_calls=tool_calls,
         degraded=_degradation_snapshot(request),
+        technical=technical_of(request).snapshot() if technical else None,
         provider=provenance[0] if provenance else None,
         publisher=provenance[1] if provenance else None,
         region=provenance[2] if provenance else None,

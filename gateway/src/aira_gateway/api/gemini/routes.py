@@ -62,6 +62,7 @@ from aira_gateway.core.canonical import (
 )
 from aira_gateway.pipeline.dispatch import dispatch_with_fallback, stream_with_fallback
 from aira_gateway.state import providers_of
+from aira_gateway.technical import technical_of
 
 router = APIRouter(tags=["gemini"])
 
@@ -326,6 +327,7 @@ async def _stream_response(
                 # the request was issued, inside the chain.
                 async for chunk in with_pings(stream.chunks, quiet):
                     if chunk is TICK:
+                        technical_of(request).keepalive()
                         yield KEEPALIVE
                         continue
                     assert isinstance(chunk, CanonicalChunk)
