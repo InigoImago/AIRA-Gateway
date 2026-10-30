@@ -60,7 +60,7 @@ function setup(overrides: Partial<Record<string, unknown>> = {}) {
 const startedLogin = (calls: string[]) => calls.some((call) => call.startsWith('initCodeFlow'));
 
 // **The login counter lives in `sessionStorage`**, shared by every test in this file (it has to
-// survive a full-page navigation). Without clearing it, the third test to sign in again trips the
+// survive a full-page navigation). Without clearing it, the second test to sign in again trips the
 // loop breaker for the tests after it.
 beforeEach(() => window.sessionStorage.clear());
 
@@ -317,24 +317,34 @@ describe('AuthService — signing in again when signing in is not the problem', 
     expect(first.service.loginLoop()).toBeNull();
   });
 
-  it('stops redirecting once signing in again has demonstrably not helped', () => {
-    // Three round trips, each a new page and therefore a new service — the in-memory guard is
-    // `false` every time.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate('/api/');
-    }
+  it('stops after one login that did not help, rather than going round', () => {
+    // One round trip, then a new page and therefore a new service — the in-memory guard is `false`
+    // again. A token issued seconds ago refused like the last one is not a session that ended.
+    afterRedirect().service.reauthenticate('/api/');
 
-    const fourth = afterRedirect();
-    fourth.service.reauthenticate('/api/');
+    const second = afterRedirect();
+    second.service.reauthenticate('/api/');
 
-    expect(startedLogin(fourth.calls)).toBe(false);
-    expect(fourth.service.loginLoop()).toContain('did not help 3 times');
+    expect(startedLogin(second.calls)).toBe(false);
+    expect(second.service.loginLoop()).toContain("AIRA's management service does not accept");
+    expect(second.service.signingIn()).toBe(false);
+  });
+
+  it('names the plane that refused, and AIRA when none did', () => {
+    afterRedirect().service.reauthenticate('/gw/');
+    const gateway = afterRedirect();
+    gateway.service.reauthenticate('/gw/');
+    expect(gateway.service.loginLoop()).toContain('the AIRA gateway does not accept');
+
+    window.sessionStorage.clear();
+    afterRedirect().service.reauthenticate();
+    const renewal = afterRedirect();
+    renewal.service.reauthenticate();
+    expect(renewal.service.loginLoop()).toContain('but AIRA does not accept');
   });
 
   it('is ended by the plane that refused answering', () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate('/gw/');
-    }
+    afterRedirect().service.reauthenticate('/gw/');
 
     // The only evidence worth trusting: everything the console can check about itself was just as
     // true on every pass through the loop.
@@ -350,27 +360,23 @@ describe('AuthService — signing in again when signing in is not the problem', 
     // The realistic loop with two planes and two token validators: management accepts the token
     // and the gateway refuses it. The shell's own `/api/v1/me` answers on every pass, and an answer
     // from the plane that never refused says nothing about the one that does.
-    for (let page = 0; page < 3; page += 1) {
-      const pass = afterRedirect();
-      pass.service.noteFirstPartySuccess('/api/');
-      pass.service.reauthenticate('/gw/');
-      pass.service.noteFirstPartySuccess('/api/');
-    }
+    const first = afterRedirect();
+    first.service.noteFirstPartySuccess('/api/');
+    first.service.reauthenticate('/gw/');
+    first.service.noteFirstPartySuccess('/api/');
 
-    const fourth = afterRedirect();
-    fourth.service.noteFirstPartySuccess('/api/');
-    fourth.service.reauthenticate('/gw/');
+    const second = afterRedirect();
+    second.service.noteFirstPartySuccess('/api/');
+    second.service.reauthenticate('/gw/');
 
-    expect(startedLogin(fourth.calls)).toBe(false);
-    expect(fourth.service.loginLoop()).toContain('did not help 3 times');
+    expect(startedLogin(second.calls)).toBe(false);
+    expect(second.service.loginLoop()).toContain('the AIRA gateway does not accept');
   });
 
   it('is ended by any first-party answer after a renewal that failed', () => {
     // No plane refused: the refresh token stopped working. A login that is followed by any answer
     // from either plane is a login that worked.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate();
-    }
+    afterRedirect().service.reauthenticate();
     afterRedirect().service.noteFirstPartySuccess('/api/');
 
     const next = afterRedirect();
@@ -380,22 +386,23 @@ describe('AuthService — signing in again when signing in is not the problem', 
 
   it('counts the logins that happened, not the refusals that came after it stopped', () => {
     // Three panels refusing on the page where the loop stopped are one page, not three more
-    // failed sign-ins — and the message is the reader's only account of what happened.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate('/api/');
-    }
+    // failed sign-ins: the count stays at the one login that happened.
+    afterRedirect().service.reauthenticate('/api/');
 
     const stopped = afterRedirect();
     stopped.service.reauthenticate('/api/');
     stopped.service.reauthenticate('/gw/');
     stopped.service.reauthenticate('/api/');
-    expect(stopped.service.loginLoop()).toContain('did not help 3 times');
+    expect(stopped.service.loginLoop()).not.toBeNull();
+    const counted = () => JSON.parse(window.sessionStorage.getItem('aira.reauth-attempts') ?? '{}');
+    expect(counted().count).toBe(1);
 
-    // Reloading the stopped page starts no login and claims no extra one either.
+    // Reloading the stopped page starts no login and counts no extra one either.
     const reloaded = afterRedirect();
     reloaded.service.reauthenticate('/api/');
     expect(startedLogin(reloaded.calls)).toBe(false);
-    expect(reloaded.service.loginLoop()).toContain('did not help 3 times');
+    expect(reloaded.service.loginLoop()).not.toBeNull();
+    expect(counted().count).toBe(1);
   });
 
   it('signing out completely ends the session at the provider, not only here', () => {
@@ -414,9 +421,7 @@ describe('AuthService — signing in again when signing in is not the problem', 
   });
 
   it('counts a window rather than a lifetime', () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      afterRedirect().service.reauthenticate('/api/');
-    }
+    afterRedirect().service.reauthenticate('/api/');
     // Two minutes later this is a new session ending, not the same one repeating.
     const stale = JSON.parse(window.sessionStorage.getItem('aira.reauth-attempts') ?? '{}');
     window.sessionStorage.setItem(
@@ -438,5 +443,72 @@ describe('AuthService — signing in again when signing in is not the problem', 
     // Errs towards letting a login happen: the failure this guard prevents is a storm, not one
     // redirect.
     expect(startedLogin(calls)).toBe(true);
+  });
+});
+
+/**
+ * The page behind a sign-in is covered (`signingIn`), because drawing a console only to tear it down
+ * — on the way to the login, and again on the way back before the refusal arrives — is the flicker.
+ */
+describe('AuthService — covering the console while signing in', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('covers it on the way to a login, whether started by the guard or by a refusal', () => {
+    const guarded = setup();
+    guarded.service.login('/use-cases');
+    expect(guarded.service.signingIn()).toBe(true);
+
+    const refused = setup();
+    refused.service.reauthenticate('/api/');
+    expect(refused.service.signingIn()).toBe(true);
+  });
+
+  it('keeps it covered on the way back until the plane that refused answers', async () => {
+    setup().service.reauthenticate('/gw/');
+
+    const back = setup();
+    await back.service.init();
+    expect(back.service.signingIn()).toBe(true);
+
+    // The other plane answering proves nothing about the refusing one.
+    back.service.noteFirstPartySuccess('/api/');
+    expect(back.service.signingIn()).toBe(true);
+
+    back.service.noteFirstPartySuccess('/gw/');
+    expect(back.service.signingIn()).toBe(false);
+  });
+
+  it('lifts the cover after a while when nothing on the page asks that plane', async () => {
+    vi.useFakeTimers();
+    setup().service.reauthenticate('/gw/');
+
+    const back = setup();
+    await back.service.init();
+    expect(back.service.signingIn()).toBe(true);
+
+    vi.advanceTimersByTime(5000);
+    expect(back.service.signingIn()).toBe(false);
+  });
+
+  it('does not cover an ordinary start, with no login of its own behind it', async () => {
+    const { service } = setup();
+    await service.init();
+
+    expect(service.signingIn()).toBe(false);
+  });
+
+  it('covers a start without a session from its first frame, before the guard leaves', async () => {
+    // The guard runs after the shell has drawn: uncovered, the console flashes before the login.
+    const { service } = setup({ hasValidAccessToken: () => false });
+    await service.init();
+
+    expect(service.signingIn()).toBe(true);
+  });
+
+  it('stays covered on the way out of the loop', () => {
+    const { service } = setup();
+    service.signOutCompletely();
+
+    expect(service.signingIn()).toBe(true);
   });
 });

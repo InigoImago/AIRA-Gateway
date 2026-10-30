@@ -55,7 +55,7 @@ exactly what it says. The four things people get wrong:
    token with no `groups` claim grants nothing through a group, and nothing anywhere says so.
 3. **The audience mapper must be on every client that reaches AIRA.** Keycloak does not add the
    audience by itself; without it both planes refuse every token outside `local`, and the console,
-   after a few attempts, stops and says *"Signing you in is not the problem"*.
+   after one attempt to sign in again, stops and says *"We could not sign you in"*.
 4. **Redirect URIs and web origins must be pinned** to your console hostname — never `*`. AIRA does
    not read the client's settings, so nothing here refuses a wildcard; it is yours to avoid.
 

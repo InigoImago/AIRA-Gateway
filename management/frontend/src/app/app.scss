@@ -186,3 +186,69 @@
     gap: 0.5rem;
   }
 }
+
+/* The shell's wrapper exists to be made inert while a sign-in covers it; it must not be a box of its
+ * own, or the header, navigation and page would be laid out differently than without it. */
+.aira-shell {
+  display: contents;
+}
+
+/* Signing in, and signing in that stopped helping: one card over the whole console, on the page's
+ * own background, so leaving for the login and coming back read as one steady screen. No motion
+ * beyond the shared spinner, which already slows down for a reader who asks for less. Written out
+ * flat: the check that every class has a rule reads selectors, not nesting. */
+.aira-auth {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  overflow-y: auto;
+  background: var(--aira-bg);
+}
+
+.aira-auth__card {
+  width: min(34rem, 100%);
+  padding: 2rem;
+  background: var(--aira-surface);
+  border: 1px solid var(--aira-border);
+  border-radius: var(--aira-radius);
+  box-shadow: var(--aira-shadow-lg);
+
+  h2 {
+    margin: 1rem 0 0.5rem;
+    font-size: var(--aira-text-2xl);
+  }
+
+  p {
+    line-height: 1.5;
+  }
+
+  .btn {
+    margin-top: 0.5rem;
+  }
+
+  @media (max-width: 640px) {
+    padding: 1.25rem;
+  }
+}
+
+/* Only the mark and one line: nothing to read, because nothing is wrong yet. */
+.aira-auth__card--quiet {
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 1.75rem;
+}
+
+.aira-auth__details {
+  margin: 0.75rem 0;
+  color: var(--aira-text-muted);
+
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+}

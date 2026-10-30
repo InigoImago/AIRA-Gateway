@@ -1,159 +1,194 @@
-<header class="aira-header">
-  <div class="aira-header__brand">
-    <!-- `aria-hidden`: the heading beside the mark already names the product. -->
-    <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
-    <div>
-      <h1>{{ title() }}</h1>
-      <p class="aira-subtitle">Management &amp; Monitoring</p>
-    </div>
+<!--
+  Signing in, or signing in that stopped helping (`AuthService.signingIn`, `AuthService.loginLoop`).
+  A card over the whole console rather than a panel inside it: the console behind is about to go, or
+  every screen in it needs the token being refused, and drawing it only to tear it down is the
+  flicker. The shell stays underneath, inert, so the page still asks what proves a login worked.
+-->
+@if (loginLoop(); as reason) {
+  <div
+    class="aira-auth"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="aira-auth-title"
+    data-testid="login-loop"
+  >
+    <section class="aira-auth__card">
+      <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
+      <h2 id="aira-auth-title">We could not sign you in</h2>
+      <p>{{ reason }}</p>
+      <details class="aira-auth__details">
+        <summary>For whoever runs AIRA</summary>
+        <p>
+          A token issued seconds ago is refused like the one before it, so the reason is not the
+          session — usually a mismatched audience or issuer, clocks too far apart, or a session this
+          installation no longer recognises. The address and realm the console was given are the
+          first thing to check.
+        </p>
+      </details>
+      <p class="muted">
+        Signing out ends the session at the identity provider as well, so the next sign-in starts
+        from nothing.
+      </p>
+      <button type="button" class="btn btn--primary" (click)="signOutCompletely()">
+        Sign out and start over
+      </button>
+    </section>
   </div>
-  @if (me(); as user) {
-    <div class="aira-user">
-      <span class="aira-user__name">{{ user.username }}</span>
-      <!-- The clock every time on this console is printed on (`FRD-629`): said once, here, rather
+} @else if (signingIn()) {
+  <div class="aira-auth" role="status" data-testid="signing-in">
+    <section class="aira-auth__card aira-auth__card--quiet">
+      <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
+      <span class="loading"><span class="spinner" aria-hidden="true"></span>Signing you in…</span>
+    </section>
+  </div>
+}
+
+<div class="aira-shell" [attr.inert]="loginLoop() || signingIn() ? '' : null">
+  <header class="aira-header">
+    <div class="aira-header__brand">
+      <!-- `aria-hidden`: the heading beside the mark already names the product. -->
+      <img class="aira-logo" src="aira-mark.svg" alt="" aria-hidden="true" width="34" height="30" />
+      <div>
+        <h1>{{ title() }}</h1>
+        <p class="aira-subtitle">Management &amp; Monitoring</p>
+      </div>
+    </div>
+    @if (me(); as user) {
+      <div class="aira-user">
+        <span class="aira-user__name">{{ user.username }}</span>
+        <!-- The clock every time on this console is printed on (`FRD-629`): said once, here, rather
            than beside each of the hundreds of timestamps it governs. -->
-      <span
-        class="aira-user__clock"
-        data-testid="installation-clock"
-        title="Every time and every period on this console is on this clock"
-        >{{ clock() }}</span
-      >
-      <!-- One chip per role. `data-role` carries the slug, so the role is assertable without
+        <span
+          class="aira-user__clock"
+          data-testid="installation-clock"
+          title="Every time and every period on this console is on this clock"
+          >{{ clock() }}</span
+        >
+        <!-- One chip per role. `data-role` carries the slug, so the role is assertable without
            depending on the wording. -->
-      @for (role of roleChips(); track role.slug) {
-        <span class="aira-user__role" [attr.data-role]="role.slug">{{ role.label }}</span>
-      }
-      <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
-      <!-- Platform administration (`FRD-622` FR-5), for whoever may read one of its pages — the
+        @for (role of roleChips(); track role.slug) {
+          <span class="aira-user__role" [attr.data-role]="role.slug">{{ role.label }}</span>
+        }
+        <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
+        <!-- Platform administration (`FRD-622` FR-5), for whoever may read one of its pages — the
            content-read log or the roles: its own control at the far right, set apart from who is
            signed in. A link, not a button: the area is a place with its own address. -->
-      @if (may('content_read.read') || may('role.read')) {
-        <span class="aira-user__divider" aria-hidden="true"></span>
-        <a
-          class="btn btn--sm aira-platform"
-          routerLink="/platform"
-          routerLinkActive="is-active"
-          data-testid="platform-admin"
-          title="Platform administration"
-          aria-label="Platform administration"
-          ><span aria-hidden="true">⚙</span> Platform</a
-        >
-      }
-    </div>
-  }
-  <!--
+        @if (may('content_read.read') || may('role.read')) {
+          <span class="aira-user__divider" aria-hidden="true"></span>
+          <a
+            class="btn btn--sm aira-platform"
+            routerLink="/platform"
+            routerLinkActive="is-active"
+            data-testid="platform-admin"
+            title="Platform administration"
+            aria-label="Platform administration"
+            ><span aria-hidden="true">⚙</span> Platform</a
+          >
+        }
+      </div>
+    }
+    <!--
     `/me` failed. Everything role-shaped in this shell came from it, so say so and keep Logout —
     beside the header rather than instead of the routes, because the screens below still work.
   -->
-  @if (accountError(); as message) {
-    <div class="aira-user" data-testid="account-error">
-      <span class="badge badge--danger">{{ message }}</span>
-      <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
-    </div>
-  }
-</header>
+    @if (accountError(); as message) {
+      <div class="aira-user" data-testid="account-error">
+        <span class="badge badge--danger">{{ message }}</span>
+        <button type="button" class="btn btn--sm" (click)="logout()">Logout</button>
+      </div>
+    }
+  </header>
 
-<nav class="aira-nav" aria-label="Main navigation">
-  <a class="aira-nav__item" routerLink="/use-cases" routerLinkActive="is-active">Use cases</a>
-  <a class="aira-nav__item" routerLink="/models" routerLinkActive="is-active"
-    >Models &amp; prices</a
-  >
-  <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
-  <!-- The question catalogue against a use case's pipeline (`ADR-0020`), for whoever may run it. -->
-  @if (mayTest()) {
-    <a
-      class="aira-nav__item"
-      routerLink="/pipeline-tests"
-      routerLinkActive="is-active"
-      data-testid="nav-pipeline-tests"
-      >Pipeline tests</a
+  <nav class="aira-nav" aria-label="Main navigation">
+    <a class="aira-nav__item" routerLink="/use-cases" routerLinkActive="is-active">Use cases</a>
+    <a class="aira-nav__item" routerLink="/models" routerLinkActive="is-active"
+      >Models &amp; prices</a
     >
-  }
-  <!-- Cross-use-case requests (`FRD-505`), for whoever may investigate an incident. Seeing every
+    <a class="aira-nav__item" routerLink="/reporting" routerLinkActive="is-active">Reporting</a>
+    <!-- The question catalogue against a use case's pipeline (`ADR-0020`), for whoever may run it. -->
+    @if (mayTest()) {
+      <a
+        class="aira-nav__item"
+        routerLink="/pipeline-tests"
+        routerLinkActive="is-active"
+        data-testid="nav-pipeline-tests"
+        >Pipeline tests</a
+      >
+    }
+    <!-- Cross-use-case requests (`FRD-505`), for whoever may investigate an incident. Seeing every
        figure is a different permission and does not open this screen. -->
-  @if (may('incident.investigate')) {
-    <a
-      class="aira-nav__item"
-      routerLink="/requests"
-      routerLinkActive="is-active"
-      data-testid="nav-requests"
-      >Requests</a
-    >
-  }
-  <!--
+    @if (may('incident.investigate')) {
+      <a
+        class="aira-nav__item"
+        routerLink="/requests"
+        routerLinkActive="is-active"
+        data-testid="nav-requests"
+        >Requests</a
+      >
+    }
+    <!--
     The register of processing activities (`FRD-608`), for whoever reads every figure. The gateway
     answers a member with their own use cases too, but the screen's value is comparison across use
     cases.
   -->
-  @if (may('report.read_all')) {
-    <a
-      class="aira-nav__item"
-      routerLink="/register"
-      routerLinkActive="is-active"
-      data-testid="nav-register"
-      >Register</a
-    >
-  }
-  <!-- The security console (`FRD-502`), for whoever sees the findings of every use case. -->
-  @if (may('anomaly.read_all')) {
-    <a
-      class="aira-nav__item"
-      routerLink="/security"
-      routerLinkActive="is-active"
-      data-testid="nav-security"
-      >Security</a
-    >
-  }
-  <!-- No disabled tabs for screens that do not exist: a tab that does not respond reads as broken
+    @if (may('report.read_all')) {
+      <a
+        class="aira-nav__item"
+        routerLink="/register"
+        routerLinkActive="is-active"
+        data-testid="nav-register"
+        >Register</a
+      >
+    }
+    <!-- The security console (`FRD-502`), for whoever sees the findings of every use case. -->
+    @if (may('anomaly.read_all')) {
+      <a
+        class="aira-nav__item"
+        routerLink="/security"
+        routerLinkActive="is-active"
+        data-testid="nav-security"
+        >Security</a
+      >
+    }
+    <!-- No disabled tabs for screens that do not exist: a tab that does not respond reads as broken
        navigation (`FRD-206`). -->
-</nav>
+  </nav>
 
-<main class="aira-main">
-  <!--
-    Signing in again stopped helping (`AuthService.reauthenticate`), or the identity provider could
-    not be reached at startup (`AuthService.startupError`). Either replaces the routes: every screen
-    behind it needs a token, and would fill the page with failures sharing one unnamed cause. The
-    loop's button ends the session at Keycloak, the only exit; the startup message names the issuer,
-    because a misdirected console fails like an unreachable one.
+  <main class="aira-main">
+    <!--
+    Signing in again stopped helping (the card above), or the identity provider could not be reached
+    at startup (`AuthService.startupError`). Either replaces the routes: every screen behind it needs
+    a token, and would fill the page with failures sharing one unnamed cause. The startup message
+    names the issuer, because a misdirected console fails like an unreachable one.
   -->
-  @if (loginLoop(); as reason) {
-    <section class="panel" data-testid="login-loop">
-      <h2>Signing you in is not the problem</h2>
-      <p>AIRA stopped redirecting you to the login, because {{ reason }}</p>
-      <p class="muted">
-        This usually means the token is refused for a reason a new one does not change — a
-        mismatched audience or issuer, a clock too far apart, or a session this installation no
-        longer recognises. Signing out completely ends the session at the identity provider as well,
-        which is what lets the next sign-in start from nothing. If it comes back, the address and
-        realm the console was given are the first thing to check with whoever runs the deployment.
-      </p>
-      <button type="button" class="btn" (click)="signOutCompletely()">Sign out completely</button>
-    </section>
-  } @else if (startupError(); as issuer) {
-    <section class="panel" data-testid="startup-error">
-      <h2>The console cannot sign you in</h2>
-      <p>
-        AIRA could not reach its identity provider at <code>{{ issuer }}</code
-        >, so there is no way to log in and nothing below this message would load.
-      </p>
-      <p class="muted">
-        The console itself is running — this is about the service that issues logins. If you
-        administer this deployment, check that Keycloak is up and that the address above is the one
-        it is served from. Otherwise, please report the address above to whoever runs it.
-      </p>
-      <button type="button" class="btn" (click)="retryStartup()">Try again</button>
-    </section>
-  } @else {
-    <!-- The privacy notice (`FRD-625`): a window that must be acknowledged when it is due. Inside
+    @if (loginLoop()) {
+      <!-- Nothing: the card says it all, and the routes would only fail behind it. -->
+    } @else if (startupError(); as issuer) {
+      <section class="panel" data-testid="startup-error">
+        <h2>The console cannot sign you in</h2>
+        <p>
+          AIRA could not reach its identity provider at <code>{{ issuer }}</code
+          >, so there is no way to log in and nothing below this message would load.
+        </p>
+        <p class="muted">
+          The console itself is running — this is about the service that issues logins. If you
+          administer this deployment, check that Keycloak is up and that the address above is the
+          one it is served from. Otherwise, please report the address above to whoever runs it.
+        </p>
+        <button type="button" class="btn" (click)="retryStartup()">Try again</button>
+      </section>
+    } @else {
+      <!-- The privacy notice (`FRD-625`): a window that must be acknowledged when it is due. Inside
          this branch, because it needs the same token every screen does. -->
-    <app-privacy-gate />
-    <router-outlet />
-  }
-</main>
+      <app-privacy-gate />
+      <router-outlet />
+    }
+  </main>
 
-<footer class="aira-footer">
-  <!-- Reachable from every page at any time (Art. 12 DSGVO), not only when the window is due. -->
-  <a routerLink="/privacy" routerLinkActive="is-active" data-testid="footer-privacy"
-    >Privacy notice · Datenschutzhinweise</a
-  >
-</footer>
+  <footer class="aira-footer">
+    <!-- Reachable from every page at any time (Art. 12 DSGVO), not only when the window is due. -->
+    <a routerLink="/privacy" routerLinkActive="is-active" data-testid="footer-privacy"
+      >Privacy notice · Datenschutzhinweise</a
+    >
+  </footer>
+</div>

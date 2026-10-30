@@ -108,8 +108,8 @@ group model. Three things, and the third is the one that bites:
 2. **A client for the console**, with the console's URL in its redirect URIs and web origins.
 3. **An audience mapper on that client.** Keycloak does **not** add one by itself. Without it the
    token carries no `aud` naming `AIRA_OIDC_AUDIENCE`, both planes refuse it, and the console —
-   after signing you in again a few times — stops and says *"Signing you in is not the problem"*:
-   the identity provider accepts you and this installation refuses the token it issues.
+   after signing you in again once — stops and says *"We could not sign you in"*: the identity
+   provider accepts you and this installation refuses the token it issues.
 
 **Check** — the token, not the configuration:
 
@@ -882,8 +882,8 @@ Do not edit the file inside a running container: the next start overwrites it.
 When it goes wrong, the console says which half. An issuer it cannot reach at start-up gives *"The
 console cannot sign you in"*, naming the issuer address it was given. A token the identity provider
 issues and this installation refuses — a missing audience, a mismatched issuer, clocks too far
-apart — ends, after a few attempts to sign in again, in *"Signing you in is not the problem"*, with
-a button that ends the session at Keycloak as well.
+apart — ends, after one attempt to sign in again, in *"We could not sign you in"*, naming the
+service that refused, with a button that ends the session at Keycloak as well.
 
 Serving the bundle from a web server of your own, you write `runtime-config.js` yourself
 (`window.__AIRA_CONFIG__ = { issuer: …, clientId: … }`) and send a content policy whose

@@ -117,7 +117,8 @@ test.describe('Authentication', () => {
    * deployment to be broken.
    *
    * Before the fix this test does not fail — it never finishes: the count below climbs until
-   * Keycloak's brute-force limit stops it.
+   * Keycloak's brute-force limit stops it. And with a limit of three it passed while the page went
+   * round three times inside a second — a flicker nobody could read — so the count is exact.
    */
   test('stops signing in again when the API refuses a session Keycloak keeps accepting', async ({
     page,
@@ -143,11 +144,11 @@ test.describe('Authentication', () => {
 
     // It stops, and says why, instead of going round.
     await expect(page.getByTestId('login-loop')).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('login-loop')).toContainText('did not help');
-    // Three attempts are allowed inside the window; the fourth is the one that stops. Anything
-    // above that is the loop this test exists to prevent, and the number is what makes the
-    // assertion about the *loop* rather than about a screen appearing eventually.
-    expect(authorizations).toBeLessThanOrEqual(4);
+    await expect(page.getByTestId('login-loop')).toContainText('We could not sign you in');
+    // One login, because a session that ended is what a login mends; a token issued seconds ago
+    // and refused like the last one is not. The number is what makes the assertion about the
+    // *loop* rather than about a screen appearing eventually.
+    expect(authorizations).toBe(1);
 
     // And the routes are not rendered behind it: every screen there needs the token being refused,
     // so showing them would fill the page with failures that share one cause and name none of it.
@@ -157,7 +158,7 @@ test.describe('Authentication', () => {
     // logout would be signed straight back in by the SSO session — the loop with an extra step.
     // Landing on the login form is what proves the provider session is gone.
     await page.unroute(/\/(api|gw)\//);
-    await page.getByRole('button', { name: /sign out completely/i }).click();
+    await page.getByRole('button', { name: /sign out and start over/i }).click();
 
     await expect(page.locator('#kc-login').or(page.locator('#username')).first()).toBeVisible({
       timeout: 30_000,
@@ -192,8 +193,8 @@ test.describe('Authentication', () => {
     await page.goto('/reporting');
 
     await expect(page.getByTestId('login-loop')).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('login-loop')).toContainText('did not help 3 times');
-    expect(authorizations).toBeLessThanOrEqual(4);
+    await expect(page.getByTestId('login-loop')).toContainText('the AIRA gateway does not accept');
+    expect(authorizations).toBe(1);
   });
 
   /**

@@ -1,5 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { OAuthService } from 'angular-oauth2-oidc';
+import { API, GW } from '../api/prefixes';
 import { authConfig } from './auth.config';
 
 /**
@@ -12,11 +13,26 @@ const LOOP_KEY = 'aira.reauth-attempts';
 /**
  * How many logins may start within {@link LOOP_WINDOW_MS} before the console stops trying.
  *
- * One is an ordinary expiry, two is that plus a race between panels; a third inside two minutes is
- * the same refusal coming back. Reached long before Keycloak's brute-force limit locks an account.
+ * One: a login is the answer to an expired session, and a refusal that survives a token issued
+ * seconds ago is not one a further token changes. Panels refusing at once are a single login
+ * already (`reauthenticating`), so a higher number buys nothing but round trips — each a full page
+ * built and torn down, which reads as the console flickering.
  */
-const LOOP_LIMIT = 3;
+const LOOP_LIMIT = 1;
 const LOOP_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * How long the console stays covered at most when nothing ends the cover sooner — no answer from
+ * the plane that refused, no redirect to the login. A page that never asks that plane, or an address
+ * no route guards, would otherwise stay covered for good.
+ */
+const COVER_MS = 5000;
+
+/** The plane behind each first-party prefix, as a refusal names it to the reader. */
+const PLANE_NAMES: Record<string, string> = {
+  [`${API}/`]: "AIRA's management service",
+  [`${GW}/`]: 'the AIRA gateway',
+};
 
 /**
  * The logins started in the current window, and which first-party prefix refused the session
@@ -49,6 +65,13 @@ export class AuthService {
    */
   readonly loginLoop = signal<string | null>(null);
 
+  /**
+   * Set while the reader is on the way to a login, or back from one the console started and not yet
+   * shown to have worked. The shell covers itself meanwhile: the page behind is about to be torn
+   * down, or about to be refused again, and drawing it only to remove it is the flicker.
+   */
+  readonly signingIn = signal(false);
+
   async init(): Promise<void> {
     if (!authConfig.issuer) {
       // A deployment fault, said as one — not a reason to check whether Keycloak is up.
@@ -69,6 +92,7 @@ export class AuthService {
       return;
     }
     this.restoreLocation();
+    this.coverWhileSigningIn();
 
     // Renew before expiry: a session that simply ends reads as the backend rejecting the user. The
     // method is the library's name for automatic renewal; with `useSilentRefresh: false` it renews
@@ -91,6 +115,7 @@ export class AuthService {
    * under way, so it is only the fallback.
    */
   login(target?: string): void {
+    this.signingIn.set(true);
     this.oauth.initCodeFlow(target ?? this.currentPath());
   }
 
@@ -119,10 +144,12 @@ export class AuthService {
     const attempts = (previous?.count ?? 0) + 1;
     if (attempts > LOOP_LIMIT) {
       // Neither another redirect nor a silent stop: the reader is told why it stopped.
+      const plane = PLANE_NAMES[refusedBy ?? ''] ?? 'AIRA';
+      this.signingIn.set(false);
       this.loginLoop.set(
-        `signing in again did not help ${attempts - 1} times in a row. The identity provider is ` +
-          'accepting you and this installation is refusing the token it issues, so another login ' +
-          'would be the same round trip.',
+        `Your organisation's sign-in accepts you, but ${plane} does not accept the access it ` +
+          'issues — not even right after signing in again. Another attempt would end the same ' +
+          'way, so AIRA stopped here.',
       );
       return;
     }
@@ -132,6 +159,7 @@ export class AuthService {
     // message claim sign-ins that never happened.
     this.writeReauthAttempts({ count: attempts, first: previous?.first ?? now, refusedBy });
     this.reauthenticating = true;
+    this.signingIn.set(true);
     // Drop the dead token first, or the guard on the way back still sees a stored one.
     this.oauth.logOut(true);
     this.oauth.initCodeFlow(this.currentPath());
@@ -148,7 +176,25 @@ export class AuthService {
     const recorded = this.readReauthAttempts();
     if (recorded && (recorded.refusedBy === null || recorded.refusedBy === answeredBy)) {
       this.clearReauthAttempts();
+      // Not while this page is itself leaving for a login: the cover is what it shows until it goes.
+      if (!this.reauthenticating) this.signingIn.set(false);
     }
+  }
+
+  /**
+   * Cover the console from its first frame when a sign-in is what comes next: with no session,
+   * where every route's guard is about to leave for the login, and back from a login this console
+   * started, until the plane that refused answers or refuses again and {@link reauthenticate} says
+   * why. Lifted after {@link COVER_MS} whatever happens, because a page that never asks that plane
+   * would never lift it.
+   */
+  private coverWhileSigningIn(): void {
+    const returning = this.attemptsWithinWindow(Date.now()) !== null;
+    if (this.oauth.hasValidAccessToken() && !returning) return;
+    this.signingIn.set(true);
+    setTimeout(() => {
+      if (!this.reauthenticating) this.signingIn.set(false);
+    }, COVER_MS);
   }
 
   /**
@@ -161,6 +207,8 @@ export class AuthService {
   signOutCompletely(): void {
     this.clearReauthAttempts();
     this.loginLoop.set(null);
+    // Covered on the way out, or the console the reader could not use is drawn once more first.
+    this.signingIn.set(true);
     // `client_id`, because each pass through the loop removed the id token that would otherwise
     // identify us, and Keycloak refuses a `post_logout_redirect_uri` without one of the two.
     this.oauth.logOut({ client_id: authConfig.clientId ?? '' });

@@ -18,8 +18,8 @@ guard was correct about the case it was written for and structurally blind to th
 `LESSONS.md` §1's shape, in a new costume.
 
 **Why this test is in Python.** The behaviour is guarded properly by Vitest, in
-`auth.service.spec.ts`, which drives the loop across four freshly built services — the closest a
-test gets to four page loads. But `tools/mutation_check.py` runs **pytest** and nothing else, so a
+`auth.service.spec.ts`, which drives the loop across freshly built services — the closest a
+test gets to page loads. But `tools/mutation_check.py` runs **pytest** and nothing else, so a
 mutation that reintroduced the defect would be reported as *caught* by no test the harness can run.
 The frontend mutations this repository already has (`C12`–`C14`) are guarded the same way: a Python
 test that reads the TypeScript. What is asserted here is therefore the *shape* of the fix, and the

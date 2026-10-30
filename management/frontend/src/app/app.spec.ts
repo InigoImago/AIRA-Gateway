@@ -96,6 +96,7 @@ function configure(authenticated: boolean, roles: string[] = [], permissions: st
           // it is a stub of a different service — the trap `Live`'s teardown case recorded.
           startupError: signal<string | null>(null),
           loginLoop: signal<string | null>(null),
+          signingIn: signal(false),
           logout: () => {
             loggedOut = true;
           },
@@ -329,6 +330,7 @@ describe('App when the identity provider cannot be reached', () => {
             isAuthenticated: () => false,
             startupError: signal<string | null>(issuer),
             loginLoop: signal<string | null>(null),
+            signingIn: signal(false),
             logout: () => {},
           },
         },
@@ -389,6 +391,7 @@ describe('App when the console cannot find out who you are', () => {
             isAuthenticated: () => true,
             startupError: signal<string | null>(null),
             loginLoop: signal<string | null>(null),
+            signingIn: signal(false),
             logout: () => {
               loggedOut = true;
             },
@@ -460,5 +463,80 @@ describe('App when the console cannot find out who you are', () => {
 
     expect(link?.getAttribute('href')).toBe('/privacy');
     expect(link?.textContent).toContain('Datenschutzhinweise');
+  });
+});
+
+describe('App while signing in', () => {
+  /**
+   * Leaving for a login, and coming back from one, used to draw the whole console — header,
+   * navigation, spinners — only to tear it down a moment later. Three round trips of that inside a
+   * second is a flicker. The shell covers itself instead, with one steady card.
+   */
+  let signedOut = false;
+
+  function render(state: { loop?: string | null; signingIn?: boolean }): HTMLElement {
+    TestBed.resetTestingModule();
+    signedOut = false;
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideRouter([]),
+        {
+          provide: AuthService,
+          useValue: {
+            isAuthenticated: () => true,
+            startupError: signal<string | null>(null),
+            loginLoop: signal<string | null>(state.loop ?? null),
+            signingIn: signal(state.signingIn ?? false),
+            logout: () => {},
+            signOutCompletely: () => {
+              signedOut = true;
+            },
+          },
+        },
+        { provide: MeService, useValue: { currency: signal(''), get: () => of(baseMe) } },
+        {
+          provide: PrivacyNoticeService,
+          useValue: { get: () => of(privacyNotice({ due: null })) },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('covers the console with one card while a sign-in is under way', () => {
+    const el = render({ signingIn: true });
+
+    expect(el.querySelector('[data-testid="signing-in"]')?.textContent).toContain('Signing you in');
+    // Underneath and inert, not removed: the routes still ask the plane whose answer ends it.
+    expect(el.querySelector('.aira-shell')?.hasAttribute('inert')).toBe(true);
+    expect(el.querySelector('router-outlet')).not.toBeNull();
+  });
+
+  it('shows the console, uncovered, when nobody is signing in', () => {
+    const el = render({});
+
+    expect(el.querySelector('[data-testid="signing-in"]')).toBeNull();
+    expect(el.querySelector('[data-testid="login-loop"]')).toBeNull();
+    expect(el.querySelector('.aira-shell')?.hasAttribute('inert')).toBe(false);
+  });
+
+  it('says why it stopped, offers the way out, and renders no routes behind it', () => {
+    const el = render({
+      loop: 'the AIRA gateway does not accept the access it issues',
+      signingIn: true,
+    });
+    const card = el.querySelector('[data-testid="login-loop"]');
+
+    expect(card?.textContent).toContain('We could not sign you in');
+    expect(card?.textContent).toContain('the AIRA gateway does not accept');
+    // One card, not the spinner beneath the reason.
+    expect(el.querySelector('[data-testid="signing-in"]')).toBeNull();
+    expect(el.querySelector('router-outlet')).toBeNull();
+
+    card?.querySelector<HTMLButtonElement>('button')?.click();
+    expect(signedOut).toBe(true);
   });
 });

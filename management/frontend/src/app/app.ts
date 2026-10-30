@@ -32,6 +32,9 @@ export class App implements OnInit {
   /** Why signing in again stopped being tried, or `null` (`AuthService.reauthenticate`). */
   protected readonly loginLoop = this.auth.loginLoop;
 
+  /** Whether a sign-in is under way, which the shell covers (`AuthService.signingIn`). */
+  protected readonly signingIn = this.auth.signingIn;
+
   /**
    * Why the console could not load your account, or `null` when it could.
    *

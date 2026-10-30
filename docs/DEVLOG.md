@@ -5,6 +5,28 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A sign-in that does not flicker (2026-10-30)
+
+The owner found the console's failed sign-in hard to look at: the page shook several times before it
+gave up, and what it gave up on looked unfinished. Reproduced against the local Keycloak with the API
+refused at the network layer: three logins in half a second, about twenty page changes, each one the
+whole console drawn and torn down, ending on a panel inside the console with a red badge in the
+header telling the reader to reload.
+
+The loop guard of `FRD-203` §7 was right about the storm and blind to the flicker: its bound of three
+was checked by counting requests, and nobody counted frames. Now one login is the most the console
+tries (`LOOP_LIMIT = 1`), the console covers itself with one steady card while a sign-in is under
+way — from the first frame of a start without a session, and back from a login until the refusing
+plane answers — and the stop is a card of its own: *We could not sign you in*, which service refused,
+the causes folded away, *Sign out and start over* (`FRD-203` §8).
+
+Verified in a real browser with the new bundle: one authorization request instead of three, both
+refusal shapes, ten runs of ten, the way out landing on Keycloak's form; an expired session one login
+mends shows the card and then the page. One harness lesson on the way: a redirect the browser follows
+by itself bypasses Playwright's route, so a bundle served through routes has to receive Keycloak's
+redirects as fresh navigations, or the old bundle answers and the page looks broken. Mutations
+`LOOP3`–`LOOP5`; the shell's three anchors moved one level into its inert wrapper.
+
 ## A mail when a budget runs low, and when a use case's anomaly rule fires (2026-10-29)
 
 The owner asked whether AIRA could take a person's address from their Keycloak profile and tell

@@ -85,10 +85,11 @@ because the only thing that follows is a full-page navigation to Keycloak."* Cor
 it was written for, structurally blind to the one that hurts. `LESSONS.md` §1's shape again.
 
 **The fix.** Attempts are counted in `sessionStorage` — outside the object, because that is what
-survives the redirect — and past **three within two minutes** the console stops redirecting and says
-so instead. Three because one is an ordinary expiry, two is that plus a race between panels, and a
-third inside two minutes is the same refusal coming back. Keycloak's own brute-force default trips
-at thirty; the point of this number is to be reached long before an account is locked.
+survives the redirect — and past **one within two minutes** the console stops redirecting and says
+so instead. (It was three until §8: one for an ordinary expiry, one for a race between panels, one
+spare. The race is the in-page flag's to absorb, and the spare was a flicker.) Keycloak's own
+brute-force default trips at thirty; the point of this number is to be reached long before an account
+is locked.
 
 The counter is cleared by a first-party call that **answers**, from the plane whose refusal started
 the login. That is the only evidence worth trusting: everything the console can check about itself
@@ -105,8 +106,8 @@ navigation signs the reader straight back in. Keycloak is the half that keeps sa
 escape has to reach it. The shell renders the explanation instead of the routes, like
 `startupError`, because every screen behind it needs the token that is being refused.
 
-**Testing.** Six Vitest cases in `auth.service.spec.ts` drive the loop across freshly built services
-— the closest a test gets to four page loads — covering the stop, the reset on success, the window
+**Testing.** Vitest cases in `auth.service.spec.ts` drive the loop across freshly built services
+— the closest a test gets to page loads — covering the stop, the reset on success, the window
 rather than a lifetime, unreadable storage, and that the escape is the provider-side logout. Six
 more in `tools/tests/test_the_console_cannot_loop_through_the_login.py` assert the *shape*, because
 `tools/mutation_check.py` runs pytest and nothing else: a mutation reintroducing the defect would
@@ -139,4 +140,43 @@ so: both other tiers stub the provider.
 the server's reason, and guessing would be worse than the sentence it prints. The gateway's own
 `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` (60) bounds the other side of the same event; what had no brake
 was the redirect.
+
+## 8. A sign-in that does not flicker (2026-10-30)
+
+*Reported from use: a failed sign-in shook the page several times before it gave up, fast enough
+to be unpleasant to look at, and the page it gave up on looked unfinished.*
+
+§7 bounded the loop at three logins, and the bound held: the browser test counted at most four
+authorization requests. What it could not count was what the reader saw. Each login is a full page
+built — header, navigation, spinners — and torn down again when the refusal arrives, and with
+Keycloak's SSO session answering at once, three of them took half a second: about twenty page
+changes. The page it stopped on kept the header, the navigation and a red badge in the header that
+told the reader to reload, the one thing that would not help.
+
+**One login, not three.** `LOOP_LIMIT` is `1`. A login is the answer to a session that ended; a
+token issued seconds ago and refused like the last one is not a session that ended, so the second
+refusal stops. Panels refusing at once were never a reason for a higher number: `reauthenticating`
+makes them one login inside the page.
+
+**The console covers itself while signing in.** `AuthService.signingIn` is set on the way to a login
+(the guard's `login`, a refusal's `reauthenticate`, the way out), at startup when there is no session
+and every guard is about to leave, and back from a login the console started until the plane that
+refused answers. The shell draws one card — the mark and *Signing you in…* — over everything, on the
+page's own background, and the shell beneath stays rendered but `inert`: its routes still make the
+call whose answer proves the login worked. The cover lifts on that answer, gives way to the stop card
+on a second refusal, and lifts after five seconds whatever happens, so a page that never asks the
+refusing plane is not covered for good.
+
+**The stop is a card, not a panel in the console.** *We could not sign you in*, which plane refused
+(management, the gateway, or AIRA when a renewal failed), the likely causes folded away for whoever
+runs the installation, and one primary button, *Sign out and start over*, which is the provider-side
+logout of §7.
+
+**Verified in a real browser against the local Keycloak**, with the new bundle served to the browser
+and the API refused at the network layer as in §7's test: one authorization request where there were
+three, the loop card for both planes refusing and for the gateway alone, ten runs out of ten, and the
+way out landing on Keycloak's form each time. An expired session that one login mends shows the card
+and then the page the reader was on. The e2e tests now require exactly one authorization request.
+Mutations `LOOP3` (the limit back at three), `LOOP4` (no cover at startup) and `LOOP5` (the shell
+without the cover).
 
