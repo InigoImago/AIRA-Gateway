@@ -108,6 +108,10 @@ Gateway migration `0058_request_technical_record`: `request_logs.technical JSON 
 - The stream's milestones watched on the wire (`test_a_quiet_model_keeps_its_connection.py`): a
   completed stream's bytes, writes and keepalives equal what left; a caller who leaves mid-answer
   and one who leaves before the first word; a chain that runs out after the status.
+- A proxy that cuts, on real sockets (`test_a_proxy_that_cuts_is_told_apart.py`): the gateway under
+  uvicorn behind a proxy that closes after a fixed time open, and one that closes after a fixed
+  silence. The first is recorded as open for the limit with almost no silence, the second as silent
+  for the limit; the moment is the cut even when the model is read on after it.
 - The record's rules and the provider's facts (`test_a_request_keeps_its_technical_record.py`):
   every phase; a reset connection's `ECONNRESET`; the gateway's own line; Google's and Anthropic's
   words and request ids; a prompt and a key in a provider's message never reach the record.

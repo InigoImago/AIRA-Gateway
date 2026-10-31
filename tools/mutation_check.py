@@ -20858,6 +20858,34 @@ MUTATIONS = [
         "  if (trace.trace_id) lines.push(`Trace id: ${trace.trace_id}`);\n  lines.push(`By: ${trace.subject} ${trace.credential}`);",
         "management/frontend/src/app/features/use-cases/technical-details.spec.ts",
     ),
+    Mutation(
+        "TR-10",
+        "behind a proxy that cuts a connection, the moment recorded is the cut, not the drain's end",
+        "gateway/src/aira_gateway/api/serving/streaming.py",
+        '                    self._technical.mark("caller_left")\n'
+        "                    raise\n"
+        "                finally:\n"
+        "                    try:\n"
+        "                        if self._caller_left():\n"
+        "                            held.enter_context(drains_of(self._request).held())\n"
+        "                            await uninterrupted(self._drain())\n",
+        "                    raise\n"
+        "                finally:\n"
+        "                    try:\n"
+        "                        if self._caller_left():\n"
+        "                            held.enter_context(drains_of(self._request).held())\n"
+        "                            await uninterrupted(self._drain())\n"
+        '                            self._technical.mark("caller_left")\n',
+        "gateway/tests/test_a_proxy_that_cuts_is_told_apart.py",
+    ),
+    Mutation(
+        "TR-11",
+        "the last byte to the caller is the last one, so a cut's silence before it is measured",
+        "gateway/src/aira_gateway/technical.py",
+        '        self._marks["last_byte_to_caller"] = self._now()',
+        '        self._marks.setdefault("last_byte_to_caller", self._now())',
+        "gateway/tests/test_a_proxy_that_cuts_is_told_apart.py",
+    ),
 ]
 
 

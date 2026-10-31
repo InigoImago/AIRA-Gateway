@@ -5,6 +5,24 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A proxy that cuts, on real sockets (2026-10-31)
+
+The owner's `499`s turned out to be a load balancer in front of the installation closing every
+connection after three minutes, whatever flowed. The technical record (`FRD-630`) promised to tell
+that apart from an idle timeout, and had only been checked through a hand-driven ASGI `receive`,
+which decides itself when the gateway hears of a departure.
+
+`test_a_proxy_that_cuts_is_told_apart.py` runs the gateway under uvicorn with a proxy of a few lines
+in front that closes both sides — once a second after the connection opened, and once a second after
+the gateway's last byte. The first records a connection open for the limit with keepalives up to the
+end and almost no silence; the second a silence as long as the limit. The length case also reads the
+model on after the cut, so a departure stamped at the drain's end instead of the cut fails it
+(`TR-10`), and so does a last byte that keeps its first moment (`TR-11`).
+
+**Found on the way.** The first version found no row at all. The gateway had written it: the test,
+polling for it on the hermetic suite's single shared in-memory connection, rolled the write back with
+its own read. On a SQLite file, one connection per session, as the other real-socket tests run.
+
 ## A request explained to a technician (2026-10-30)
 
 Long OpenCode sessions with Claude ended in `499`s: OpenCode reported `ECONNRESET` while reading the
