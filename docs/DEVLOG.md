@@ -23,8 +23,13 @@ the machine spent elsewhere is no property, so the case now asks for at least on
 most half the limit of silence before the cut, and prints the record when it fails. TR-10 and TR-11
 are still caught.
 
-The integration suite failed in both modes in the same run. Its cause is not in this entry: the log
-was not readable here.
+The integration suite failed in both modes on one case of 1098, `test_management_api`'s use case
+inserted past the API. Its helper fills every column from the Django model's defaults, and
+`budget_mail_thresholds` is the first JSON column whose default is a list: bare, psycopg sends it as
+`smallint[]`, and PostgreSQL refuses that for a `jsonb` column. The ORM wraps it, so the product never
+did this. The helper now wraps every JSON column the same way. On a throwaway PostgreSQL with
+Management's migrations the bare list gave CI's error and the wrapped one inserted and read back as
+`[100]`. `test_mail_round` passed in both modes, against the showcase's mail catcher.
 
 ## A request id a client read as an outage (2026-11-02)
 

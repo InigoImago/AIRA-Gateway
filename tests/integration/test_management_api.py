@@ -108,7 +108,8 @@ def _row_for(slug: str) -> tuple[list[str], dict[str, object]]:
     nothing has to be remembered.
     """
     from aira_management.apps.usecases.models import UseCase
-    from django.db.models import DateTimeField
+    from django.db.models import DateTimeField, JSONField
+    from psycopg.types.json import Jsonb
 
     columns: list[str] = []
     values: dict[str, object] = {}
@@ -120,6 +121,9 @@ def _row_for(slug: str) -> tuple[list[str], dict[str, object]]:
             values[field.column] = slug
         elif isinstance(field, DateTimeField) and (field.auto_now or field.auto_now_add):
             values[field.column] = datetime.now(UTC)
+        elif isinstance(field, JSONField):
+            # Wrapped, as Django's own backend does: a bare list reaches PostgreSQL as an array.
+            values[field.column] = Jsonb(field.get_default())
         else:
             values[field.column] = field.get_default()
     return columns, values
