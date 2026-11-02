@@ -305,7 +305,9 @@ export async function submitOfOpenForm(page: Page) {
   const inWindow = page
     .locator('.modal button[type="submit"], .editor-page__actions button[type="submit"]')
     .first();
-  const inPage = page.locator('form button[type="submit"]').first();
+  // Only one that can be pressed: a page can hold a settings form of its own beside the one being
+  // opened, with its Save dead until something changes, and that is never the button asked for.
+  const inPage = page.locator('form button[type="submit"]:not([disabled])').first();
 
   // **Waited for, not sampled.** This used to branch on `await inWindow.count()`, which is a single
   // immediate poll taken the moment the opening click returned — so on a slow render it saw zero,
@@ -313,7 +315,7 @@ export async function submitOfOpenForm(page: Page) {
   // submit button lives in the modal footer with `form="…"`, outside any `<form>`. The button was
   // on screen the whole time. Reproduced by restarting the management container first, which is
   // the only reason it ever showed up: warm, the modal wins the race every time.
-  await expect(inWindow.or(inPage)).toBeVisible();
+  await expect(inWindow.or(inPage).first()).toBeVisible();
   return (await inWindow.isVisible()) ? inWindow : inPage;
 }
 

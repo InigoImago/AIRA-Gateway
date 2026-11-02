@@ -5,6 +5,27 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Two tests the first CI round refused (2026-11-02)
+
+The commits for the technical record, mail and sign-in met CI's browser suite for the first time, and
+nine budget cases failed in both data modes, the same way: `submitOfOpenForm` asked for a window's
+submit **or** a page form's, and the mail panel beside the budgets gave the page a second one, so the
+locator resolved to two elements. The product was right; CI runs with a relay, so the panel's form
+shows. The helper now takes the first match and looks on the page only for a button that can be
+pressed: the panel's Save is dead until something changes. Against stand-in pages in Chromium the old
+helper failed 3 cases of 4 and the new one none; the nine cases themselves wait for the next CI run.
+
+The proxy test failed once in the Python job: it asked for at least five keepalives within its
+one-second limit, and got 2. Not reproduced: a full run in a fresh clone on four cores passed, and 12
+runs on a contended core passed with 7 to 9. The failure message held no timeline, so whether the
+stream began late or the machine stalled stays open. A count that depends on how much of that second
+the machine spent elsewhere is no property, so the case now asks for at least one keepalive and at
+most half the limit of silence before the cut, and prints the record when it fails. TR-10 and TR-11
+are still caught.
+
+The integration suite failed in both modes in the same run. Its cause is not in this entry: the log
+was not readable here.
+
 ## A request id a client read as an outage (2026-11-02)
 
 A release check went back to a flake parked since the mail round: OpenCode 1 sending a turn twice
