@@ -20886,6 +20886,22 @@ MUTATIONS = [
         '        self._marks.setdefault("last_byte_to_caller", self._now())',
         "gateway/tests/test_a_proxy_that_cuts_is_told_apart.py",
     ),
+    Mutation(
+        "RID-1",
+        "a request id that reads as a status a client retries is drawn again",
+        "gateway/src/aira_gateway/explaining.py",
+        "    while LOOKS_LIKE_A_RETRIED_STATUS.search(request_id := new_id()):\n        pass\n",
+        "    request_id = new_id()\n",
+        "gateway/tests/test_say_what_happened.py",
+    ),
+    Mutation(
+        "RID-2",
+        "every request takes its id from the draw a client cannot misread",
+        "gateway/src/aira_gateway/middleware.py",
+        'state.setdefault("request_id", new_request_id())',
+        'state.setdefault("request_id", __import__("uuid").uuid4().hex)',
+        "gateway/tests/test_say_what_happened.py",
+    ),
 ]
 
 

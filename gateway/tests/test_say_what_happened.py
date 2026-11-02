@@ -12,7 +12,9 @@ import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -152,6 +154,23 @@ def test_a_kira_refusal_keeps_the_predecessors_envelope() -> None:
     assert set(response.json()) == {"code", "message"}
     assert response.headers["x-aira-reason"] == "unauthenticated"
     assert response.headers["x-aira-request-id"]
+
+
+@pytest.mark.parametrize("status", ["408", "409", "425", "429", "500", "503", "524", "599"])
+def test_a_request_id_never_reads_as_a_status_a_client_retries(status: str) -> None:
+    """The id stands in a refusal's body, and a client that looks for a status in an error's text
+    takes a final refusal for an outage when it finds one inside the id: the id is drawn again."""
+    status_like = f"aaaa{status}a-0000-4000-8000-aaaaaaaaaaaa"
+    clean = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    with (
+        mock.patch("aira_gateway.explaining.new_id", side_effect=[status_like, clean]),
+        TestClient(_app(auth_required=True)) as client,
+    ):
+        response = client.post("/v1beta/models/mock-1:generateContent", json=BODY)
+
+    assert response.headers["x-aira-request-id"] == clean
+    (info,) = response.json()["error"]["details"]
+    assert info["metadata"]["request_id"] == clean
 
 
 def test_a_gemini_refusal_before_attribution_carries_the_reason_too() -> None:

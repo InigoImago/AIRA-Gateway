@@ -111,7 +111,9 @@ which keeps `details` and prints it with its exception, carries it to the develo
 request's outcome in upper case (`BLOCKED_BY_PIPELINE`, `BUDGET_EXCEEDED`, `RATE_LIMITED`,
 `NO_CAPABLE_MODEL`, `UPSTREAM_ERROR`, `MODEL_NOT_FOUND`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`,
 `SUSPENDED`; `UNAUTHENTICATED` and `PERMISSION_DENIED` before a request is attributed). `metadata`
-adds `step` for a pipeline block and `resets_at` for a budget. The status and the message are what
+adds `step` for a pipeline block and `resets_at` for a budget. A `request_id` never contains a run that
+reads as a status clients retry (`408`, `409`, `425`, `429`, `5xx`), because some clients look for a
+status in the text of an error and would send a final refusal again. The status and the message are what
 they were without it. The KIRA envelope is the predecessor's and gains nothing: there the same word
 is the `X-AIRA-Reason` header.
 

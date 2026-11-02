@@ -5,6 +5,25 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A request id a client read as an outage (2026-11-02)
+
+A release check went back to a flake parked since the mail round: OpenCode 1 sending a turn twice
+against a model its provider does not serve, one run in about twenty-five, never when anyone looked.
+Recording the status of each answer showed all of them `404`, and the second send came 2.4 s after
+the first on the same connection: OpenCode's own backoff, on an answer it should not retry.
+
+OpenCode 1's retry decision (read in the 1.19.3 binary) tests an error's message **and its whole
+body** against `/429|500|502|503|504|524/`, unanchored. A refusal's body holds `request_id`
+(`FRD-628` FR-3), a UUID, and 3.3 % of UUIDs contain one of those runs in their hexadecimal; the flake
+measured 6 in 155. Forcing the id settled it: with `524` in every id, 3 runs of 3 sent the turn six
+times; with no digit run, 0 of 3. OpenCode 2 is immune, in both cases.
+
+So this was never a test problem. Since `FRD-628`, about one final refusal in thirty that OpenCode 1
+saw was sent again, each with up to five more attempts while the id happened to match. Every id is now
+drawn so that it holds no run reading as a status clients retry (`new_request_id`; `RID-1`, `RID-2`).
+The field stays: it is what finds the request in the console. What a message itself says is not
+covered: a refusal stating a number with `500` in it is retried by that client whatever its id.
+
 ## A proxy that cuts, on real sockets (2026-10-31)
 
 The owner's `499`s turned out to be a load balancer in front of the installation closing every

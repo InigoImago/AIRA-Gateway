@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
 import os
 import shutil
@@ -95,11 +96,15 @@ SENDS = {
 
 
 class _Recorder:
-    """The app, the JSON body of every request it was sent, and how many keepalives it sent back."""
+    """The app, the JSON body of every request it was sent, what it answered each, and how many
+    keepalives it sent back."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
         self.bodies: list[dict[str, Any]] = []
+        #: Path and status of every answer, in the order they went out: a client that sends a
+        #: request twice was told something by the first answer, and this is what.
+        self.answers: list[tuple[str, int]] = []
         #: Bare lines a Gemini stream sent while its model was quiet (`ADR-0046`): a client that
         #: passes a quiet case without having been sent one has not been tested against them.
         self.keepalives = 0
@@ -125,6 +130,8 @@ class _Recorder:
             return messages.pop(0) if messages else await receive()
 
         async def counting(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                self.answers.append((scope["path"], message["status"]))
             if message.get("type") == "http.response.body" and message.get("body") == KEEPALIVE:
                 self.keepalives += 1
             await send(message)
@@ -872,8 +879,44 @@ def test_opencode_stops_at_a_model_its_provider_does_not_serve(
         )
     output = completed.stdout + completed.stderr
     turns = [body for body in recorder.bodies if body.get("tools")]
-    assert len(turns) == 1, f"the turn was sent {len(turns)} times\n{output[-3000:]}"
+    assert len(turns) == 1, (
+        f"the turn was sent {len(turns)} times, answered {recorder.answers}\n{output[-3000:]}"
+    )
     assert "asking again will not change that" in output, output[-3000:]
+
+
+def test_opencode_is_not_sent_a_request_id_it_reads_as_an_outage(
+    opencode: None, opencode_cache: Path, tmp_path: Path
+) -> None:
+    """OpenCode 1 looks for a status in the text of an error, so a final refusal whose id holds
+    `524` is retried as an outage. Most ids the gateway might draw here do hold one, and none of
+    them may reach the client: one send, as for any other final refusal."""
+    # Each its own, as the row's primary key is; every third free of the runs.
+    runs = itertools.cycle(("524", "524", "abc"))
+    drawn = (
+        f"aaaa{run}a-{'abcdef'[n % 6]}{n // 6:x}aa-4aaa-8aaa-aaaaaaaaaaaa"
+        for n, run in zip(itertools.count(), runs, strict=False)
+    )
+    with (
+        mock.patch("aira_gateway.explaining.new_id", side_effect=lambda: next(drawn)),
+        _served(gone=True) as (base, recorder),
+    ):
+        project = _project(tmp_path, base, configuration="v1")
+        completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+            [*_command("1")[:1], "run", *_command("1")[1:], "read hello.py"],
+            cwd=project,
+            env=_environment(tmp_path, project, opencode_cache),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    output = completed.stdout + completed.stderr
+    turns = [body for body in recorder.bodies if body.get("tools")]
+    assert len(turns) == 1, (
+        f"the turn was sent {len(turns)} times, answered {recorder.answers}\n{output[-3000:]}"
+    )
 
 
 def _tmux(socket: str, *arguments: str) -> str:

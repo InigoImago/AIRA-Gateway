@@ -26,7 +26,6 @@ from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.headers import surface_refusal
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
-from aira_gateway.db.base import new_id
 from aira_gateway.explaining import (
     EXPLAINING_HEADERS,
     REASON_HEADER,
@@ -35,6 +34,7 @@ from aira_gateway.explaining import (
     answer_headers,
     explain,
     header_value,
+    new_request_id,
 )
 from aira_gateway.persistence.recorder import client_ip
 from aira_gateway.persistence.writer import PendingLog
@@ -296,7 +296,7 @@ class RequestIdMiddleware:
             await self.app(scope, receive, send)
             return
         state = scope.setdefault("state", {})
-        request_id = state.setdefault("request_id", new_id())
+        request_id = state.setdefault("request_id", new_request_id())
         # The request's technical record (`FRD-630`), counting from here: what went out, and when,
         # is seen nowhere better than at this send.
         technical = state.setdefault(TECHNICAL_STATE, Technical())

@@ -7,7 +7,10 @@ about an answer travels where no standard client looks unless it means to.
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+from aira_gateway.db.base import new_id
 
 #: The header naming the request a response belongs to (`FRD-628` FR-1): the audit row's id, which
 #: the console finds a request by. On every response, refusals included.
@@ -24,6 +27,9 @@ PIPELINE_HEADER = "x-aira-pipeline"
 #: Where the shared layer keeps the request's `AuditTrail`, for the headers below to be read from.
 TRAIL_STATE = "aira_trail"
 
+#: The statuses a client retries, as they read inside any text.
+LOOKS_LIKE_A_RETRIED_STATUS = re.compile(r"408|409|425|429|5\d\d")
+
 #: Characters a pipeline header's values keep; anything else — a space in a routing category, a
 #: comma, an equals sign — becomes `_`, so `step=action` pairs can always be split again.
 _SAFE = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/@+-")
@@ -36,6 +42,19 @@ _NOT_A_STEP = frozenset({"dispatch", "notice"})
 #: `X-AIRA-Reason`), for the middleware to add when the response starts — a streamed response's
 #: headers are sent before its body is produced, and the route may not hold the response object.
 EXPLAINING_HEADERS = "aira_headers"
+
+
+def new_request_id() -> str:
+    """An id for a request that no client can read as an HTTP status.
+
+    The id stands in a refusal's body, and clients look for a status in the text of an error: one
+    that finds `524` inside a hexadecimal id takes a final refusal for an outage and sends the
+    request again, up to five times. So any run that reads as a status a client retries is drawn
+    again; what remains of the id's randomness is far more than an id needs.
+    """
+    while LOOKS_LIKE_A_RETRIED_STATUS.search(request_id := new_id()):
+        pass
+    return request_id
 
 
 def explain(state: object, name: str, value: str | None) -> None:
