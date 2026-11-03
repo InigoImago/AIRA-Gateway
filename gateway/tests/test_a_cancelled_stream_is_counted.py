@@ -132,6 +132,14 @@ def test_a_prompt_too_short_to_cache_is_priced_at_the_ordinary_rate() -> None:
     assert floor_priced(usage) == usage
 
 
+def test_the_floor_starts_at_the_shortest_prompt_google_documents_caching() -> None:
+    """2 048 tokens on Gemini 2.5, the smallest Google documents on either platform: a shorter
+    prompt is never cached, so its full rate is exact and pricing it as cached would under-book."""
+    usage = CanonicalUsage(prompt_tokens=2047, completion_tokens=3)
+
+    assert floor_priced(usage).cached_input_tokens == 0
+
+
 def test_a_prompt_long_enough_to_cache_is_priced_as_cached_so_never_above_the_bill() -> None:
     usage = CanonicalUsage(prompt_tokens=IMPLICIT_CACHE_MIN_TOKENS, completion_tokens=3)
 

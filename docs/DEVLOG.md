@@ -5,6 +5,72 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A Claude conversation stays in its cache; caching read again against the vendors (2026-11-02)
+
+The owner asked whether every caching fault at the level of a model had been found, Gemini, Anthropic
+and the open models on Vertex first. The earlier ones were: each still holds under its test. Reading
+the code against Anthropic's and Google's current pages found these (`FRD-133` §6b, `ADR-0051`).
+
+**The large one was the two correct halves again.** `FRD-133` marks the conversation's last block so
+the next request reads it; `FRD-152` leaves a model's thinking out of earlier turns. Both were tested,
+one body at a time. A cache is a property of consecutive requests: from Opus 4.5 and Sonnet 4.6 on,
+earlier thinking stays in the prefix, so each new message of the caller's changed it at the first
+block of the turn before, and past twenty positions the provider found nothing at all to read. About
+1.50 dollars against 6 cents on 300 000 tokens with Opus 5.5, for every message, and the provider
+reading all of it anew before the first word. `ADR-0047` had weighed the block's validity and not its
+price, and rightly refused to echo every turn while OpenCode clears old results. So an envelope now
+says what its blocks were made on, as a digest of the system prompt, the tools and the messages before
+them, and a block goes back wherever that still holds: every turn on an untouched history, and
+nothing refused on a changed one. About 6 ms per MiB of conversation, measured on a body of 1.06 MiB.
+
+**Smaller, each a request that failed only because caching was on, or a figure that was out of date:**
+
+- The conversation now holds a second breakpoint, the caller's last message before its end, the fourth
+  of the four: the read point for a model that drops a finished turn's thinking itself and for a tool
+  loop further back than the provider looks.
+- A marker can land on a thinking block, which Anthropic refuses the whole request over, and on a
+  result with nothing in it. It goes to the nearest block that can hold it, as the provider's own
+  automatic placement does.
+- A blank system prompt became an empty block, refused, only where a use case had opted in. Left out.
+- An index error for a cached request offering no function; the surface refuses that first, so it is a
+  guard for a request built past it.
+- Google's smallest implicit-cache minimum is 2 048 now. A counted stream's floor followed it, and
+  `FRD-133` §4a has the current table: Anthropic 512 to 4 096, and not rising with the generation.
+
+**The privacy notice was wrong.** It said a provider-side cache of inputs is *"active only if the use
+case switches it on"*. Google's page: implicit caching is on by default in every project, for Gemini
+and the open models, for up to 24 hours. New edition, both languages; the console's switch, its
+`Cached` figure and the capability's help say the same now. Everybody is asked to read it again.
+
+**Measured, live, about 3 cents.** `gemini-2.5-flash` at `europe-west1`, one prompt three times: no
+hit, then 24 562 of 25 118 tokens from the cache, twice, and `cacheTokensDetails` beside it.
+`glm-5.2-maas` at `global`, 4 147 tokens, three times, six seconds apart: no hit, and
+`prompt_tokens_details: null`, which the OpenAI-dialect reader takes as a miss. So a hit is still not
+measured on this model today: Google's minimum is 4 096 and its page says hits are not guaranteed, and
+its forum has a report of GLM-5 hitting rarely on a stable prefix. A hit's shape stands on the audit
+rows of 2026-10-13. The price list agrees with the shipped reference: Opus 5.5 reads at 0.20, Sonnet
+5.5 at 0.10, Fable 5.1 at 0.25.
+
+**Tests.** `test_a_claude_conversation_stays_in_its_cache.py` runs whole conversations through the real
+adapter, buffered and streamed, against a stand-in that holds Anthropic's documented rules for the
+prefix check, the twenty-position lookback and the cache's billing, and refuses what Anthropic refuses.
+Mutations `PC-1`–`PC-33`, and nine older anchors moved with the code (`C28f`, `U6`, `V5`, `WS-10`,
+`WS-12`, `CT-6`, `CT-7`, `CT-8`, `CT-17`). `test_real_gemini_clients.py` holds what all of this rests
+on: OpenCode 1 and 2, across two messages of a session, send each request beginning with the one
+before it, and an earlier turn's call with its signature.
+
+**Not verified, and why it may still be wrong.** No Claude model is reachable from here, so nothing
+above is measured against Claude: if the stand-in reads a rule more kindly than Anthropic does, a
+refusal falls back in two steps, to what this gateway sent before and then to no thinking at all, at
+the price of a refused request each. What to read after a deployment: `cache_read_input_tokens` growing
+from one message to the next, and `carried_thinking_refused` staying out of the log.
+
+**Left as it is.** A reservation is at the uncached rate, low for a first write, so it does not refuse
+a cheap turn to anybody near a limit (`FRD-133` FR-6). The catalogue's list prices carry none of
+Anthropic's 10 % for a regional or multi-region endpoint, open since `FRD-408`. A use case's
+`cache_write_tokens` are stored and priced and shown nowhere: a figure for writes beside the `Cached`
+share would have made this defect visible, and is not built. The default stays off (`FRD-133` FR-7).
+
 ## Two tests the first CI round refused (2026-11-02)
 
 The commits for the technical record, mail and sign-in met CI's browser suite for the first time, and

@@ -68,15 +68,16 @@ sentence added to say that, because as written it reads as though both are close
   draws. Nothing marks anything inside `contents`, where a guess would be needed — and nothing is
   marked at all unless the use case opts in (FR-7).
 
-## 4a. What each provider actually does (from vendor documentation, 2026-08-10)
+## 4a. What each provider actually does (from vendor documentation, 2026-08-10, again 2026-11-02)
 
 Checked against primary sources rather than recalled, because every requirement below depends on
-one of these cells.
+one of these cells. The second reading is §6b's.
 
 | Provider                     | Mechanism                                                                                                                                               | Caller sends | Reports                                                                                                                             | Price                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| **Anthropic** (incl. Vertex) | `cache_control: {"type":"ephemeral"}` on blocks of `tools`, `system`, `messages`; **max 4 breakpoints**; prefix hierarchy **tools → system → messages** | **yes**      | `cache_creation_input_tokens`, `cache_read_input_tokens`, `input_tokens`; `cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens` | write **1.25×** (5 m) / **2×** (1 h); read **0.1×** |
-| **Gemini**                   | implicit, on by default for 2.5+                                                                                                                        | nothing      | `cachedContentTokenCount`                                                                                                           | savings passed on automatically                     |
+| **Anthropic** (incl. Vertex) | `cache_control: {"type":"ephemeral"}` on blocks of `tools`, `system`, `messages`; **max 4 breakpoints**; prefix hierarchy **tools → system → messages** | **yes**      | `cache_creation_input_tokens`, `cache_read_input_tokens`, `input_tokens`; `cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens` | write **1.25×** (5 m) / **2×** (1 h); read **0.1×**, **0.05×** on Opus 5.5 and Sonnet 5.5, **0.025×** on Fable 5.1 |
+| **Gemini**                   | implicit, on by default for 2.5+ in every Google Cloud project; a prefix lives at most 24 h                                                             | nothing      | `cachedContentTokenCount`, `cacheTokensDetails`                                                                                     | read **0.1×**, no write premium, no storage         |
+| **Open models on Vertex**    | implicit, in preview, pay-as-you-go traffic only, listed models only (GLM-5, GLM-5.2, …); hits are not guaranteed                                       | nothing      | `prompt_tokens_details.cached_tokens`, as this gateway's audit rows of 2026-10-13 show; `null` without a hit, measured 2026-11-02. Google's page names only `cachedContentTokenCount` | read **0.1×**                                       |
 | **Azure OpenAI / Foundry**   | automatic prefix caching from 1024 tokens, then 128-token increments                                                                                    | nothing      | `prompt_tokens_details.cached_tokens`                                                                                               | discounted read; writes chargeable on GPT-5.6+      |
 | **Ollama (self-hosted)**     | KV prefix reuse in the runtime                                                                                                                          | nothing      | **nothing** — verified against the running server                                                                                   | no billing at all                                   |
 
@@ -85,11 +86,13 @@ Three consequences the requirements below are built on:
 - **Three of the four report cached tokens and only one takes a marker.** So the accounting is the
   broadly useful half and the marker is Anthropic-specific — the opposite of the intuition that the
   marker is the feature.
-- **Minimum lengths decide whether anything is cached at all**: Anthropic 1024–4096 by model,
-  Gemini 2048–4096, Azure 1024. The measured assistant turns report **2050** prompt tokens, which is
-  _above_ some minimums and _below_ others. On a model with a 4096 minimum nothing is ever cached
-  and no error is returned — "enabled and never hit" must therefore be visible, or it reads as a
-  defect in the gateway.
+- **Minimum lengths decide whether anything is cached at all**: Anthropic 512–4096 by model, and not
+  rising with the generation (Opus 4.6: 4096, Opus 5.5: 512); Gemini 2048 on 2.5, 4096 on 3 and 4,
+  6144 on some (3 Flash preview, 3.1 Pro preview, 3.7 and 3.8 Flash); the open models on Vertex 4096;
+  Azure 1024. The measured assistant turns report **2050** prompt tokens, which is _above_ some
+  minimums and _below_ others. On a model with a 4096 minimum nothing is ever cached and no error is
+  returned — "enabled and never hit" must therefore be visible, or it reads as a defect in the
+  gateway.
 - **On Ollama there is nothing to count and nothing to bill.** Caching there buys latency. Saying so
   is part of the feature: a reporting screen that shows 0 % cached for a self-hosted model is
   correct, not broken.
@@ -100,6 +103,10 @@ Three consequences the requirements below are built on:
 on the Claude API, AWS and Microsoft Foundry, and **per organisation on Bedrock and Google Cloud**.
 AIRA holds one credential per platform for many use cases, so on Vertex every use case shares one
 cache scope.
+
+Google's own page says per **project**: the cache cannot be used by other projects, a difference that
+changes nothing here, since an installation holds one. It also treats a cache key, a hash, as service
+data rather than customer data, and turns the caching off for a project only through its support.
 
 Content is addressed by hash, so nothing is _readable_ across the boundary — but a hit is faster
 than a miss, so in principle one use case can learn that another recently sent an identical prefix.
@@ -114,7 +121,8 @@ confidential it might be. Hence FR-7.
   parts. *As built, the marker is request-level:* `cache_prefix` marks the stable prefix — the tool
   declarations and the system instruction — and is set from the use case's configuration, never by
   the caller (`core/canonical.py`). On the Anthropic dialect it marks the conversation so far as
-  well, on its last block (§5.1, amended).
+  well, on its last block that can hold a mark (§5.1, amended), and the caller's last message before
+  that: all four breakpoints (§6b).
 - **FR-2** Catalog capability `prompt_caching`. Undeclared means unsupported; a candidate that
   cannot do it is **not** skipped — unlike attachments or tools, a missing cache changes the _price_
   and not the _answer_, so the correct behaviour is to serve it uncached and **record that it was
@@ -137,10 +145,15 @@ confidential it might be. Hence FR-7.
   broken one, and a silently broken cache looks exactly like an expensive month.
 - **FR-6** Budget reservation (`FRD-405`) reserves at the **uncached** rate and settles at the real
   one. Erring high is the safe direction for a spend limit, as it already is for output tokens.
+  *High for a read, which is a tenth of it; low for a first write, by a quarter or, for an hour's,
+  by half. Left so on purpose: reserving every marked prompt at the write rate would refuse a turn
+  costing cents to anybody near a limit, for the sake of the one request that writes.*
 - **FR-7** Caching is **per use case, default off**, like `tools_enabled` (`FRD-131`). Least
   privilege is the lesser reason; the real one is §4b — on Vertex the cache scope is the whole
   organisation, and a use case whose system prompt is confidential should not be opted in by
-  somebody else's cost decision.
+  somebody else's cost decision. *The switch reaches the models that take a marker. Gemini and the
+  open models cache a long prompt on their own whatever it says, which nothing in a request can
+  turn off: the privacy notice claimed otherwise until 2026-11-02 (§6b).*
 - **FR-8** A model's catalog entry declares `prompt_caching` **and its minimum**, because "enabled
   and never hit" and "not supported" look identical in a report and have different fixes. The
   minimum is a number the vendor publishes per model, so it belongs beside the capability rather
@@ -265,6 +278,48 @@ share and the spend. The hint says what 0 % means, because there are four differ
 and they have four different fixes — the prefix changes between turns, the gap exceeds the
 lifetime, the model does not cache, or the provider reports nothing (every self-hosted one).
 
+## 6b. Read again against the vendors' documents (2026-11-02)
+
+The owner asked whether every caching fault at the level of a model had been found. Each earlier one
+was (the cache split on a stream, the write and the hour's prices, a marker sent to a fallback,
+OpenCode's missing rates, the conversation unmarked); these had not.
+
+**Claude.** A marker on the conversation's last block is a cache only if the next request begins with
+what this one sent, and it did not. `FRD-152` puts a model's thinking back in the turn in progress
+and leaves it out of earlier ones, so each new message of the caller's changed the prefix from the
+first block of the turn before, and on Opus 4.5, Sonnet 4.6 and later, which keep earlier thinking,
+wrote the conversation again at the write price and read it anew before the first word. Past twenty
+positions, which a long tool loop passes, nothing at all was read. `ADR-0051` decides this: a block
+goes back onto the history it was made on, a digest in its envelope telling which that is.
+
+The conversation now carries two breakpoints, the last one the caller's last message before its last
+block: the read point for a model that drops a finished turn's thinking itself, and for a turn longer
+than the provider looks back. A marker cannot sit on a thinking block, which Anthropic refuses the
+whole request over, so it goes to the nearest block that can hold it, as the provider's own automatic
+placement does; a result with nothing in it is passed over the same way. A blank system prompt is left
+out: as a block it is refused, and only a use case that had opted into caching was sent the block form.
+
+**Gemini.** `cachedContentTokenCount` is read correctly, measured on `gemini-2.5-flash` at
+`europe-west1`: 24 562 of 25 118 prompt tokens on the second of three identical calls four seconds
+apart. The smallest minimum Google documents is now 2 048, so a counted stream's floor starts there.
+
+**The open models.** Their endpoint speaks OpenAI's dialect and reports `prompt_tokens_details`,
+`null` without a hit, which is read as a miss. Measured on `glm-5.2-maas` at 4 147 prompt tokens,
+three identical calls six seconds apart: no hit. That length is barely above Google's minimum of
+4 096, and its page says a hit is not guaranteed; Google's own forum holds a report of the same model
+family hitting rarely on a stable prefix. The gateway can do no more than send the same bytes, which
+it does.
+
+**What a reader was told.** The privacy notice said a provider-side cache of inputs is *"active only
+if the use case switches it on"*, true of the one family the switch reaches. It now says what each
+does (new edition), and the console's switch and its `Cached` figure say so too.
+
+**Not changed:** the reservation (FR-6); the catalogue's list prices leave out Anthropic's 10 % for a
+regional or multi-region endpoint, which `FRD-408` holds open against the billing account.
+**Not verified against Claude:** no model is reachable here. The tests hold the documented rules in a
+stand-in that refuses what Anthropic refuses, and the adapter gives up earlier turns' thinking first
+if Anthropic refuses it all the same.
+
 ## 7. Testing & Acceptance Criteria
 
 - **Unit**: the marker survives the canonical round trip; each dialect maps or ignores it
@@ -279,6 +334,10 @@ lifetime, the model does not cache, or the provider reports nothing (every self-
   what it was asked** — `[cache:1h]` — the way it already does for thinking and attachments, and
   three tests drive the whole path through the route. The mock reports no cache _hit_, deliberately:
   fabricating one would make every "caching saves money" assertion true by construction.
+- **Consecutive requests** (`test_a_claude_conversation_stays_in_its_cache.py`): a conversation of
+  several turns through the real adapter, against a stand-in holding Anthropic's documented rules:
+  each request reads what the one before wrote, each body is the one before with something added,
+  and a history a client changed refuses nothing. One body at a time cannot see any of this.
 - **Integration**: two identical requests in succession against a caching-capable provider, with the
   **second** row showing cache-read tokens — asserted in Postgres, since the response is the same
   either way. That is also the only test that can tell a working cache from a well-formed request

@@ -37,7 +37,8 @@ a block to reasoning text, dropped its signature, and sent every later turn with
 - A mistake costs one refused request, not a conversation.
 
 **Non-Goals**
-- Thinking blocks of earlier turns, which Anthropic allows to be left out.
+- ~~Thinking blocks of earlier turns, which Anthropic allows to be left out.~~ Carried since
+  `ADR-0051`: left out, they ended the prompt cache at every new message of the caller's.
 - A client that drops a function call's signature; its turns go on as before.
 - Other dialects. Google needs its own signatures back, which `FRD-145` carries; the OpenAI dialect
   has no such rule.
@@ -60,11 +61,15 @@ a block to reasoning text, dropped its signature, and sent every later turn with
   block without its signature, or a block this gateway does not send back carries nothing.
 - **FR-3 Put back in the turn in progress.** The model messages after the caller's last message that
   answers no call go to Anthropic as the envelope describes them — thinking blocks, text, then the
-  caller's own calls with the ids their results name. Earlier turns go without their thinking.
+  caller's own calls with the ids their results name. *Amended by `ADR-0051`:* an earlier turn goes
+  back the same way wherever its envelope says it was made on the history now before it, and
+  without its thinking otherwise. An envelope that says nothing, sealed before that, is treated as
+  before: in its own turn only.
 - **FR-4 A history that changed goes as sent.** An envelope whose calls or text no longer match the
   caller's message is ignored for that message.
 - **FR-5 A refusal is sent once more without.** Anthropic answering `400` about a thinking block is
-  sent the same request without the carried blocks, buffered and streamed.
+  sent the same request without the carried blocks, buffered and streamed. *Since `ADR-0051` in two
+  steps: without earlier turns' blocks, then without any.*
 - **FR-6 A budget continues a call its thinking came back with.** Without it, a budget the caller
   asked for is refused by name, as before; the model's declared default is not sent.
 - **FR-7 Google is never sent the envelope** as its signature; another dialect's state is carried
@@ -84,6 +89,11 @@ candidates fail on the clients: a thought part is merged with its neighbours and
 has no text, and every block of the newest models arrives without text.
 
 ### 5.2 Why only the turn in progress
+
+> **Amended 2026-11-02 (`ADR-0051`).** Right about the check, and it cost the cache: on the models
+> that keep earlier thinking, what went without its blocks was a different prefix, so each new
+> message of the caller's wrote the conversation again. An envelope now says what its blocks were
+> made on, which answers the objection below without this section's price.
 
 Anthropic's rules, as documented: within a tool-use turn the thinking blocks are required; across
 turns they are recommended and may be left out; and from Claude Fable 5.1 on, a block is valid only
@@ -138,6 +148,8 @@ the request is sent again without them.
 - `test_log_writer.py`: no stored payload keeps a signature.
 - `test_real_gemini_clients.py`: each AI SDK major, `google-genai`'s chat and both OpenCode
   generations hand a call's signature back — all but the AI SDK's first major.
+- `test_a_claude_conversation_stays_in_its_cache.py`: earlier turns' blocks, what a changed history
+  does to them, the refusal in two steps, an envelope from before (`ADR-0051`).
 - Mutations `CT-1`–`CT-19`.
 
 ## 11. Dependencies & Risks

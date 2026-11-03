@@ -112,6 +112,18 @@ describe('CapabilitiesPanel — the switches', () => {
     expect(help?.textContent).toContain('whole organisation');
   });
 
+  it('says the switch reaches Claude, and that Gemini and the open models cache regardless', () => {
+    // A reader with a confidential system prompt turns it off and believes no provider keeps one.
+    const harness = setup();
+
+    (harness.html().querySelector('[data-testid="info-prompt-caching"]') as HTMLElement).click();
+    harness.fixture.detectChanges();
+
+    const help = harness.html().querySelector('[data-testid="help-prompt-caching"]');
+    expect(help?.textContent).toContain('reaches Claude only');
+    expect(help?.textContent).toContain('on their own');
+  });
+
   it('says that a declared function is carried and never run', () => {
     // The gateway runs nothing (`ADR-0013`); an administrator must not expect a sandbox.
     const harness = setup();

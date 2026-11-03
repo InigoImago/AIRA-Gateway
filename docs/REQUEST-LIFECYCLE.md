@@ -400,6 +400,14 @@ opposite of what a fallback chain is for. Resolved here all the same, because wh
 carries a cache marker depends on the model it landed on and on the use case's own switch and
 lifetime.
 
+**What the switch reaches depends on the model.** Claude takes a marker, on four places: the last
+tool, the system prompt, the conversation's last block and the caller's last message before that.
+Without one it caches nothing. For the cache to hold from one message to the next, a model's thinking
+goes back with every turn, and stays out only where the client changed the history it was made on.
+Gemini and the managed open models on Google Cloud take no marker: they cache a long prompt on their
+own, whatever the switch says, from 2 048 to 6 144 tokens depending on the model, and what they report
+reading shows in the same figures.
+
 ### 7 — the reservation
 
 Budgets **reserve** before dispatch and settle or release afterwards. Without the reservation, N

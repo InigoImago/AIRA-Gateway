@@ -23,7 +23,12 @@ from aira_gateway.upstreams.vertex.anthropic_mapping.schema import (
     schema_for_anthropic,
     tool_input_schema,
 )
-from aira_gateway.upstreams.vertex.anthropic_mapping.thinking_blocks import blocks_for
+from aira_gateway.upstreams.vertex.anthropic_mapping.thinking_blocks import (
+    REDACTED,
+    THINKING,
+    blocks_for,
+    prefixes,
+)
 
 #: Vertex requires this in the body rather than as a header.
 ANTHROPIC_VERSION = "vertex-2023-10-16"
@@ -67,35 +72,63 @@ def canonical_to_anthropic(
     max_tokens: int,
     strict_tools: bool = False,
     carry_thinking: bool = True,
+    carry_earlier: bool = True,
 ) -> dict[str, Any]:
-    """Build an Anthropic Messages body.
+    """An Anthropic Messages body (:func:`anthropic_body`), for a caller that keeps no answer."""
+    return anthropic_body(
+        request,
+        max_tokens=max_tokens,
+        strict_tools=strict_tools,
+        carry_thinking=carry_thinking,
+        carry_earlier=carry_earlier,
+    )[0]
+
+
+def anthropic_body(
+    request: CanonicalRequest,
+    *,
+    max_tokens: int,
+    strict_tools: bool = False,
+    carry_thinking: bool = True,
+    carry_earlier: bool = True,
+) -> tuple[dict[str, Any], str]:
+    """Build an Anthropic Messages body, and say what an answer to it is made on: the digest its
+    thinking blocks may go back onto (`thinking_blocks.prefixes`).
 
     ``max_tokens`` is required by the API and optional on the canonical request, so the caller
     resolves it: the request's value, else the model's declared default (`FRD-114` FR-2).
     ``strict_tools`` is the installation's choice (`AIRA_VERTEX_PARTNER_STRICT_TOOLS`, `FRD-143`).
-    ``carry_thinking`` sends the turn in progress with the thinking blocks its calls carried back
-    (`FRD-152`); off, the adapter's second attempt where Anthropic refused them.
+    ``carry_thinking`` sends the model's messages with the thinking blocks their calls carried back
+    (`FRD-152`), ``carry_earlier`` those of earlier turns among them (`ADR-0051`); each off is an
+    attempt of the adapter's where Anthropic refused the blocks.
     """
     messages: list[dict[str, Any]] = []
-    system_parts: list[str] = []
+    #: Where in ``messages`` a turn of the caller's begins, for `_mark_conversation`.
+    turn_starts: list[int] = []
 
     # Results are paired with their calls by id here, and a Gemini-speaking client sends none.
     conversation = paired_tool_results(request.messages)
     in_progress = _turn_in_progress(conversation)
+    system = _system_text(conversation)
+    tools = _wire_tools(request, strict_tools=strict_tools)
+    made_on = prefixes(conversation, system=system, tools=tools)
     #: Whether the model turn a budget would continue goes with its thinking block (`_budget`).
     carried = False
     for index, message in enumerate(conversation):
         if message.role is Role.SYSTEM:
-            # One system prompt here, several allowed canonically: concatenated, never reduced.
-            system_parts.append(message.text)
             continue
         role = "assistant" if message.role is Role.MODEL else "user"
-        # The turn in progress goes back as the model produced it, thinking blocks in their places;
-        # an earlier turn without them, which Anthropic allows — the same way every time, so what
-        # came before each block is what it was when the block was made.
+        # A model message goes back as the model produced it, thinking blocks in their places:
+        # always in the turn in progress, and in an earlier one onto the history it was made on.
+        # Left out there, every new message of the caller's would change the prefix from the first
+        # block on, and the conversation would be written to the cache again (`ADR-0051`).
         sealed = (
-            blocks_for(message)
-            if carry_thinking and message.role is Role.MODEL and index >= in_progress
+            blocks_for(
+                message,
+                in_turn=index >= in_progress,
+                prefix=made_on[index] if carry_earlier else None,
+            )
+            if carry_thinking and message.role is Role.MODEL
             else None
         )
         if message.role is Role.MODEL:
@@ -106,30 +139,25 @@ def canonical_to_anthropic(
             # surface carries in — is refused by Anthropic as empty content. Left out, the turns
             # either side of it are joined, which is how Anthropic reads two turns of one role.
             continue
+        if message.role is Role.USER and not message.tool_results:
+            turn_starts.append(len(messages))
         messages.append({"role": role, "content": blocks})
 
     if request.cache_prefix and messages:
-        # **The conversation so far**, on its last block — the third of the four breakpoints a
-        # request may carry. A coding assistant's context grows turn by turn: the files it read,
-        # the results of its tools. Each turn resends all of it and appends to the end, so
-        # everything up to this block is the prefix of the next request. Unmarked, every turn paid
-        # the whole conversation at full price, and the provider read it anew before the first
-        # word — minutes, on a large context. Marked, the next turn reads it at a tenth and
-        # writes only what it added.
-        messages[-1]["content"][-1]["cache_control"] = _cache_control(request)
+        _mark_conversation(messages, turn_starts, request)
 
     body: dict[str, Any] = {
         "anthropic_version": ANTHROPIC_VERSION,
         "messages": messages,
         "max_tokens": max_tokens,
     }
-    if system_parts:
-        joined = "\n\n".join(system_parts)
-        # The block form only when caching is asked for: `cache_control` exists only there.
+    if system.strip():
+        # Blank, it is left out: as a block empty text is refused, and only a request that opted
+        # into caching is sent the block form — the one place `cache_control` exists.
         body["system"] = (
-            [{"type": "text", "text": joined, "cache_control": _cache_control(request)}]
+            [{"type": "text", "text": system, "cache_control": _cache_control(request)}]
             if request.cache_prefix
-            else joined
+            else system
         )
     if request.temperature is not None:
         body["temperature"] = request.temperature
@@ -146,9 +174,8 @@ def canonical_to_anthropic(
         if effort is not None:
             output_config["effort"] = effort
     if request.tools:
-        offered = _offered(request)
-        body["tools"] = [_tool(tool, strict_tools=strict_tools) for tool in offered]
-        if request.cache_prefix:
+        body["tools"] = tools
+        if request.cache_prefix and tools:
             # On the last tool only: a breakpoint caches everything before it, and a request may
             # carry only four.
             body["tools"][-1]["cache_control"] = _cache_control(request)
@@ -171,7 +198,59 @@ def canonical_to_anthropic(
     if output_config:
         # One object for both: the effort a level word names and the document a schema asks for.
         body["output_config"] = output_config
-    return body
+    return body, made_on[-1]
+
+
+def _system_text(conversation: list[CanonicalMessage]) -> str:
+    """One system prompt here, several allowed canonically: concatenated, never reduced."""
+    return "\n\n".join(
+        message.text for message in conversation if message.role is Role.SYSTEM and message.text
+    )
+
+
+def _wire_tools(request: CanonicalRequest, *, strict_tools: bool) -> list[dict[str, Any]]:
+    return [_tool(tool, strict_tools=strict_tools) for tool in _offered(request)]
+
+
+def _mark_conversation(
+    messages: list[dict[str, Any]], turn_starts: list[int], request: CanonicalRequest
+) -> None:
+    """The two breakpoints in the conversation, of the four a request may carry.
+
+    **The conversation so far**, on its last block. A coding assistant's context grows turn by
+    turn: the files it read, the results of its tools. Each turn resends all of it and appends to
+    the end, so everything up to this block is the prefix of the next request. Unmarked, every turn
+    paid the whole conversation at full price, and the provider read it anew before the first word
+    — minutes, on a large context. Marked, the next turn reads it at a tenth and writes only what
+    it added.
+
+    **The caller's last message before that**, as a read point of its own. The provider looks back
+    only twenty positions from a breakpoint for what an earlier request wrote, and a long tool loop
+    is further than that. Models up to Sonnet 4.5 and Haiku 4.5 also drop the thinking of a finished
+    turn themselves, which ends the cached prefix there. Without this marker a new message writes
+    the whole conversation again; with it, only the turn before it. A marker costs nothing.
+    """
+    _mark_last_block(messages, request)
+    earlier = [start for start in turn_starts if start < len(messages) - 1]
+    if earlier:
+        _mark_last_block(messages[: earlier[-1] + 1], request)
+
+
+def _mark_last_block(messages: list[dict[str, Any]], request: CanonicalRequest) -> None:
+    """Mark the last block that can carry a marker, as the provider's own automatic placement does:
+    a thinking block is refused one, and a marker on an empty result marks nothing."""
+    for message in reversed(messages):
+        for block in reversed(message["content"]):
+            if _can_be_marked(block):
+                block["cache_control"] = _cache_control(request)
+                return
+
+
+def _can_be_marked(block: dict[str, Any]) -> bool:
+    if block["type"] in (THINKING, REDACTED):
+        return False
+    content = block.get("content")  # only a function's result has any
+    return not isinstance(content, str) or bool(content.strip())
 
 
 def _thinking(

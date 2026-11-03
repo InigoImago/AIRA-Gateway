@@ -68,14 +68,17 @@
           />
           Cache the stable part of each request at the provider
           <app-info-hint label="Prompt caching" testid="prompt-caching" [wide]="true">
-            Marks the tool declarations, the system instruction and the conversation so far, so the
-            provider charges a fraction for them on a repeat within five minutes — and reads a long
-            conversation back from its cache instead of anew before the first word. An assistant
-            resends all of it every turn; a request that is never repeated pays about a quarter
-            extra for being written to the cache. It changes the price, never the answer, and a
-            model that cannot do it is served normally rather than skipped. Off by default: on
-            Google Cloud the cache is shared across the whole organisation, so a use case whose
-            system prompt is itself confidential should decide for itself.
+            Marks the tool declarations, the system instruction and the conversation so far for the
+            models that take such a mark — Claude — so the provider charges a fraction for them on a
+            repeat within five minutes, and reads a long conversation back from its cache instead of
+            anew before the first word. An assistant resends all of it every turn; a request that is
+            never repeated pays about a quarter extra for being written to the cache. It changes the
+            price, never the answer, and a model that cannot do it is served normally rather than
+            skipped. Off by default: on Google Cloud the cache is shared across the whole
+            organisation, so a use case whose system prompt is itself confidential should decide for
+            itself. <strong>This switch reaches Claude only.</strong> Gemini and the open models on
+            Google Cloud cache a long prompt on their own, whatever it says, and what they read back
+            shows in the same figures.
           </app-info-hint>
         </label>
 
@@ -87,11 +90,12 @@
                 The one setting with a real trade-off, and only your own traffic settles it. Writing
                 the cache costs <strong>more</strong> than an ordinary request — about a quarter
                 extra for five minutes, about double for an hour — and reading it back costs a
-                fraction. Five minutes pays off when turns follow each other closely; an hour only
-                pays off if the gap between them regularly exceeds five minutes, because otherwise
-                you paid double for a cache that had already expired. Change it, send traffic, then
-                watch the <em>Cached</em> share on this use case's overview — that is the
-                measurement, and nothing else settles it.
+                fraction. Five minutes pays off when each request starts within five minutes of the
+                one before, which keeps the cache alive at no charge; an hour pays off only where
+                that regularly takes longer, and a long answer counts, because the time runs from
+                the start of a request. Change it, send traffic, then watch the
+                <em>Cached</em> share on this use case's overview — that is the measurement, and
+                nothing else settles it.
               </app-info-hint>
             </label>
             <select

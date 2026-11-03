@@ -12,7 +12,7 @@ exists, and all walk the same regional failover (`regions`).
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import aclosing
 from typing import Any
 
@@ -57,6 +57,7 @@ from aira_gateway.upstreams.vertex.anthropic_mapping import (
 from aira_gateway.upstreams.vertex.anthropic_mapping import (
     MessageAssembler,
     StreamAssembler,
+    anthropic_body,
     anthropic_to_canonical,
     canonical_to_anthropic,
 )
@@ -404,7 +405,7 @@ class VertexAnthropicAdapter(_VertexAdapter):
         """The answer whole, read from a stream (class docstring). A failure inside it — the
         provider overloaded before it finished — is a failure of this region, which the next one
         may serve: nothing of it has reached the caller."""
-        body = {**self._body(request), "stream": True}
+        body, prefix = self._first_body(request)
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
             url = self._transport.url(
@@ -414,13 +415,16 @@ class VertexAnthropicAdapter(_VertexAdapter):
                 method="streamRawPredict",
                 wire_model=wire_name(request.model, request.addressing),
             )
-            try:
-                return await read(url, body, region)
-            except UpstreamError as exc:
-                plain = self._without_carried_thinking(request, body, exc)
-                if plain is None:
-                    raise
-                return await read(url, plain, region)
+            less = self._with_less_thinking(request)
+            sent = body
+            while True:
+                try:
+                    return await read(url, sent, region)
+                except UpstreamError as exc:
+                    plain = self._after_refusal(request, sent, exc, less)
+                    if plain is None:
+                        raise
+                    sent = plain
 
         async def read(url: str, sent: dict[str, object], region: str) -> CanonicalResponse:
             assembler = MessageAssembler()
@@ -439,13 +443,14 @@ class VertexAnthropicAdapter(_VertexAdapter):
                 structured=request.structured,
                 # The use case's switch, carried rather than decided here (`FRD-135` FR-3).
                 include_reasoning=request.include_reasoning,
+                prefix=prefix,
             )
             return answer.model_copy(update={"served_region": region})
 
         return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
 
     def _stream_attempt(self, request: CanonicalRequest) -> StreamAttempt:
-        body = {**self._body(request), "stream": True}
+        body, prefix = self._first_body(request)
 
         async def attempt(region: str, publisher: str) -> AsyncGenerator[CanonicalChunk]:
             url = self._transport.url(
@@ -458,46 +463,68 @@ class VertexAnthropicAdapter(_VertexAdapter):
 
             # A fresh assembler per attempt: it accumulates tool calls across events.
             def reader() -> Callable[[dict[str, Any]], CanonicalChunk | None]:
-                return StreamAssembler(include_reasoning=request.include_reasoning).feed
+                return StreamAssembler(
+                    include_reasoning=request.include_reasoning, prefix=prefix
+                ).feed
 
-            try:
-                return await _open_stream(self._transport, url, body, reader, region)
-            except UpstreamError as exc:
-                plain = self._without_carried_thinking(request, body, exc)
-                if plain is None:
-                    raise
-                return await _open_stream(self._transport, url, plain, reader, region)
+            less = self._with_less_thinking(request)
+            sent = body
+            while True:
+                try:
+                    return await _open_stream(self._transport, url, sent, reader, region)
+                except UpstreamError as exc:
+                    plain = self._after_refusal(request, sent, exc, less)
+                    if plain is None:
+                        raise
+                    sent = plain
 
         return attempt
 
-    def _body(self, request: CanonicalRequest, *, carry_thinking: bool = True) -> dict[str, object]:
-        return canonical_to_anthropic(
+    def _first_body(self, request: CanonicalRequest) -> tuple[dict[str, object], str]:
+        """The body as it is first sent, and what an answer to it is made on (`ADR-0051`)."""
+        body, prefix = anthropic_body(
             request,
             max_tokens=request.max_output_tokens or self._default_max_tokens,
             strict_tools=self._strict_tools,
-            carry_thinking=carry_thinking,
         )
+        return {**body, "stream": True}, prefix
 
-    def _without_carried_thinking(
-        self, request: CanonicalRequest, body: dict[str, object], exc: UpstreamError
+    def _with_less_thinking(self, request: CanonicalRequest) -> Iterator[dict[str, object]]:
+        """The body again, carrying less each time: without earlier turns' thinking, then without
+        any. Lazily, because the last can be a refusal of its own: a budget that cannot continue
+        without its thinking block, which the attempt before it may not need."""
+        for carrying in ({"carry_earlier": False}, {"carry_thinking": False}):
+            body = canonical_to_anthropic(
+                request,
+                max_tokens=request.max_output_tokens or self._default_max_tokens,
+                strict_tools=self._strict_tools,
+                **carrying,
+            )
+            yield {**body, "stream": True}
+
+    def _after_refusal(
+        self,
+        request: CanonicalRequest,
+        sent: dict[str, object],
+        exc: UpstreamError,
+        less: Iterator[dict[str, object]],
     ) -> dict[str, object] | None:
-        """The body once more without the thinking the turn carried back, where Anthropic refused
-        that thinking (`FRD-152`) — else ``None``, and the refusal stands.
+        """The body to send next, where Anthropic refused the thinking carried back (`FRD-152`) —
+        else ``None``, and the refusal stands.
 
-        The blocks go back exactly as they came, so a refusal means the history changed under
-        them in a way this gateway cannot see — a client that edited an earlier turn. Without
-        them the turn goes on as it did before they were carried: one refused request, which is
-        not billed, rather than a conversation that cannot continue.
+        The blocks go back exactly as they came, each onto the history it was made on as far as
+        this gateway can tell, so a refusal means that history differs in a way it cannot see.
+        Carrying less, the turn goes on as it did before they were carried: a refused request,
+        which is not billed, rather than a conversation that cannot continue.
         """
         said = exc.message.lower()
         if exc.status_code != 400 or "thinking" not in said:
             return None
         if "signature" not in said and "block" not in said:
             return None
-        plain = {**self._body(request, carry_thinking=False), "stream": True}
-        if plain == body:
-            return None
-        _log.warning("carried_thinking_refused", model=request.model)
+        plain = next((body for body in less if body != sent), None)
+        if plain is not None:
+            _log.warning("carried_thinking_refused", model=request.model)
         return plain
 
 

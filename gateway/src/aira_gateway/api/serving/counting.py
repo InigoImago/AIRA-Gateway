@@ -46,7 +46,7 @@ COUNT_TIMEOUT_SECONDS = 5.0
 #: prompt is billed at the ordinary rate, which makes that rate exact; at or above it the prompt is
 #: priced as cached. The smallest documented minimum is taken: a larger one would price a prompt
 #: Google did cache at the ordinary rate, above the bill.
-IMPLICIT_CACHE_MIN_TOKENS = 1024
+IMPLICIT_CACHE_MIN_TOKENS = 2048
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,7 +8,8 @@ adaptively it thought again from nothing — paid twice, and silent on the wire 
 the silence that ended streams as `499`s before they were kept alive (`ADR-0046`).
 
 The blocks now ride the signature of the message's first function call — the field every Gemini
-client hands back on that call — and are put back in their places in the turn in progress.
+client hands back on that call — and are put back in their places. What that does to the cache from
+one turn to the next is `test_a_claude_conversation_stays_in_its_cache.py`.
 """
 
 from __future__ import annotations
@@ -248,9 +249,10 @@ def test_the_turn_in_progress_goes_back_with_its_thinking_in_its_place() -> None
     assert content == [THOUGHT, {"type": "text", "text": "Reading."}, CALLED]
 
 
-def test_an_earlier_turn_goes_back_without_its_thinking() -> None:
-    """Anthropic needs the blocks only in the turn in progress, and allows them out of earlier
-    turns; out the same way every time, so nothing before a block changes once it is made."""
+def test_an_earlier_turn_goes_back_without_thinking_nobody_can_place() -> None:
+    """Anthropic needs the blocks only in the turn in progress. Elsewhere they go back only onto
+    the history they were made on (`test_a_claude_conversation_stays_in_its_cache.py`), and an
+    envelope that does not say which that was stays out."""
     call = _sealed_call(THOUGHT, {"type": "text", "text": "Reading."}, CALL)
     finished = [
         *_turn(call),

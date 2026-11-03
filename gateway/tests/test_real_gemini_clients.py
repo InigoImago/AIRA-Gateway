@@ -831,6 +831,54 @@ def test_opencode_shows_the_reasoning_at_the_variant_somebody_chose(
         assert _thinking_sent(recorder, turns=False) == [{"thinkingLevel": "low"}]
 
 
+def _conversation_turns(recorder: _Recorder) -> list[dict[str, Any]]:
+    """Each request of the conversation, leaving out OpenCode's own small ones."""
+    return [body for body in recorder.bodies if body.get("tools")]
+
+
+@pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
+def test_opencode_sends_a_conversation_as_one_growing_prefix_signatures_included(
+    opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
+) -> None:
+    """A second message in a session: what a provider's prompt cache depends on, and what a Claude
+    model's thinking goes back on (`ADR-0051`) — every request begins with the one before it, and
+    an earlier turn's call still carries its signature. Measured because nothing else can say it:
+    the gateway can keep a prefix stable only if the client sends one."""
+    with _served() as (base, recorder):
+        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        for prompt, more in (("read hello.py", []), ("and now read it again", ["--continue"])):
+            binary, *standalone = _command(generation)
+            chosen = ["--variant", "high"] if generation == "1" else ["--model", "aira/mock-1#high"]
+            completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
+                [binary, "run", *standalone, *chosen, *more, prompt],
+                cwd=project,
+                env=_environment(tmp_path, project, opencode_cache),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=240,
+                check=False,
+            )
+            output = completed.stdout + completed.stderr
+            assert completed.returncode == 0, output[-3000:]
+
+    turns = _conversation_turns(recorder)
+    assert len(turns) >= 3, f"a call, its answer and a second message: {len(turns)} requests"
+    for before, after in zip(turns, turns[1:], strict=False):
+        said = before["contents"]
+        assert after["contents"][: len(said)] == said, "each request begins with the one before it"
+        assert after["tools"] == before["tools"]
+        assert after.get("systemInstruction") == before.get("systemInstruction")
+    earlier_calls = [
+        part
+        for content in turns[-1]["contents"]
+        for part in content.get("parts") or []
+        if "functionCall" in part
+    ]
+    assert earlier_calls
+    assert all(part.get("thoughtSignature") == MOCK_SIGNATURE for part in earlier_calls)
+
+
 @pytest.mark.parametrize("generation", ["1", "2"], ids=["opencode-1", "opencode-2"])
 def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
     opencode: None, opencode_cache: Path, tmp_path: Path, generation: str

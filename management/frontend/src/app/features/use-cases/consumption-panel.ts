@@ -30,9 +30,12 @@ const FIGURE_HELP = {
       figure and not a cost one.`,
   cached: `How much of the input the provider served from its prompt cache instead of reading
       again — the share is what makes caching measurable. 0 % with caching switched on means the
-      prefix is changing between turns, the gap between them is longer than the cache lifetime, or
-      the model does not cache at all. A provider that reports nothing (a self-hosted one) also
-      shows 0 %, and there it costs nothing either way.`,
+      prefix is changing between turns, the gap between them is longer than the cache lifetime, the
+      prompt is shorter than the model's minimum — from 512 tokens on the newest Claude models to
+      6 144 on some Gemini ones — or the model does not cache at all. A provider that reports
+      nothing (a self-hosted one) also shows 0 %, and there it costs nothing either way. Gemini and
+      the open models on Google Cloud cache without being asked, so they can show a share with the
+      switch off, and their cache hits are never guaranteed.`,
 };
 
 /**

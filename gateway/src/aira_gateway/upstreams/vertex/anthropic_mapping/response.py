@@ -187,19 +187,28 @@ def tool_calls_of(content: Any) -> tuple[ToolCallPart, ...]:
 
 
 def anthropic_to_canonical(
-    data: dict[str, Any], model: str, *, structured: bool = False, include_reasoning: bool = False
+    data: dict[str, Any],
+    model: str,
+    *,
+    structured: bool = False,
+    include_reasoning: bool = False,
+    prefix: str | None = None,
 ) -> CanonicalResponse:
     """This vendor's answer → canonical.
 
     ``include_reasoning`` carries the use case's switch (`FRD-135` FR-3). The argument defaults to
-    **off**, so a call site that forgets it withholds rather than discloses.
+    **off**, so a call site that forgets it withholds rather than discloses. ``prefix`` is what the
+    answer was made on, for the envelope its thinking goes back in (`ADR-0051`).
     """
     text = answer_text(data.get("content"))
     reasoning = reasoning_text(data.get("content"), wanted=include_reasoning)
     reason = finish_reason(data.get("stop_reason"))
     # The message's thinking rides its first call to the turn that continues it (`FRD-152`).
     calls = with_carried(
-        tool_calls_of(data.get("content")), data.get("content"), include_reasoning=include_reasoning
+        tool_calls_of(data.get("content")),
+        data.get("content"),
+        include_reasoning=include_reasoning,
+        prefix=prefix,
     )
 
     if structured:
@@ -259,9 +268,11 @@ class StreamAssembler:
     failing mid-stream and is raised (`stream_failure`), never read as the end of the answer.
     """
 
-    def __init__(self, *, include_reasoning: bool = False) -> None:
+    def __init__(self, *, include_reasoning: bool = False, prefix: str | None = None) -> None:
         #: The use case's switch (`FRD-135` FR-3), off unless passed, as on the buffered mapper.
         self._include_reasoning = include_reasoning
+        #: What the answer is made on, for the envelope its thinking goes back in (`ADR-0051`).
+        self._prefix = prefix
         self._usage: dict[str, Any] = {}
         self._finish: FinishReason | None = None
         #: The open `tool_use` block, if any: its id, its name, and the argument fragments so far.
@@ -342,6 +353,7 @@ class StreamAssembler:
                     tuple(self._calls),
                     [self._blocks[i] for i in sorted(self._blocks)],
                     include_reasoning=self._include_reasoning,
+                    prefix=self._prefix,
                 ),
             )
         return None

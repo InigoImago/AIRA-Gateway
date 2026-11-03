@@ -686,7 +686,7 @@ async def test_a_stream_left_before_usage_is_counted_at_the_vendor_and_booked(
         # Below the shortest prompt Google caches: the ordinary rate is exact.
         (40, 40 * 1_000 + 2 * 2_000),
         # Long enough to have been cached: priced as cached, so never above the bill.
-        (2_000, 2_000 * 100 + 2 * 2_000),
+        (3_000, 3_000 * 100 + 2 * 2_000),
     ],
 )
 async def test_a_counted_stream_is_priced_at_its_floor(prompt: int, cost: int) -> None:

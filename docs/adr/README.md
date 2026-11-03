@@ -59,3 +59,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0048 | [A fallback chain per kind of request, the installation's by default](ADR-0048-a-fallback-chain-per-kind-of-request.md) | **Accepted** | 2026-10-28 |
 | 0049 | [One clock for the installation, set where it is deployed](ADR-0049-one-clock-for-the-installation.md) | **Accepted** | 2026-10-28 |
 | 0050 | [The gateway sends the mail, and asks the directory for the address when it sends](ADR-0050-the-gateway-sends-the-mail.md) | **Accepted** | 2026-10-29 |
+| 0051 | [A thinking block goes back onto the history it was made on, on every turn](ADR-0051-a-thinking-block-goes-back-onto-its-own-history.md) | **Accepted** | 2026-11-02 |

@@ -82,8 +82,8 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
     the caller left and its thinking are in no count, so it is a **floor**; the row stores the two
     counts and leaves the cache split and the thinking unknown, never zero;
   - it is priced as a floor too: a prompt shorter than Google's smallest implicit-cache minimum
-    (1024 tokens) at the ordinary rate, which is then exact, a longer one as cached, so the price
-    never exceeds the bill;
+    (2 048 tokens since Google's list of 2026-11-02; 1 024 when this was written) at the ordinary
+    rate, which is then exact, a longer one as cached, so the price never exceeds the bill;
   - reports count such rows (`partial_usage_requests`, `partial` rows included) and say the spend
     is a lower bound — on the reporting screen and in the exported file.
   A vendor with no counting endpoint, a count that fails or does not answer within 5 s, and

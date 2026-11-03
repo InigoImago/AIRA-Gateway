@@ -85,7 +85,7 @@ export class CapabilitiesPanel implements OnInit {
           this.feedback.succeed(
             caching
               ? `Caching is on, keeping the prefix for ${ttl === '1h' ? 'an hour' : 'five minutes'}. The Cached share on this page shows how much of the input it catches.`
-              : 'Saved. Prompt caching is off, so every request is charged in full.',
+              : 'Saved. Prompt caching is off, so Claude is charged in full for every request.',
           );
         },
       },

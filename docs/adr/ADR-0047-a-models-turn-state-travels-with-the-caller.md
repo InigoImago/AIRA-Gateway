@@ -1,6 +1,6 @@
 # ADR-0047 — A model's turn state travels with the caller, sealed into a function call's signature
 
-- **Status:** Accepted
+- **Status:** Accepted; point 4 amended by `ADR-0051`
 - **Date:** 2026-10-27
 - **Deciders:** the owner; AIRA maintainers
 - **Amends:** `FRD-135` FR-9 (thought parts a caller replays are still left out; the thinking a

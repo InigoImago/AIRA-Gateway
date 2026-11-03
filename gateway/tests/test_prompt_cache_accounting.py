@@ -341,14 +341,168 @@ def test_the_conversation_so_far_is_marked_on_its_last_block() -> None:
     last = body["messages"][-1]["content"][-1]
     assert last["type"] == "tool_result"
     assert last["cache_control"] == {"type": "ephemeral"}
-    earlier = [block for message in body["messages"][:-1] for block in message["content"]]
-    assert all("cache_control" not in block for block in earlier)
+    assert "cache_control" not in body["messages"][1]["content"][0], "the model's own call"
+
+
+def test_the_callers_last_message_is_a_read_point_of_its_own() -> None:
+    """**The fourth breakpoint.** A breakpoint looks back twenty positions for what an earlier
+    request wrote, and a long tool loop is further back than that; a model up to Sonnet 4.5 drops a
+    finished turn's thinking itself. Either way the prefix ends at the turn's start, and unmarked
+    the next message wrote everything before it again."""
+    from aira_gateway.core.canonical import CanonicalMessage, Role, ToolCallPart, ToolResultPart
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.SYSTEM, text="You are a coding assistant."),
+        CanonicalMessage(role=Role.USER, text="earlier"),
+        CanonicalMessage(role=Role.MODEL, text="answered"),
+        CanonicalMessage(role=Role.USER, text="read hello.py"),
+        CanonicalMessage(
+            role=Role.MODEL,
+            parts=[ToolCallPart(id="c1", name="read", arguments={"path": "hello.py"})],
+        ),
+        CanonicalMessage(
+            role=Role.USER,
+            parts=[ToolResultPart(call_id="c1", name="read", content='print("hello")')],
+        ),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns, cache_prefix=True), max_tokens=256)
+
+    blocks = [block for message in body["messages"] for block in message["content"]]
+    marked = [block for block in blocks if "cache_control" in block]
+    assert [block.get("text", block["type"]) for block in marked] == [
+        "read hello.py",
+        "tool_result",
+    ]
     markers = (
         sum("cache_control" in block for block in body["system"])
         + sum("cache_control" in tool for tool in body["tools"])
-        + sum("cache_control" in block for m in body["messages"] for block in m["content"])
+        + len(marked)
     )
-    assert markers == 3, "Anthropic refuses a fifth breakpoint; three leave one to spare"
+    assert markers == 4, "Anthropic refuses a fifth breakpoint"
+
+
+def test_a_message_that_starts_a_turn_reads_up_to_the_one_before_it() -> None:
+    from aira_gateway.core.canonical import CanonicalMessage, Role
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.USER, text="first"),
+        CanonicalMessage(role=Role.MODEL, text="answered"),
+        CanonicalMessage(role=Role.USER, text="second"),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns, cache_prefix=True), max_tokens=256)
+
+    assert [
+        block["text"]
+        for message in body["messages"]
+        for block in message["content"]
+        if "cache_control" in block
+    ] == ["first", "second"]
+
+
+def test_the_first_message_is_one_breakpoint_not_two() -> None:
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    body = canonical_to_anthropic(_request(cache_prefix=True), max_tokens=256)
+
+    assert body["messages"][0]["content"] == [
+        {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_a_thinking_block_is_never_marked() -> None:
+    """A thinking block cannot carry a marker, and Anthropic refuses the whole request over one. A
+    model's turn can end on one: stopped short, its last block is a note on where it was."""
+    from aira_gateway.core.canonical import CanonicalMessage, Role, ToolCallPart
+    from aira_gateway.upstreams.carried import seal
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+    from aira_gateway.upstreams.vertex.anthropic_mapping.thinking_blocks import DIALECT
+
+    envelope = seal(
+        DIALECT,
+        [
+            {"type": "tool_use", "name": "read"},
+            {"type": "thinking", "thinking": "", "signature": "c2ln"},
+        ],
+    )
+    turns = [
+        CanonicalMessage(role=Role.USER, text="go"),
+        CanonicalMessage(
+            role=Role.MODEL,
+            parts=[ToolCallPart(id="c1", name="read", arguments={}, signature=envelope)],
+        ),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns, cache_prefix=True), max_tokens=256)
+
+    (call, thought) = body["messages"][-1]["content"]
+    assert thought["type"] == "thinking"
+    assert "cache_control" not in thought
+    assert call["cache_control"] == {"type": "ephemeral"}
+
+
+def test_a_result_with_nothing_in_it_is_not_marked() -> None:
+    """An empty block cannot carry a marker. A function may well return nothing, and the mark goes
+    to the nearest block that can hold it, as the provider's own automatic placement does."""
+    from aira_gateway.core.canonical import CanonicalMessage, Role, ToolCallPart, ToolResultPart
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.USER, text="go"),
+        CanonicalMessage(role=Role.MODEL, parts=[ToolCallPart(id="c1", name="read", arguments={})]),
+        CanonicalMessage(
+            role=Role.USER, parts=[ToolResultPart(call_id="c1", name="read", content=" ")]
+        ),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns, cache_prefix=True), max_tokens=256)
+
+    assert "cache_control" not in body["messages"][-1]["content"][-1]
+    assert "cache_control" in body["messages"][-2]["content"][-1]
+
+
+@pytest.mark.parametrize("cache_prefix", [True, False], ids=["cached", "uncached"])
+@pytest.mark.parametrize("blank", ["", "  \n"], ids=["empty", "whitespace"])
+def test_a_blank_system_prompt_is_left_out(blank: str, cache_prefix: bool) -> None:
+    """As a block, empty text is refused, marked or not, and only a use case that opted into caching
+    was sent the block form: its switch turned a request that worked into a refused one."""
+    from aira_gateway.core.canonical import CanonicalMessage, Role
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.SYSTEM, text=blank),
+        CanonicalMessage(role=Role.USER, text="hi"),
+    ]
+    body = canonical_to_anthropic(
+        _request(messages=turns, cache_prefix=cache_prefix), max_tokens=256
+    )
+
+    assert "system" not in body
+
+
+def test_an_empty_system_message_adds_nothing_to_the_prompt_it_is_joined_to() -> None:
+    from aira_gateway.core.canonical import CanonicalMessage, Role
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    turns = [
+        CanonicalMessage(role=Role.SYSTEM, text=""),
+        CanonicalMessage(role=Role.SYSTEM, text="You are a coding assistant."),
+        CanonicalMessage(role=Role.USER, text="hi"),
+    ]
+    body = canonical_to_anthropic(_request(messages=turns), max_tokens=256)
+
+    assert body["system"] == "You are a coding assistant."
+
+
+def test_a_required_call_naming_nothing_offered_is_no_crash() -> None:
+    """The surface refuses a name it was not offered; a request built past it reaches the provider,
+    which says why, rather than ending here on an index into nothing."""
+    from aira_gateway.core.canonical import ToolChoice, ToolMode
+    from aira_gateway.upstreams.vertex.anthropic_mapping import canonical_to_anthropic
+
+    choice = ToolChoice(mode=ToolMode.ANY, allowed=("nothing_offered",))
+    body = canonical_to_anthropic(_request(cache_prefix=True, tool_choice=choice), max_tokens=256)
+
+    assert body["tools"] == []
 
 
 def test_the_conversation_is_kept_as_long_as_the_rest() -> None:

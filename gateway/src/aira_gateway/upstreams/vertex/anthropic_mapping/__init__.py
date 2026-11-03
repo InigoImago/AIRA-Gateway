@@ -20,6 +20,7 @@ Every difference from the Gemini dialect is a mapping this package owns:
 from aira_gateway.upstreams.vertex.anthropic_mapping.request import (
     ANTHROPIC_VERSION,
     SAMPLING,
+    anthropic_body,
     canonical_to_anthropic,
 )
 from aira_gateway.upstreams.vertex.anthropic_mapping.response import (
@@ -48,6 +49,7 @@ __all__ = [
     "MessageAssembler",
     "StreamAssembler",
     "answer_text",
+    "anthropic_body",
     "anthropic_to_canonical",
     "canonical_to_anthropic",
     "finish_reason",

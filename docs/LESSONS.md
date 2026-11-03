@@ -1870,6 +1870,19 @@ reading code.
 
 ---
 
+- **A cache is a property of consecutive requests, and each of them looks right.** `FRD-133` marked
+  the conversation's last block for the next request to read, `FRD-152` left a model's thinking out of
+  earlier turns, and every body was well formed and every test green while each new message rewrote
+  the conversation at the write price. Nothing about one request can show it, so **test what a cache
+  depends on across requests: run the conversation, and compare each body with the one before.**
+  *And the two decisions were each right on their own page:* `ADR-0047` weighed a block's validity and
+  `FRD-133` the marker. **Where a feature changes what is resent, ask what is already keyed on it.**
+
+  *And what a switch reaches is a fact about each provider.* The privacy notice and the console said a
+  provider's cache is on only if the use case turns it on: true of the one family that takes a marker,
+  false of Google's models and the open ones, which cache regardless. **A sentence about "the
+  provider" has as many truths as there are providers; check it per provider, as the vendor states it.**
+
 ## 5. Layering
 
 - **A layer inserted into a stream inherits a contract nobody wrote down.** A fallback chain hands

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import tomllib
 from typing import Any
 
 import pytest
 from aira_management.apps.privacy import notice
-from aira_management.apps.privacy.edition import EDITION, SOURCE_DIGEST, source_digest
+from aira_management.apps.privacy.edition import EDITION, SOURCE_DIGEST, TEXTS, source_digest
 from aira_management.apps.privacy.models import NoticeAcknowledgement
 from aira_management.apps.privacy.texts import LANGUAGES
 from aira_management.apps.roles.models import StoredRole
@@ -554,3 +555,19 @@ def test_in_strict_mode_a_role_that_may_not_see_people_reads_its_rows_without_th
         relaxed[0]
         == "Steuerung: see consumption per person in every use case, including as an export"
     )
+
+
+@pytest.mark.parametrize(
+    ("language", "own_cache"),
+    [
+        ("en", "keep one on their own whatever the use case says"),
+        ("de", "halten ihn von sich aus vor, gleich was der Use Case sagt"),
+    ],
+)
+def test_the_notice_says_whom_a_cache_switch_reaches(language: str, own_cache: str) -> None:
+    """A use case's switch marks a request for Claude. Google's models and the open ones cache a
+    long prompt on their own, on by default in every Google Cloud project; a notice saying a cache
+    exists only where a use case switched it on tells a reader something false about their text."""
+    texts = tomllib.loads((TEXTS / f"{language}.toml").read_text(encoding="utf-8"))
+
+    assert own_cache in texts["activities"]["model_providers"]["retention"]
