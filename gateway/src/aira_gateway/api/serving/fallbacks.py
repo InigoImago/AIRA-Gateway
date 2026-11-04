@@ -1,12 +1,11 @@
 """The chain a request falls back along, by its kind, and what holds each candidate to it.
 
-`FRD-310`, `ADR-0048`.
+`FRD-310`, `ADR-0052`.
 
-**Which chain.** The installation keeps one per kind of request — text generation, embedding,
-ranking — and the use case decides what to do with them (`aira_common.fallback.FallbackMode`): the
-installation's, its own for text generation, or none. Every candidate still meets every condition
-at every hop — the use case's release among them — so a chain the installation set reaches only
-the models each use case may call.
+**Which chain.** The use case's own, for the kind of request — text generation, embedding,
+ranking — kept in its pipeline. A kind with no chain has no fallback: the caller gets the error of
+the model it asked for. Every candidate still meets every condition at every hop, the use case's
+release among them.
 
 **What holds a candidate to the request.** A text answer is held by `requirements_for`; a set of
 vectors and a ranking by the two fits below, because what they need of a stand-in is not a
@@ -14,9 +13,8 @@ condition on the model alone:
 
 - **an embedding** goes only to a model that gives vectors of the width the caller's index takes —
   the width the model asked for would have given — and honours the task type and the batch as that
-  model would. Vectors of two models are never comparable, so an installation that sets an
-  embedding chain is told so where it sets it; this rule keeps a stand-in from also breaking the
-  index's shape;
+  model would. Vectors of two models are never comparable, so the console says so where the chain
+  is set; this rule keeps a stand-in from also breaking the index's shape;
 - **a ranking** goes only to a reranker.
 """
 
@@ -32,9 +30,8 @@ from aira_gateway.api.serving.context import attribution_of, catalog_of, embeddi
 from aira_gateway.core.canonical import CanonicalEmbeddingRequest, CanonicalRerankRequest
 from aira_gateway.embedding import EmbeddingRejected
 from aira_gateway.embedding import validate as validate_embedding
-from aira_gateway.pipeline.config import Pipeline
 from aira_gateway.pipeline.dispatch import Permits
-from aira_gateway.pipeline.store import FallbackChains, PipelineStore
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.requirements import (
     EmbeddingSupported,
     GenerationSupported,
@@ -44,23 +41,12 @@ from aira_gateway.requirements import (
 from aira_gateway.state import providers_of
 
 
-async def fallbacks_for(
-    request: Request, kind: FallbackKind, pipeline: Pipeline | None = None, *, read: bool = True
-) -> tuple[str, ...]:
-    """The models a request of ``kind`` falls back to, in order.
-
-    ``pipeline`` is the use case's, where the caller already holds it; otherwise it is read here
-    (``read``). A use case with no pipeline follows the installation's chains, which are empty —
-    no fallback — until somebody sets one.
-    """
-    if pipeline is None and read:
-        store: PipelineStore = request.app.state.pipeline_store
-        pipeline = await store.get(getattr(attribution_of(request), "use_case", None))
-    chains: FallbackChains = request.app.state.fallback_chains
-    installation = await chains.chain(kind)
-    if pipeline is None:
-        return installation
-    return pipeline.chain_for(kind, installation)
+async def fallbacks_for(request: Request, kind: FallbackKind) -> tuple[str, ...]:
+    """The models a request of ``kind`` falls back to, in order: its use case's chain for that
+    kind, read from its pipeline. A use case with no pipeline has none."""
+    store: PipelineStore = request.app.state.pipeline_store
+    pipeline = await store.get(getattr(attribution_of(request), "use_case", None))
+    return () if pipeline is None else pipeline.chain_for(kind)
 
 
 async def step_requirements(request: Request) -> Permits:

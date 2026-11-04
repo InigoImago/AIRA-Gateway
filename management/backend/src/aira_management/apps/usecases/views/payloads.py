@@ -83,12 +83,14 @@ def _membership_payload(usecase: UseCase, username: str, role: str) -> dict[str,
 
 
 def _pipeline_payload(slug: str, config: PipelineConfig) -> dict[str, Any]:
+    """The whole pipeline, each kind's chain included (`FRD-310`): the gateway reads an absent
+    chain as none."""
     return {
         "use_case": slug,
         "steps": config.steps,
         "fallback_models": config.fallback_models,
-        # What the use case does with the installation's chains (`FRD-310`).
-        "fallback_mode": config.fallback_mode,
+        "embedding_fallback_models": config.embedding_fallback_models,
+        "ranking_fallback_models": config.ranking_fallback_models,
     }
 
 

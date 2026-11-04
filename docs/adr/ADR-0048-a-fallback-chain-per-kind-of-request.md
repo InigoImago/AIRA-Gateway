@@ -1,9 +1,15 @@
 # ADR-0048 — A fallback chain per kind of request, the installation's by default
 
-- **Status:** Accepted
+- **Status:** Accepted, decisions 1 and 2 superseded by [ADR-0052](ADR-0052-a-fallback-chain-belongs-to-its-use-case.md)
 - **Date:** 2026-10-28
 - **Deciders:** Vadim Scheibe
 - Amends `ADR-0032` §4 ("an embedding keeps no chain") and `ADR-0012` §3.
+
+> **Superseded in part (2026-11-03):** the owner meant the fallback models to be set **per use
+> case, in its pipeline**, with none set meaning the error. The installation's chains and a use
+> case's mode (decisions 1 and 2) are gone; a use case keeps a chain per kind of its own. Decisions
+> 3 to 6 — a chain is no release, kind at every hop, the embedding's width, one walk — stand.
+> See `ADR-0052`.
 
 ## Context
 

@@ -150,7 +150,12 @@ describe('UseCaseService', () => {
         use_case: 'uc',
         system: '',
         user: 'hi',
-        pipeline: { steps: [], fallback_models: [] },
+        pipeline: {
+          steps: [],
+          fallback_models: [],
+          embedding_fallback_models: [],
+          ranking_fallback_models: [],
+        },
       })
       .subscribe((result) => expect(result.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');
@@ -259,6 +264,8 @@ describe('UseCaseService', () => {
     const config = {
       steps: [{ type: 'model_route' as const, config: {} }],
       fallback_models: ['b'],
+      embedding_fallback_models: ['e'],
+      ranking_fallback_models: [],
     };
     service.savePipeline('uc', config).subscribe();
     const req = http.expectOne('/api/v1/use-cases/uc/pipeline/');
@@ -266,6 +273,8 @@ describe('UseCaseService', () => {
     expect(req.request.body).toEqual({
       steps: [{ type: 'model_route', config: {} }],
       fallback_models: ['b'],
+      embedding_fallback_models: ['e'],
+      ranking_fallback_models: [],
     });
     req.flush(config);
   });
@@ -277,7 +286,12 @@ describe('UseCaseService', () => {
       use_case: 'uc',
       system: 'sys',
       user: 'hi',
-      pipeline: { steps: [], fallback_models: [] },
+      pipeline: {
+        steps: [],
+        fallback_models: [],
+        embedding_fallback_models: [],
+        ranking_fallback_models: [],
+      },
     };
     service.dryRunPipeline(payload).subscribe((r) => expect(r.blocked).toBe(false));
     const req = http.expectOne('/gw/v1beta/pipeline:dryRun');

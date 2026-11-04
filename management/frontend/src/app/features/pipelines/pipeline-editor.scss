@@ -115,6 +115,10 @@
   &:hover {
     border-color: var(--aira-brand);
   }
+  &.is-selected {
+    border-color: var(--aira-brand);
+    box-shadow: 0 0 0 3px var(--aira-brand-soft);
+  }
 }
 .node--muted {
   color: var(--aira-text-muted);

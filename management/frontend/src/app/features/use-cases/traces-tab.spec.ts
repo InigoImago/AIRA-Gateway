@@ -392,7 +392,7 @@ describe('TracesTab — reading one row', () => {
   it('shows a half-known token count rather than dropping it, and the unknown half as unknown', () => {
     // "Unknown is not zero": printing the missing half as 0 says the model answered with nothing.
     const { text } = one({ prompt_tokens: 12_345, completion_tokens: null });
-    expect(text()).toContain('12,345 in / — out');
+    expect(text()).toContain('12\u202f345 in / — out');
     expect(text()).not.toContain('0 out');
   });
 
@@ -1431,7 +1431,7 @@ describe('TracesTab — what happened to a request (`FRD-628` FR-5)', () => {
 
     expect(harness.testid('trace-provider')?.textContent).toContain('vertex');
     expect(harness.testid('trace-provider')?.textContent).toContain('europe-west4');
-    expect(harness.testid('reasoning-tokens')?.textContent).toContain('1,234 thinking');
+    expect(harness.testid('reasoning-tokens')?.textContent).toContain('1\u202f234 thinking');
   });
 
   it('shows no thinking line where nothing was thought', () => {

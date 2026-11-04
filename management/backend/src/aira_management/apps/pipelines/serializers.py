@@ -13,7 +13,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from aira_common.fallback import FallbackKind, FallbackMode, can_serve, stored_mode
+from aira_common.fallback import CHAIN_FIELDS, FallbackKind, can_serve
 from aira_common.models import BASELINE_CAPABILITIES, parse_capabilities
 from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
 from aira_common.pipelines import (
@@ -187,7 +187,7 @@ def _validate_step_config(step_type: str, config: dict[str, Any]) -> None:
             _check_model_name(category.get("model"), f"{where}.model")
 
 
-def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
+def _models_named_in(pipeline: dict[str, Any]) -> list[str]:
     """Every model a pipeline could reach, wherever it is written.
 
     Mirrored by `aira_gateway.api.pipeline.models_named_in` for an unsaved pipeline posted to the
@@ -195,7 +195,7 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
     `tools/tests/test_both_planes_find_the_same_models_in_a_pipeline.py` keeps the two in step.
     """
     named: list[str] = []
-    for step in steps:
+    for step in pipeline.get("steps") or []:
         config = (step.get("config") or {}) if isinstance(step, dict) else {}
         for key in ("model", "default_model"):
             if config.get(key):
@@ -209,75 +209,78 @@ def _models_named_in(steps: list[Any], fallbacks: list[Any]) -> list[str]:
         for category in config.get("categories") or []:
             if isinstance(category, dict) and category.get("model"):
                 named.append(str(category["model"]))
-    named.extend(str(name) for name in fallbacks if name)
+    # The use case's chain for every kind of request (`FRD-310`).
+    for field in CHAIN_FIELDS.values():
+        named.extend(str(name) for name in pipeline.get(field) or [] if name)
     return list(dict.fromkeys(named))
 
 
-def _check_fallback_mode(attrs: dict[str, Any]) -> None:
-    """What the use case does with the installation's fallback chains (`FRD-310`), and its own.
+#: What a model of each kind does, where a refusal names a model that cannot.
+_KIND_WORDS = {
+    FallbackKind.GENERATE: "answer a generation request",
+    FallbackKind.EMBED: "give embeddings",
+    FallbackKind.RERANK: "rank records",
+}
 
-    A save that does not say — an older console — means what such a pipeline always meant: its
-    own chain where it names one, the installation's otherwise. A chain of its own is used only
-    under `own`, so it is refused anywhere else rather than kept and shown as configured; `own`
-    with nothing in it would be `none` under another name.
-    """
-    chain = attrs.get("fallback_models", []) or []
-    mode = attrs.get("fallback_mode")
-    if mode is None:
-        attrs["fallback_mode"] = stored_mode(None, chain).value
-        return
-    if mode == FallbackMode.OWN and not chain:
-        raise serializers.ValidationError(
-            {
-                "fallback_models": [
-                    "A use case's own fallback chain names at least one model — or choose the "
-                    "installation's chains, or no fallback."
-                ]
-            }
-        )
-    if mode != FallbackMode.OWN and chain:
-        raise serializers.ValidationError(
-            {
-                "fallback_models": [
-                    f"A chain of the use case's own is used only when it keeps one, not under "
-                    f"'{mode}': choose its own chain, or leave the chain empty."
-                ]
-            }
-        )
+#: Why a model that cannot serve a kind is refused where it is written.
+_KIND_REASONS = {
+    FallbackKind.GENERATE: (
+        "A pipeline's models classify, redact, or answer the request itself, and each of those "
+        "writes text — an embedding model or a reranker cannot."
+    ),
+    FallbackKind.EMBED: (
+        "An embedding falls back only to a model that embeds; the gateway passes any other over."
+    ),
+    FallbackKind.RERANK: (
+        "A ranking falls back only to a reranker; the gateway passes any other over."
+    ),
+}
 
 
-def _check_every_model_generates(named: list[str]) -> None:
-    """Every model a pipeline names must be able to answer a generation request (`FRD-310`).
+def _check_every_model_serves(named: list[str], kind: FallbackKind, field: str) -> None:
+    """Every model named for ``kind`` must be able to serve it (`FRD-310`).
 
-    A pipeline's models are its classifiers and redactors, which the gateway asks for text, and
-    the models a request is routed or falls back to — the request being one that generates. An
-    embedding model or a reranker in any of those places is passed over at every hop with that
-    reason; refused here, where somebody can still choose another.
+    Every model the steps name writes text — a classifier or a redactor, which the gateway asks for
+    text, and the models a request is routed to — and each chain's models serve its kind. A model
+    of another kind is passed over at every hop with that reason; refused here, where somebody can
+    still choose another.
     """
     found = {model.name: model for model in Model.objects.filter(name__in=named)}
     unable = sorted(
         name
         for name, model in found.items()
-        if not can_serve(
-            parse_capabilities(model.capabilities) or BASELINE_CAPABILITIES, FallbackKind.GENERATE
-        )
+        if not can_serve(parse_capabilities(model.capabilities) or BASELINE_CAPABILITIES, kind)
     )
     if unable:
         raise serializers.ValidationError(
-            {
-                "steps": [
-                    f"Cannot answer a generation request: {', '.join(unable)}. A pipeline's models "
-                    "classify, redact, or answer the request itself, and each of those writes text "
-                    "— an embedding model or a reranker cannot."
-                ]
-            }
+            {field: [f"Cannot {_KIND_WORDS[kind]}: {', '.join(unable)}. {_KIND_REASONS[kind]}"]}
         )
+
+
+def _check_chain(value: Any) -> list[str]:
+    """One kind's chain as it may be written: model names, at most `MAX_FALLBACK_MODELS`, none
+    twice — each is tried once, in the order written."""
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise serializers.ValidationError("A fallback chain must be a list of model names.")
+    if len(value) > MAX_FALLBACK_MODELS:
+        raise serializers.ValidationError(
+            f"At most {MAX_FALLBACK_MODELS} fallback models are allowed."
+        )
+    if any(len(item) > MAX_MODEL_LENGTH for item in value):
+        raise serializers.ValidationError(
+            f"Model names are limited to {MAX_MODEL_LENGTH} characters."
+        )
+    if not all(value):
+        raise serializers.ValidationError("A fallback chain names no empty model.")
+    if len(set(value)) != len(value):
+        raise serializers.ValidationError("A model is named twice; each is tried once.")
+    return value
 
 
 class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
     class Meta:
         model = PipelineConfig
-        fields = ["steps", "fallback_models", "fallback_mode", "updated_at"]
+        fields = ["steps", *CHAIN_FIELDS.values(), "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_steps(self, value: Any) -> list[dict[str, Any]]:
@@ -300,24 +303,35 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
             _validate_step_config(step_type, config)
         return value
 
+    def validate_fallback_models(self, value: Any) -> list[str]:
+        return _check_chain(value)
+
+    def validate_embedding_fallback_models(self, value: Any) -> list[str]:
+        return _check_chain(value)
+
+    def validate_ranking_fallback_models(self, value: Any) -> list[str]:
+        return _check_chain(value)
+
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        """Every model this pipeline names must be **released to this use case** (`FRD-308`).
+        """Every model this pipeline names must serve what it is named for and be **released to
+        this use case** (`FRD-308`, `FRD-310`).
 
         The gateway refuses one at dispatch as well; this is the check that arrives while somebody
         can still fix it. Collected from **everywhere a model can be written** (`_models_named_in`).
         A pipeline that names no model saves even on a use case with nothing released.
         """
-        _check_fallback_mode(attrs)
         use_case = self.context.get("use_case")
         if use_case is None:
             return attrs
-        named = _models_named_in(
-            attrs.get("steps", []) or [],
-            attrs.get("fallback_models", []) or [],
-        )
+        named = _models_named_in(attrs)
         if not named:
             return attrs
-        _check_every_model_generates(named)
+        # The steps' models all write text; each chain's models serve its kind.
+        _check_every_model_serves(
+            _models_named_in({"steps": attrs.get("steps")}), FallbackKind.GENERATE, "steps"
+        )
+        for kind, field in CHAIN_FIELDS.items():
+            _check_every_model_serves(list(attrs.get(field) or []), kind, field)
         released = set(use_case.allowed_models.values_list("name", flat=True))
         withheld = sorted(name for name in named if name not in released)
         if withheld:
@@ -331,16 +345,3 @@ class PipelineConfigSerializer(serializers.ModelSerializer[PipelineConfig]):
                 }
             )
         return attrs
-
-    def validate_fallback_models(self, value: Any) -> list[str]:
-        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-            raise serializers.ValidationError("fallback_models must be a list of strings.")
-        if len(value) > MAX_FALLBACK_MODELS:
-            raise serializers.ValidationError(
-                f"At most {MAX_FALLBACK_MODELS} fallback models are allowed."
-            )
-        if any(len(item) > MAX_MODEL_LENGTH for item in value):
-            raise serializers.ValidationError(
-                f"Model names are limited to {MAX_MODEL_LENGTH} characters."
-            )
-        return value

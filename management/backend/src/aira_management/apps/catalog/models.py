@@ -20,8 +20,6 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.db import models
 
-from aira_common.fallback import FallbackKind
-
 
 class Model(models.Model):
     """A model AIRA knows about, and what it costs."""
@@ -198,28 +196,3 @@ class Model(models.Model):
         return (
             self.input_price_per_million is not None and self.output_price_per_million is not None
         )
-
-
-class FallbackChain(models.Model):
-    """The installation's fallback chain for one kind of request (`FRD-310`, `ADR-0048`).
-
-    One row per kind, and no row is an empty chain: a model that cannot answer is then the
-    caller's error, which is the default. A use case follows these chains unless it keeps its own
-    for text generation or refuses fallback altogether (`pipelines.PipelineConfig.fallback_mode`),
-    and a request reaches only the models of a chain its use case has been released.
-    """
-
-    kind = models.CharField(
-        max_length=16,
-        unique=True,
-        choices=[(kind.value, kind.value) for kind in FallbackKind],
-    )
-    #: Model names, in the order they are tried, each catalogued and able to serve ``kind``.
-    chain = models.JSONField(default=list)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["kind"]
-
-    def __str__(self) -> str:
-        return f"fallback for {self.kind}"

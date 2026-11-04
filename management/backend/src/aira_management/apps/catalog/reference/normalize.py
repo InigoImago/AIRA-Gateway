@@ -20,6 +20,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from aira_common.counts import display_count
 from aira_management.apps.catalog.reference.thinking_defaults import with_vendor_default
 
 #: The list's providers this gateway reaches, as `(platform, publisher)` — the provider name the
@@ -250,8 +251,37 @@ def _long_context(cost: dict[str, Any], notes: list[str]) -> dict[str, Any] | No
         notes.append("costs more above a context length — the list gives no price for it")
         return None
     if len(steps) > 1:
-        notes.append(f"costs more again above {steps[1][0]:,} tokens — only the first step is kept")
+        notes.append(
+            f"costs more again above {display_count(steps[1][0])} tokens — only the first step is "
+            "kept"
+        )
     return block
+
+
+#: A price the public list states otherwise than the vendor that bills it, by platform and name:
+#: the vendor's figure per field, and the note the console shows beside the draft. The list is kept
+#: by its community and can be wrong; the vendor's published price is the one the bill is made of,
+#: and a cache-read price half the vendor's books a long agentic session a fifth short.
+CORRECTIONS: dict[tuple[str, str], tuple[dict[str, str], str]] = {
+    ("vertex", "claude-sonnet-5-5"): (
+        {"cached_input": "0.2"},
+        "cache reads at 0.20 per million tokens, as Anthropic lists them for Claude Sonnet 5.5 — "
+        "the public list says 0.10",
+    ),
+}
+
+
+def corrected(entry: dict[str, Any]) -> dict[str, Any]:
+    """``entry`` with every price its vendor states otherwise (`CORRECTIONS`), and a note saying so.
+    An entry already stating the vendor's figure is left as it is, note and all."""
+    correction = CORRECTIONS.get((str(entry.get("platform")), str(entry.get("name"))))
+    if correction is None:
+        return entry
+    fields, note = correction
+    prices = dict(entry.get("prices") or {})
+    if all(prices.get(field) == value for field, value in fields.items()):
+        return entry
+    return {**entry, "prices": prices | fields, "notes": [*(entry.get("notes") or []), note]}
 
 
 def drafts(listing: Any) -> list[dict[str, Any]]:
@@ -276,6 +306,6 @@ def drafts(listing: Any) -> list[dict[str, Any]]:
             if provider == "google-vertex" and publisher == "anthropic":
                 # The anthropic list says the same models with their own provider block.
                 continue
-            made = draft(name, entry, platform, publisher)
+            made = corrected(draft(name, entry, platform, publisher))
             found.setdefault((platform, made["name"]), made)
     return [found[key] for key in sorted(found)]

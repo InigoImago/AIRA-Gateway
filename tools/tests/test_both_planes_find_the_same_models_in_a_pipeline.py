@@ -89,6 +89,9 @@ EVERYWHERE = {
         },
     ],
     "fallback_models": ["fallback-a", "fallback-b"],
+    # The use case's chains for the other kinds of request (`FRD-310`).
+    "embedding_fallback_models": ["embedding-fallback"],
+    "ranking_fallback_models": ["ranking-fallback"],
 }
 
 #: The shapes that arrive from a hand-written body on the dry run, where the `pipeline` field is
@@ -108,14 +111,15 @@ AWKWARD: list[dict] = [
     {"steps": [{"type": "pii_filter", "config": {"fallback_models": ["only-a-fallback"]}}]},
     {"steps": [{"type": "pii_filter", "config": {"model": "m", "fallback_models": ["", None]}}]},
     {"steps": [{"type": "pii_filter", "config": {"model": "m", "fallback_models": ["m", "n"]}}]},
+    # Each kind's chain in the same shapes, and one model named in two of them.
+    {"embedding_fallback_models": ["e", "", None, "e"], "ranking_fallback_models": None},
+    {"fallback_models": ["x"], "embedding_fallback_models": ["x"], "ranking_fallback_models": []},
 ]
 
 
 def _agree(document: dict) -> None:
     gateway = models_named_in(document)
-    management = _models_named_in(
-        document.get("steps") or [], document.get("fallback_models") or []
-    )
+    management = _models_named_in(document)
     assert gateway == management, (
         f"the two planes read a different set of models out of {document!r}\n"
         f"  gateway:    {gateway}\n"
@@ -137,6 +141,8 @@ def test_they_agree_about_a_pipeline_that_names_a_model_everywhere_it_can() -> N
         "code-model",
         "fallback-a",
         "fallback-b",
+        "embedding-fallback",
+        "ranking-fallback",
     }
 
 

@@ -383,7 +383,7 @@ async def test_the_dimension_closest_to_its_limit_speaks(
 
     body = _body(outbox.sent[0])
     assert "90%" in outbox.sent[0]["Subject"]
-    assert "1.00 of 10.00 EUR" in body and "900 of 1,000" in body
+    assert "1.00 of 10.00 EUR" in body and "900 of 1\u202f000" in body
 
 
 async def test_a_daily_budget_is_today_and_resets_at_the_installations_midnight(

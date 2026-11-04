@@ -123,11 +123,11 @@ describe('TechnicalDetails', () => {
     const { all, testid } = render();
 
     expect(all('technical-connection')).toEqual([
-      '240,013 ms (240.0 s)',
+      '240\u202f013 ms (240.0 s)',
       '133 ms since the last byte',
     ]);
     expect(testid('technical-sent')?.textContent).toContain(
-      '18,422 bytes in 31 writes, 9 keepalives',
+      '18\u202f422 bytes in 31 writes, 9 keepalives',
     );
     expect(testid('technical-phase')?.textContent).toContain('still answering');
   });

@@ -24,7 +24,6 @@ a redactor coaxed into answering would otherwise answer a prompt the next step r
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -32,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from aira_common.access import GrantRole
-from aira_common.fallback import FallbackKind
+from aira_common.fallback import CHAIN_FIELDS
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.refusals import refusal_response as _refusal
@@ -46,7 +45,7 @@ from aira_gateway.api.serving import (
     refuse_unless_live,
     released_for,
 )
-from aira_gateway.api.serving.fallbacks import fallbacks_for, step_requirements
+from aira_gateway.api.serving.fallbacks import step_requirements
 from aira_gateway.audit import AuditTrail
 from aira_gateway.auth.attribution import Attribution, attribute
 from aira_gateway.auth.dependencies import require_principal, use_case_refusal
@@ -97,8 +96,9 @@ def models_named_in(pipeline: dict[str, Any]) -> list[str]:
     """Every model this pipeline could reach, wherever it is written.
 
     The release check has to see **all** of them — each classifier, **each step's own fallback
-    chain** (`FRD-302` FR-10), each category's target, the default target and the dispatch chain.
-    Mirrored by Management's serializer; a test compares the two.
+    chain** (`FRD-302` FR-10), each category's target, the default target and the use case's chain
+    for every kind of request (`FRD-310`). Mirrored by Management's serializer; a test compares the
+    two.
     """
     named: list[str] = []
     for step in pipeline.get("steps") or []:
@@ -113,7 +113,8 @@ def models_named_in(pipeline: dict[str, Any]) -> list[str]:
         for category in config.get("categories") or []:
             if isinstance(category, dict) and category.get("model"):
                 named.append(str(category["model"]))
-    named.extend(str(name) for name in pipeline.get("fallback_models") or [] if name)
+    for field in CHAIN_FIELDS.values():
+        named.extend(str(name) for name in pipeline.get(field) or [] if name)
     return list(dict.fromkeys(named))
 
 
@@ -359,7 +360,4 @@ async def dry_run(
         # row — a dry run dispatches nothing — only the calls its steps made.
         await record_pipeline_calls(request, trail)
 
-    # The chain a request of this pipeline would fall back along: its own, the installation's, or
-    # none (`FRD-310`) — not merely the list the pipeline carries.
-    chain = await fallbacks_for(request, FallbackKind.GENERATE, pipeline)
-    return _rendered(replace(result, fallback_models=chain), model_words=authors)
+    return _rendered(result, model_words=authors)

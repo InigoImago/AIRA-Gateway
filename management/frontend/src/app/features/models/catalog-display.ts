@@ -7,6 +7,7 @@ import {
   readRegions,
 } from '../../core/api/models';
 import { DEFAULT_CLOCK, inZone } from '../../core/ui/clock';
+import { displayCount } from '../../core/ui/money';
 
 /**
  * The price of a request whose prompt is longer than a stated length (`FRD-408`), as one line —
@@ -20,7 +21,7 @@ export function longContextOf(model: CatalogModel): string {
   const cached = model.long_context_cached_input_price_per_million;
   const write = model.long_context_cache_write_price_per_million;
   return [
-    `above ${threshold.toLocaleString('en-US')} tokens: input ${input}, output ${output}`,
+    `above ${displayCount(threshold)} tokens: input ${input}, output ${output}`,
     cached ? `cached input ${cached}` : '',
     write ? `cache write ${write}` : '',
   ]

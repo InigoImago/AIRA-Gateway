@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**117 of 121 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**118 of 122 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -73,6 +73,7 @@ status that goes stale in the copy nobody opens.
 | [207](FRD-207-console-legibility.md) | The console holds still, explains itself, and stays usable as it grows | 2/5 | ✅ Done |
 | [208](FRD-208-paging-and-use-case-rules.md) | Paging that is real, and a rule somebody can actually change | 2/5 | ✅ Done |
 | [209](FRD-209-access-by-group.md) | Access by group, and one place to search for whoever gets it | 2 | ✅ Done |
+| [210](FRD-210-a-count-reads-the-same-in-english-and-german.md) | A count reads the same in English and in German | 2 | ✅ Built |
 | [300](FRD-300-pipeline-engine.md) | Pre-dispatch pipeline engine (filter · routing · fallback) | 3 | ✅ Done |
 | [302](FRD-302-model-fallback.md) | Model fallback: every model access is a chain | 3 | ✅ Built |
 | [303](FRD-303-pipeline-builder-ui.md) | Pipeline builder UI (clickable graph) | 3 | ✅ Done |
@@ -81,7 +82,7 @@ status that goes stale in the copy nobody opens.
 | [307](FRD-307-model-catalog.md) | Approved-model catalog + model pickers | 3 | ✅ Done — approval here; the pickers in FRD-308, the candidate list in FRD-507 |
 | [308](FRD-308-use-case-model-release.md) | Which models a use case may call | 3 | ✅ Built |
 | [309](FRD-309-pii-filter.md) | Replacing personal data before the prompt reaches the model | 3 (pipeline) | ✅ Built |
-| [310](FRD-310-a-fallback-chain-per-kind-of-request.md) | A fallback chain per kind of request, the installation's by default | 3 | ✅ Built |
+| [310](FRD-310-a-fallback-chain-per-kind-of-request.md) | A fallback chain per kind of request, kept by its use case | 3 | ✅ Built |
 | [400](FRD-400-budget-model.md) | Budget model & distribution | 4 | ✅ Done |
 | [401](FRD-401-budget-enforcement.md) | Budget enforcement & usage accounting | 4 | ✅ Done |
 | [402](FRD-402-budget-ui.md) | Budget UI (set limits + view consumption) | 4 | ✅ Done |

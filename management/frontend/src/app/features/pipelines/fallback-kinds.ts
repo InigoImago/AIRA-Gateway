@@ -1,4 +1,4 @@
-import { Capability, CatalogModel, FallbackKind, FallbackMode } from '../../core/api/models';
+import { Capability, CatalogModel, FallbackKind } from '../../core/api/models';
 
 /** How each kind of request is named on this console. */
 export const KIND_LABELS: Record<FallbackKind, string> = {
@@ -26,20 +26,4 @@ const BASELINE: readonly Capability[] = ['generate', 'embed'];
 export function canServe(model: CatalogModel, kind: FallbackKind): boolean {
   const declared = model.capabilities?.length ? model.capabilities : BASELINE;
   return SERVES[kind].some((capability) => declared.includes(capability));
-}
-
-/**
- * The models a request of `kind` falls back to under `mode` — the server's rule
- * (`aira_common.fallback.chain_for`), for a screen showing what a mode will mean before it is
- * saved. After a save the server's own answer (`PipelineConfig.fallbacks`) is what is shown.
- */
-export function chainFor(
-  kind: FallbackKind,
-  mode: FallbackMode,
-  own: readonly string[],
-  installation: readonly string[],
-): string[] {
-  if (mode === 'none') return [];
-  if (mode === 'own' && kind === 'generate') return [...own];
-  return [...installation];
 }

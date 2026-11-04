@@ -43,9 +43,9 @@ months before it existed. The chain was built; its document was the companion no
 - **Falling back mid-stream.** Once a chunk has reached the caller the answer is committed.
 - **A chain for embeddings.** Another model's vector is not a substitute, and half a batch from
   two models is worse than a failure.
-  *Changed by `FRD-310`:* an embedding has the installation's chain, empty by default and held to
-  the width the model asked for gives; and every chain has a default — the installation's per
-  kind of request — which a use case follows, replaces for text generation, or refuses.
+  *Changed by `FRD-310`:* a use case keeps a chain for each kind of request — text generation,
+  embedding, ranking — each empty by default, so a model that cannot answer is the caller's error;
+  an embedding's is held to the width the model asked for gives.
 - **Falling back on a verdict.** A classifier that answered has answered; see FR-8.
 
 ## 3. User Stories

@@ -42,10 +42,14 @@ MIRRORS: dict[str, tuple[str, str]] = {
     "rate_limits": ("ratelimits/models.py", "RateLimit"),
     "anomaly_rules": ("anomalies/models.py", "AnomalyRule"),
     "model_catalog": ("catalog/models.py", "Model"),
-    "fallback_chains": ("catalog/models.py", "FallbackChain"),
     "roles": ("roles/models.py", "StoredRole"),
     "api_keys": ("apikeys/models.py", "ApiKey"),
 }
+
+#: Read-model tables no event writes any more, kept one release for the release before this one,
+#: which reads them while a rolling update replaces it (`FRD-127` §5.4) — `fallback_chains`, the
+#: installation's chains `ADR-0052` removed.
+RETIRED = frozenset({"fallback_chains"})
 
 #: `UseCase.slug`, which every column naming a use case carries.
 SLUG = ("usecases/models.py", "UseCase", "slug")
@@ -73,6 +77,10 @@ NOT_FROM_MANAGEMENT: dict[tuple[str, str], str] = {
     ("use_case_members", "id"): "the row's own key, generated here",
     ("use_case_groups", "id"): "the row's own key, generated here",
     ("api_keys", "id"): "the row's own key, generated here",
+    ("pipeline_configs", "fallback_mode"): (
+        "written empty by this release, for the release before it during a rolling update; "
+        "Management no longer has the field (`ADR-0052`)"
+    ),
 }
 
 #: The Django fields that hold text.
@@ -158,7 +166,9 @@ def _mirrored_tables() -> list:  # noqa: ANN201 — SQLAlchemy `Table`s
     tables = [
         cls.__table__
         for _, cls in inspect.getmembers(read_models, inspect.isclass)
-        if cls.__module__ == read_models.__name__ and hasattr(cls, "__table__")
+        if cls.__module__ == read_models.__name__
+        and hasattr(cls, "__table__")
+        and cls.__tablename__ not in RETIRED
     ]
     return [*tables, ApiKey.__table__]
 

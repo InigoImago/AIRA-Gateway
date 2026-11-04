@@ -125,8 +125,8 @@ describe('BreakdownTable', () => {
       row({ requests: 12840, prompt_tokens: 1_200_000, completion_tokens: 3400 }),
     ]);
 
-    expect(text()).toContain('12,840');
-    expect(text()).toContain('1,200,000 / 3,400');
+    expect(text()).toContain('12\u202f840');
+    expect(text()).toContain('1\u202f200\u202f000 / 3\u202f400');
   });
 
   it('says there is nothing, in the terms of this breakdown', () => {

@@ -44,6 +44,11 @@ where, and leaves the region, the check, the approval and the release to the adm
   notice), refreshed by `make model-reference`. `AIRA_MODEL_REFERENCE_URL` reads the live list
   instead, at most daily; a failure answers with the shipped copy and says why, and is not retried
   for five minutes.
+- **FR-2a — A price the vendor states otherwise.** Where the list's price differs from the one the
+  vendor publishes, the draft states the vendor's and a note says so (`normalize.CORRECTIONS`),
+  for the shipped copy and a live list alike: Claude Sonnet 5.5's cache reads, which the list gives
+  as 0.10 US dollars per million tokens and Anthropic as 0.20. A list that states the vendor's
+  figure is left as it is.
 - **FR-3 — `GET /api/v1/model-reference/`**, for `catalog.write`. Writes nothing.
 - **FR-4 — The console.** In *Add a model*, a provider the reference describes shows its models,
   current first, deprecated last and marked, searchable by name. One already catalogued is opened as

@@ -14,6 +14,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime, make_msgid
 
 from aira_common.anomalies import RuleKind, RuleTarget, threshold_unit
+from aira_common.counts import display_count
 from aira_common.money import format_display
 from aira_gateway.anomalies.evaluator import without_addresses
 from aira_gateway.db.models import AnomalyEvent
@@ -202,7 +203,7 @@ def _amount(dimension: str, value: int, currency: str = "") -> str:
     counts with thousands grouped."""
     if dimension == "cost":
         return f"{format_display(value)} {currency}".strip()
-    return f"{value:,}"
+    return display_count(value)
 
 
 def _listed(thresholds: Sequence[int]) -> str:

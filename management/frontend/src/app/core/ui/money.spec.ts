@@ -1,4 +1,4 @@
-import { displayAmount, displayCount, nanosOf, storedAmount } from './money';
+import { GROUP_SEPARATOR, displayAmount, displayCount, nanosOf, storedAmount } from './money';
 
 /**
  * The client-side half of `aira_common.money.format_display`.
@@ -45,8 +45,19 @@ describe('displayAmount', () => {
 
 describe('displayCount', () => {
   it('groups thousands so a figure is read rather than counted', () => {
-    expect(displayCount(12840)).toBe('12,840');
+    expect(displayCount(12840)).toBe('12\u202f840');
     expect(displayCount(7)).toBe('7');
+    expect(displayCount(1_234_567)).toBe('1\u202f234\u202f567');
+    expect(displayCount(-25_000)).toBe('-25\u202f000');
+  });
+
+  it('writes neither a comma nor a point between the groups', () => {
+    // Each is the decimal mark in one of the two languages this console's readers use: `1,234` is
+    // one thousand to an English reader and one and a bit to a German one.
+    const shown = displayCount(987_654_321);
+    expect(shown).not.toContain(',');
+    expect(shown).not.toContain('.');
+    expect(shown.split(GROUP_SEPARATOR)).toEqual(['987', '654', '321']);
   });
 });
 

@@ -229,13 +229,13 @@ describe('PeoplePanel', () => {
   });
 
   it('groups counts the way the chart above it does', () => {
-    // "10664" directly under a chart that prints "10,664" reads as two different figures.
+    // "10664" directly under a chart that prints "10 664" reads as two different figures.
     const harness = setup();
     harness.host.month.set([row({ key: 'erika', requests: 10_664, total_tokens: 1_234_567 })]);
     harness.render();
 
-    expect(harness.text()).toContain('10,664');
-    expect(harness.text()).toContain('1,234,567');
+    expect(harness.text()).toContain('10\u202f664');
+    expect(harness.text()).toContain('1\u202f234\u202f567');
   });
 
   it('works out a remainder on the digits, not through a float', () => {

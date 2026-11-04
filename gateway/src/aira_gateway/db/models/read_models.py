@@ -130,17 +130,29 @@ class PipelineConfigRead(Base):
 
     use_case: Mapped[str] = mapped_column(String(64), primary_key=True)
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: The use case's fallback chain for each kind of request (`FRD-310`,
+    #: `aira_common.fallback.CHAIN_FIELDS`): text generation, embedding, ranking.
     fallback_models: Mapped[list[str]] = mapped_column(JSON, default=list)
-    #: What the use case does with the installation's fallback chains (`FRD-310`). NULL from an
-    #: older Management, read by `aira_common.fallback.stored_mode`.
+    #: NULL on a row written before these two existed, read as an empty chain.
+    embedding_fallback_models: Mapped[list[str] | None] = mapped_column(
+        JSON, default=list, nullable=True
+    )
+    ranking_fallback_models: Mapped[list[str] | None] = mapped_column(
+        JSON, default=list, nullable=True
+    )
+    #: **Read by no code of this release.** The previous release read it on every pipeline, and
+    #: serves beside this one while a rolling update replaces it (`FRD-127` §5.4), so the column
+    #: stays until the next release drops it. Written empty, which that release reads as a pipeline
+    #: from before the column existed: its own chain where it names one.
     fallback_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class FallbackChainRead(Base):
-    """The installation's fallback chain for one kind of request (`FRD-310`).
-
-    No row is an empty chain: a model that cannot answer is then the caller's error.
+    """**Read by no code of this release** — the installation's fallback chains, which `ADR-0052`
+    removed. The previous release asks it on every request that dispatches, and serves beside this
+    one while a rolling update replaces it (`FRD-127` §5.4), so the table stays until the next
+    release drops it. Nothing writes it any more.
     """
 
     __tablename__ = "fallback_chains"

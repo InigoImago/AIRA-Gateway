@@ -4,7 +4,7 @@
   <div class="stack">
     <h2 class="page-title">Models &amp; prices</h2>
     <p class="muted" style="margin: 0">
-      What each model costs per 1,000,000 tokens{{ pricedIn() }}. Input and output are priced
+      What each model costs per million tokens{{ pricedIn() }}. Input and output are priced
       separately because every provider bills the two differently. Cost budgets are calculated from
       these figures; a model without a price still works, but its consumption cannot be costed.
       <!-- The unit is `AIRA_CURRENCY`, the setting the CSV export labels these figures with. -->
@@ -40,10 +40,6 @@
         <app-served-models [catalogued]="catalogued()" (catalogue)="importServed($event)" />
       </div>
     }
-
-    <!-- What answers when a model cannot (`FRD-310`): readable by everyone who reads the
-         catalogue, because a use case's administrator decides whether to follow it. -->
-    <app-fallback-chains-card [catalogued]="models()" [canEdit]="canEdit()" />
 
     <!-- While the editor is open it shows this outcome itself, where the reader is looking; a copy
          behind its backdrop would be a second report of the same thing. -->

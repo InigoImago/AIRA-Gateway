@@ -4,11 +4,10 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/api/error-message';
 import {
+  CHAIN_FIELDS,
   CatalogModel,
   FALLBACK_KINDS,
-  FallbackChains,
   FallbackKind,
-  FallbackMode,
   PipelineConfig,
   StepType,
 } from '../../core/api/models';
@@ -25,7 +24,18 @@ import {
   summarize,
 } from './pipeline-steps';
 import { PipelineTestPanel } from './pipeline-test-panel';
-import { KIND_LABELS, canServe, chainFor } from '../models/fallback-kinds';
+import { KIND_LABELS, canServe } from './fallback-kinds';
+import { FallbackChains, PipelineFallbacks } from './pipeline-fallbacks';
+
+/** A pipeline as the editor holds it: every kind's chain present, an absent one empty. */
+function whole(config: PipelineConfig): PipelineConfig {
+  return {
+    ...config,
+    fallback_models: config.fallback_models ?? [],
+    embedding_fallback_models: config.embedding_fallback_models ?? [],
+    ranking_fallback_models: config.ranking_fallback_models ?? [],
+  };
+}
 
 /**
  * The pipeline builder: the graph of steps and its inspector, with the test panel beside them.
@@ -35,7 +45,14 @@ import { KIND_LABELS, canServe, chainFor } from '../models/fallback-kinds';
  */
 @Component({
   selector: 'app-pipeline-editor',
-  imports: [FormsModule, NgTemplateOutlet, RouterLink, MultiSelect, PipelineTestPanel],
+  imports: [
+    FormsModule,
+    NgTemplateOutlet,
+    RouterLink,
+    MultiSelect,
+    PipelineFallbacks,
+    PipelineTestPanel,
+  ],
   templateUrl: './pipeline-editor.html',
   styleUrl: './pipeline-editor.scss',
 })
@@ -47,6 +64,8 @@ export class PipelineEditor implements OnInit {
   protected readonly config = signal<PipelineConfig>({
     steps: [],
     fallback_models: [],
+    embedding_fallback_models: [],
+    ranking_fallback_models: [],
   });
   protected readonly selected = signal<number | 'fallback' | null>(null);
   protected readonly saved = signal(false);
@@ -90,7 +109,7 @@ export class PipelineEditor implements OnInit {
    * The catalogue, for what each released model can do (`FRD-310`); `null` until it answers, and
    * then every released model is offered and the server refuses by name what cannot write text.
    */
-  private readonly catalogue = signal<CatalogModel[] | null>(null);
+  protected readonly catalogue = signal<CatalogModel[] | null>(null);
   /**
    * The released models a pipeline may name: every one of them classifies, redacts or answers the
    * request, and each of those writes text — an embedding model or a reranker cannot.
@@ -106,6 +125,14 @@ export class PipelineEditor implements OnInit {
   });
   protected readonly modelChoices = computed<MultiSelectOption[]>(() =>
     this.writers().map((name) => ({ value: name, label: name })),
+  );
+  /**
+   * What a step's empty chain picker says: to somebody who may change it, why nothing is offered;
+   * to a reader, whose greyed picker shows this as its value, only that the chain is empty — "no
+   * model is released" would be false of a use case that has them.
+   */
+  protected readonly chainHint = computed(() =>
+    this.canManage() ? 'No model released to this use case writes text.' : 'None',
   );
   /**
    * Where the answer about the use case stands. The release and the reader's rights are facts about
@@ -130,50 +157,40 @@ export class PipelineEditor implements OnInit {
     typeof this.selected() === 'number' ? (this.selected() as number) : -1,
   );
 
-  /** The installation's fallback chain per kind (`FRD-310`), or `null` before it answers. */
-  protected readonly installation = signal<FallbackChains | null>(null);
-  protected readonly fallbackKinds = FALLBACK_KINDS;
-  protected readonly kindLabel = (kind: FallbackKind): string => KIND_LABELS[kind];
-  /** The use case's own chain, kept while another mode is chosen, so choosing `own` again
-   *  restores it rather than starting from nothing. */
-  private ownDraft: string[] = [];
-
-  /** What the use case does when a model cannot answer — as the server reads a pipeline that does
-   *  not say: its own chain where it names one. */
-  protected readonly fallbackMode = computed<FallbackMode>(
-    () => this.config().fallback_mode ?? (this.config().fallback_models.length ? 'own' : 'default'),
-  );
-
-  /** The installation's chain for text generation as one line, or `''` where none is set — what
-   *  the graph's fallback node says under the installation's chains. */
-  protected readonly installationText = computed(
-    () => this.installation()?.generate.join(' → ') ?? '',
-  );
-
-  /** The chain each kind of request meets under the mode in the form — the server's rule
-   *  (`chainFor`), so what the inspector shows before a save is what the save will mean. */
-  protected readonly effectiveChains = computed(() => {
-    const installation = this.installation();
-    if (!installation) return null;
-    const mode = this.fallbackMode();
-    const own = this.config().fallback_models;
-    return this.fallbackKinds.map((kind) => ({
-      kind,
-      models: chainFor(kind, mode, own, installation[kind]),
-    }));
+  /** The use case's chain for each kind of request (`FRD-310`), as the form holds it. */
+  protected readonly chains = computed<FallbackChains>(() => {
+    const config = this.config();
+    return {
+      generate: config.fallback_models,
+      embed: config.embedding_fallback_models,
+      rerank: config.ranking_fallback_models,
+    };
   });
+
+  /** The fallback node's lines, one per kind: the models in order, or the error. Each is one
+   *  string, assembled here, so its spacing is nobody's template whitespace. */
+  protected readonly fallbackLines = computed(() =>
+    FALLBACK_KINDS.map((kind) => {
+      const models = this.chains()[kind];
+      return {
+        kind,
+        text: `${KIND_LABELS[kind]}: ${models.length ? models.join(' → ') : 'the error'}`,
+      };
+    }),
+  );
+
+  /** Whether any kind falls back — the node is drawn muted while none does. */
+  protected readonly fallsBack = computed(() =>
+    FALLBACK_KINDS.some((kind) => this.chains()[kind].length > 0),
+  );
 
   ngOnInit(): void {
     this.slug = this.route.snapshot.paramMap.get('slug') ?? '';
-    // What each model can do and what the installation falls back to: both only inform the
-    // screen, and a failure leaves it offering every released model as before.
+    // What each model can do only informs the screen: a failure leaves it offering every released
+    // model, and the server refuses by name what cannot serve.
     this.service.models().subscribe({
       next: (models) => this.catalogue.set(models),
       error: () => this.catalogue.set(null),
-    });
-    this.service.fallbackChains().subscribe({
-      next: (chains) => this.installation.set(chains),
-      error: () => this.installation.set(null),
     });
     this.service.get(this.slug).subscribe({
       next: (useCase) => {
@@ -204,7 +221,7 @@ export class PipelineEditor implements OnInit {
   private loadPipeline(): void {
     this.service.getPipeline(this.slug).subscribe({
       next: (config) => {
-        this.config.set(config);
+        this.config.set(whole(config));
         this.loading.set(false);
       },
       error: (response: unknown) => {
@@ -300,32 +317,11 @@ export class PipelineEditor implements OnInit {
     });
   }
 
-  /** The fallback chain, chosen from the released models (`FRD-308`). **Order is preserved**: a
-   *  chain is tried in the order it is written, so the picker appends rather than sorting. */
-  protected setFallbackModels(models: string[]): void {
-    this.update((c) => (c.fallback_models = models));
-  }
-
-  /**
-   * Follow the installation's chains, keep one of the use case's own, or have none (`FRD-310`).
-   * The server takes a chain only under `own`, so another mode sends none — kept here, and given
-   * back if `own` is chosen again before the page is left.
-   */
-  protected setFallbackMode(mode: FallbackMode): void {
-    this.update((c) => {
-      if (mode !== 'own' && c.fallback_models.length) {
-        this.ownDraft = c.fallback_models;
-        c.fallback_models = [];
-      } else if (mode === 'own' && !c.fallback_models.length) {
-        c.fallback_models = this.ownDraft;
-      }
-      c.fallback_mode = mode;
-    });
-  }
-
-  /** A model of a chain this use case may not call: the gateway passes it over at that hop. */
-  protected notReleasedHere(model: string): boolean {
-    return this.releaseKnown() && !this.released().includes(model);
+  /** One kind's chain, as the fallback panel chose it from the released models (`FRD-308`).
+   *  **Order is preserved**: a chain is tried in the order it is written, so the picker appends
+   *  rather than sorting. */
+  protected setChain(kind: FallbackKind, models: string[]): void {
+    this.update((c) => (c[CHAIN_FIELDS[kind]] = models));
   }
 
   protected save(): void {
@@ -333,7 +329,7 @@ export class PipelineEditor implements OnInit {
     this.saving.set(true);
     this.service.savePipeline(this.slug, this.config()).subscribe({
       next: (config) => {
-        this.config.set(config);
+        this.config.set(whole(config));
         this.saved.set(true);
         this.dirty.set(false);
         this.saving.set(false);

@@ -282,7 +282,7 @@ describe('InstallationBudgetCard', () => {
         limit_tokens: 1000,
         limit_requests: 50,
       }),
-    ).toEqual(['5.00 EUR', '1,000 tokens', '50 request(s)']);
+    ).toEqual(['5.00 EUR', '1\u202f000 tokens', '50 request(s)']);
     expect(component.limitsOf({ ...MONTHLY, limit_cost: null })).toEqual([]);
   });
 

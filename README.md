@@ -95,8 +95,9 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
   speaking; the audit trail keeps the audio's description and hash, not the audio.
 - **Tool calling**, carried and never executed, off by default per use case. **Prompt caching**,
   the same: off until a use case opts in.
-- **Fallback chains** that skip a candidate that cannot serve the request and say which and why —
-  rather than quietly answering with less than was asked for.
+- **Fallback chains**, a use case's own for text, embeddings and rankings — empty unless set, so a
+  failure is the caller's error — that skip a candidate that cannot serve the request and say which
+  and why, rather than quietly answering with less than was asked for.
 - **Nothing is silently dropped.** On the Gemini surface a field this gateway cannot honour is
   refused *by name* with the reason; the KIRA surface accepts a field it does not model and names it
   in the `X-AIRA-Unmodelled-Fields` response header. Strictness is one-directional: responses still

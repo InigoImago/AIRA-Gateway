@@ -24,6 +24,7 @@ import {
   ThinkingModeName,
 } from '../../core/api/models';
 import { errorMessage } from '../../core/api/error-message';
+import { displayCount } from '../../core/ui/money';
 import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -120,7 +121,7 @@ interface Whereabouts {
 function priceProblem(label: string, value: string): string | null {
   if (!value) return null;
   if (!AMOUNT.test(value)) {
-    return `${label}: '${value}' is not an amount. Prices are amounts per 1,000,000 tokens, e.g. 0.075.`;
+    return `${label}: '${value}' is not an amount. A price is an amount per million tokens, with a point before its decimals: 0.075.`;
   }
   const [whole, fraction = ''] = value.split(/[.,]/);
   if (whole.replace(/^0+(?=\d)/, '').length > PRICE_DIGITS) {
@@ -697,7 +698,7 @@ export class ModelEditor {
       prices.cached_input && `cached input ${prices.cached_input}`,
       prices.cache_write && `cache write ${prices.cache_write}`,
       prices.long_context &&
-        `above ${prices.long_context.threshold.toLocaleString('en-US')} prompt tokens input ` +
+        `above ${displayCount(prices.long_context.threshold)} prompt tokens input ` +
           `${prices.long_context.input} and output ${prices.long_context.output}`,
     ].filter((part): part is string => !!part);
     // The list's price where the installation counts in its currency; otherwise at the
@@ -733,7 +734,7 @@ export class ModelEditor {
       this.longOutputPrice.set(at(longer?.output ?? null));
       this.longCachedPrice.set(at(longer?.cached_input ?? null));
       this.longCacheWritePrice.set(at(longer?.cache_write ?? null));
-      if (longer) filled.push(`the price above ${longer.threshold.toLocaleString('en-US')} tokens`);
+      if (longer) filled.push(`the price above ${displayCount(longer.threshold)} tokens`);
     }
     this.fromReference.set({
       source: reference.source,

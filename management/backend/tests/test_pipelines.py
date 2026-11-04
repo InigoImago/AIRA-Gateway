@@ -77,13 +77,12 @@ def test_get_returns_empty_default() -> None:
     _make_uc(admin, "demo-uc")
     resp = _client(admin).get(f"{BASE}demo-uc/pipeline/")
     assert resp.status_code == 200
-    # No row is a pipeline with no steps that follows the installation's fallback chains — empty
-    # until somebody sets one (`FRD-310`).
+    # No row is a pipeline with no steps and no fallback for any kind of request (`FRD-310`).
     assert resp.json() == {
         "steps": [],
         "fallback_models": [],
-        "fallback_mode": "default",
-        "fallbacks": {"generate": [], "embed": [], "rerank": []},
+        "embedding_fallback_models": [],
+        "ranking_fallback_models": [],
     }
 
 
@@ -120,8 +119,9 @@ def test_put_saves_and_emits(captured_events) -> None:
             "use_case": "demo-uc",
             "steps": _STEPS,
             "fallback_models": ["backup-1"],
-            # A chain of its own and nothing said about it: what such a pipeline always meant.
-            "fallback_mode": "own",
+            # Every kind's chain, the empty ones too: the gateway reads an absent chain as none.
+            "embedding_fallback_models": [],
+            "ranking_fallback_models": [],
         }
     ]
 

@@ -1104,6 +1104,38 @@ The match from a SKU's name to a model is by name, word for word (*Gemini 2.5 Fl
 before saving: a name Google spells differently from the model id is not matched, and is reported
 as unpriced rather than guessed.
 
+#### F — comparing the spend with Google's bill
+
+The gateway books a request at the tokens the vendor reported for it and the prices in the
+catalogue. Measured in agentic sessions through OpenCode — Gemini 2.5 Flash, Gemini 3.5 Flash and
+GLM-5.2, prompts of up to 75 000 tokens, most of them read from the provider's cache — every row
+equalled the vendor's own usage report at list price, to the nano-unit. When the console's spend and
+the invoice differ, the difference is in what is being compared. Look in this order:
+
+1. **The prices in the catalogue.** A price typed in, or filled from the model reference, is the
+   list price in US dollars at the rate you set. The bill is in the account's currency at Google's
+   price — a contract price where you have one, and about **10 % above the list price for Claude on
+   a regional endpoint**. Fill Claude models from the billing account (E), and compare each field
+   with the SKU named under it, cache reads and cache writes included. Until this release the model
+   reference stated Claude Sonnet 5.5's cache reads at 0.10 US dollars per million tokens where
+   Anthropic lists 0.20: a model catalogued from it books every cache read at half its price, which
+   in an agentic session is about a fifth of the turn. Correct the field where it says 0.10.
+2. **What else uses the project.** The bill covers every call in the Google Cloud project — another
+   application, a local stack or a test run with a key of the project — and the gateway books only
+   what passes through it. A project of its own per installation makes the two comparable.
+3. **The day boundary.** Google's reports count days in US Pacific time and arrive hours late; the
+   console counts on the installation's clock. Compare a whole month, or the same hours.
+4. **Which figure.** A budget's counters hold only what some budget binds. Compare the invoice with
+   the console's *Reporting* page, which sums every row, the pipeline steps' model calls included,
+   and says when a figure is a lower bound.
+5. **What the gateway cannot see.** A stream that broke off before the vendor's usage report is
+   booked at a lower bound — its prompt counted and priced as if read from the cache, its thinking
+   not at all — and the report marks such rows. An attempt the gateway stopped waiting for, which a
+   fallback chain then gave to another model, is booked at nothing, while the vendor may bill it.
+6. **Prompts the vendor did not cache.** A cache hit is the vendor's to give, and the row books what
+   it reported. An open model on the global endpoint hit its cache on one turn in six in the
+   measurement above; each miss is billed at the full input price, and booked so.
+
 #### When the model check says no
 
 The console's **Check reachability** asks each region a question that costs nothing, and when the

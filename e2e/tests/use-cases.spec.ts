@@ -162,8 +162,8 @@ test.describe('Use-case management', () => {
     await page.fill('#budget-tokens', '1000');
     await (await submitOfOpenForm(page)).click();
 
-    // Grouped like every other count on the page.
-    await expect(page.locator('[data-testid^="budget-tokens-"]')).toContainText('0 / 1,000');
+    // Grouped like every other count on the page, by a narrow no-break space — which `\s` matches.
+    await expect(page.locator('[data-testid^="budget-tokens-"]')).toContainText(/0 \/ 1\s000/);
     await expect(page.locator('[role="progressbar"]')).toHaveCount(1);
   });
 

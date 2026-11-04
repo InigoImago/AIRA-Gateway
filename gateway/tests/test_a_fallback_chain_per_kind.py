@@ -1,12 +1,11 @@
-"""The installation's fallback chain per kind of request, and what a use case does with it.
+"""A use case's fallback chain for each kind of request (`FRD-310`, `ADR-0052`).
 
-`FRD-310`.
-
-Three kinds — text generation, embedding, ranking — each with a chain the installation sets, empty
-until it does; and a use case that follows them, keeps its own for text generation, or has none.
-Every candidate meets every condition at every hop, the use case's release among them, and a
-candidate of another kind is passed over **by name**: an embedding model is never asked for an
-answer, nor a model that writes text for a vector.
+Three kinds — text generation, embedding, ranking — each with a chain the use case keeps in its
+pipeline, empty until an administrator fills it: a model that cannot answer is then the caller's
+error. A chain serves its own kind only. Every candidate meets every condition at every hop, the use
+case's release among them, and a candidate of another kind is passed over **by name**: an embedding
+model is never asked for an answer, nor a model that writes text for a vector. The installation
+keeps no chain of its own: what the release before this one wrote is read by nothing.
 """
 
 from __future__ import annotations
@@ -15,10 +14,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from aira_common.fallback import FallbackMode
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.consumer.apply import apply_event
@@ -33,9 +32,16 @@ from aira_gateway.core.canonical import (
     RankedRecord,
     RankedRecords,
 )
-from aira_gateway.db.models import FallbackChainRead, ModelRead, RequestLog, UseCaseRead
-from aira_gateway.pipeline.config import Pipeline
+from aira_gateway.db.models import (
+    FallbackChainRead,
+    ModelRead,
+    PipelineConfigRead,
+    RequestLog,
+    UseCaseRead,
+)
+from aira_gateway.pipeline.config import Pipeline, PipelineStep, StepType, problem_in
 from aira_gateway.pipeline.engine import PipelineEngine
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.upstreams.base import ProviderRegistry, UpstreamError, UpstreamModel
 
 SLUG = "kinds"
@@ -132,18 +138,13 @@ def _app(models: _Models, pipeline: Pipeline | None = None) -> Any:
 
 
 async def _setup(
-    app: Any,
-    declared: dict[str, dict[str, Any]],
-    chains: dict[str, list[str]] | None = None,
-    released: list[str] | None = None,
+    app: Any, declared: dict[str, dict[str, Any]], released: list[str] | None = None
 ) -> None:
     async with app.state.db_sessionmaker() as session:
         for number, (name, declaration) in enumerate(declared.items()):
             session.add(
                 ModelRead(model=name, numeric_id=8100 + number, approved=True, **declaration)
             )
-        for kind, models in (chains or {}).items():
-            session.add(FallbackChainRead(kind=kind, models=models))
         session.add(UseCaseRead(slug=SLUG, name=SLUG, allowed_models=released))
         await session.commit()
 
@@ -153,21 +154,21 @@ async def _rows(app: Any) -> list[RequestLog]:
         return list((await session.execute(select(RequestLog))).scalars())
 
 
+def _skipped(row: RequestLog) -> dict[str, str]:
+    return {d["to"]: d["why"] for d in row.pipeline_decisions or [] if d.get("action") == "skipped"}
+
+
 # == text generation ==============================================================================
 
 
 @pytest.mark.parametrize("verb", ["generateContent", "streamGenerateContent"])
-async def test_a_use_case_with_no_chain_of_its_own_follows_the_installations(verb: str) -> None:
-    """The default the owner asked for, set: a model that cannot answer is replaced by the
-    installation's chain for text generation, on both verbs, and the row says it was."""
+async def test_a_failing_model_is_replaced_along_the_use_cases_text_chain(verb: str) -> None:
+    """What the owner asked for: set in the use case's pipeline, tried in order, on both verbs —
+    and the row says which candidate answered."""
     models = _Models("primary-1", "backup-1", failing=("primary-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(fallback_models=("backup-1",)))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"primary-1": GENERATORS, "backup-1": GENERATORS},
-            chains={"generate": ["backup-1"]},
-        )
+        await _setup(app, {"primary-1": GENERATORS, "backup-1": GENERATORS})
         response = client.post(f"/v1beta/models/primary-1:{verb}", json=_TEXT, headers=HEADERS)
         rows = await _rows(app)
 
@@ -176,10 +177,22 @@ async def test_a_use_case_with_no_chain_of_its_own_follows_the_installations(ver
     assert [(row.model, row.model_selection) for row in rows] == [("backup-1", "fallback:1")]
 
 
-async def test_without_an_installation_chain_a_failure_is_the_callers_error() -> None:
-    """The default as shipped: no chain, so the upstream's failure — nothing substituted."""
+@pytest.mark.parametrize(
+    "pipeline",
+    [
+        None,
+        Pipeline(steps=(PipelineStep(StepType.INJECTION_FILTER, {"mode": "heuristic"}),)),
+        Pipeline(embedding_fallback_models=("backup-1",), ranking_fallback_models=("backup-1",)),
+    ],
+    ids=["no-pipeline", "steps-only", "other-kinds-only"],
+)
+async def test_without_a_text_chain_a_failure_is_the_callers_error(
+    pipeline: Pipeline | None,
+) -> None:
+    """The default: no model is stored, so the error goes straight to the caller and nothing else
+    is called — whatever else the pipeline holds, a chain for another kind included."""
     models = _Models("primary-1", "backup-1", failing=("primary-1",))
-    app = _app(models)
+    app = _app(models, pipeline)
     with TestClient(app) as client:
         await _setup(app, {"primary-1": GENERATORS, "backup-1": GENERATORS})
         response = client.post(
@@ -190,15 +203,16 @@ async def test_without_an_installation_chain_a_failure_is_the_callers_error() ->
     assert models.called == ["primary-1"]
 
 
-async def test_a_use_case_that_wants_none_is_answered_by_no_other_model() -> None:
+async def test_the_installation_chain_the_previous_release_wrote_is_read_by_nothing() -> None:
+    """The table stays one release for the instances still serving it during a rolling update;
+    this one asks it nothing."""
     models = _Models("primary-1", "backup-1", failing=("primary-1",))
-    app = _app(models, Pipeline(fallback_mode=FallbackMode.NONE))
+    app = _app(models)
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"primary-1": GENERATORS, "backup-1": GENERATORS},
-            chains={"generate": ["backup-1"]},
-        )
+        await _setup(app, {"primary-1": GENERATORS, "backup-1": GENERATORS})
+        async with app.state.db_sessionmaker() as session:
+            session.add(FallbackChainRead(kind="generate", models=["backup-1"]))
+            await session.commit()
         response = client.post(
             "/v1beta/models/primary-1:generateContent", json=_TEXT, headers=HEADERS
         )
@@ -207,35 +221,12 @@ async def test_a_use_case_that_wants_none_is_answered_by_no_other_model() -> Non
     assert models.called == ["primary-1"]
 
 
-async def test_a_use_case_with_its_own_chain_uses_it_instead_of_the_installations() -> None:
-    models = _Models("primary-1", "own-1", "backup-1", failing=("primary-1",))
-    app = _app(models, Pipeline(fallback_models=("own-1",), fallback_mode=FallbackMode.OWN))
-    with TestClient(app) as client:
-        await _setup(
-            app,
-            {"primary-1": GENERATORS, "own-1": GENERATORS, "backup-1": GENERATORS},
-            chains={"generate": ["backup-1"]},
-        )
-        response = client.post(
-            "/v1beta/models/primary-1:generateContent", json=_TEXT, headers=HEADERS
-        )
-
-    assert response.status_code == 200, response.text
-    assert models.called == ["primary-1", "own-1"]
-
-
-async def test_the_installations_chain_reaches_only_what_the_use_case_was_released() -> None:
-    """The release holds at every hop: a chain set for the installation is not a release, and a
-    model this use case may not call is passed over by name."""
+async def test_a_chain_reaches_only_what_the_use_case_was_released() -> None:
+    """The release holds at every hop: a model this use case may not call is passed over by name."""
     models = _Governed("primary-1", "backup-1", failing=("primary-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(fallback_models=("backup-1",)))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"primary-1": GENERATORS, "backup-1": GENERATORS},
-            chains={"generate": ["backup-1"]},
-            released=["primary-1"],
-        )
+        await _setup(app, {"primary-1": GENERATORS, "backup-1": GENERATORS}, released=["primary-1"])
         response = client.post(
             "/v1beta/models/primary-1:generateContent", json=_TEXT, headers=HEADERS
         )
@@ -243,9 +234,7 @@ async def test_the_installations_chain_reaches_only_what_the_use_case_was_releas
 
     assert response.status_code == 503
     assert models.called == ["primary-1"]
-    skipped = [d for d in rows[0].pipeline_decisions or [] if d.get("action") == "skipped"]
-    assert skipped and skipped[0]["to"] == "backup-1"
-    assert "released" in skipped[0]["why"]
+    assert "released" in _skipped(rows[0])["backup-1"]
 
 
 @pytest.mark.parametrize("verb", ["generateContent", "streamGenerateContent"])
@@ -261,24 +250,18 @@ async def test_a_model_of_another_kind_in_a_text_chain_is_passed_over_by_name(ve
 
     assert response.status_code == 200, response.text
     assert models.called == ["primary-1", "backup-1"], "the embedding model is never called"
-    skipped = [d for d in rows[0].pipeline_decisions or [] if d.get("action") == "skipped"]
-    assert [(d["to"], "text generation" in d["why"]) for d in skipped] == [("emb-1", True)]
+    skipped = _skipped(rows[0])
+    assert list(skipped) == ["emb-1"]
+    assert "text generation" in skipped["emb-1"]
 
 
-async def test_a_pipeline_with_steps_still_follows_the_installations_chain() -> None:
-    """A use case's steps say nothing about its fallback: it follows the installation's chain
-    until it keeps its own, whatever else its pipeline does."""
-    from aira_gateway.pipeline.config import PipelineStep, StepType
-
+async def test_a_pipeline_with_steps_falls_back_along_its_text_chain() -> None:
+    """The chain is read after the steps ran, from the same pipeline."""
     steps = (PipelineStep(StepType.INJECTION_FILTER, {"mode": "heuristic"}),)
     models = _Models("primary-1", "backup-1", failing=("primary-1",))
-    app = _app(models, Pipeline(steps=steps))
+    app = _app(models, Pipeline(steps=steps, fallback_models=("backup-1",)))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"primary-1": GENERATORS, "backup-1": GENERATORS},
-            chains={"generate": ["backup-1"]},
-        )
+        await _setup(app, {"primary-1": GENERATORS, "backup-1": GENERATORS})
         response = client.post(
             "/v1beta/models/primary-1:generateContent", json=_TEXT, headers=HEADERS
         )
@@ -290,8 +273,6 @@ async def test_a_pipeline_with_steps_still_follows_the_installations_chain() -> 
 async def test_a_step_never_asks_a_model_that_cannot_write_text() -> None:
     """Every step asks its model for text. An embedding model named as a redactor is withheld by
     name, and the step degrades as it does for any model it may not call — to a block."""
-    from aira_gateway.pipeline.config import PipelineStep, StepType
-
     steps = (PipelineStep(StepType.PII_FILTER, {"model": "emb-1"}),)
     models = _Models("primary-1", "emb-1")
     app = _app(models, Pipeline(steps=steps))
@@ -309,12 +290,12 @@ async def test_a_step_never_asks_a_model_that_cannot_write_text() -> None:
 # == embedding ====================================================================================
 
 
-async def test_an_embedding_falls_back_to_a_model_of_the_same_width() -> None:
+async def test_an_embedding_falls_back_along_the_use_cases_embedding_chain() -> None:
     """Booked, recorded and named as the model that gave the vectors — priced at its price."""
     models = _Models("emb-1", "emb-2", failing=("emb-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(embedding_fallback_models=("emb-2",)))
     with TestClient(app) as client:
-        await _setup(app, PRICED_EMBEDDERS, chains={"embed": ["emb-2"]})
+        await _setup(app, PRICED_EMBEDDERS)
         response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
         rows = await _rows(app)
 
@@ -329,9 +310,9 @@ async def test_an_embedding_falls_back_to_a_model_of_the_same_width() -> None:
 
 async def test_the_kira_surface_embeds_along_the_same_chain() -> None:
     models = _Models("emb-1", "emb-2", failing=("emb-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(embedding_fallback_models=("emb-2",)))
     with TestClient(app) as client:
-        await _setup(app, PRICED_EMBEDDERS, chains={"embed": ["emb-2"]})
+        await _setup(app, PRICED_EMBEDDERS)
         response = client.post(
             "/kira/api/external/embed", json={"text": "hallo", "model_id": 8100}, headers=HEADERS
         )
@@ -344,15 +325,30 @@ async def test_the_kira_surface_embeds_along_the_same_chain() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "pipeline",
+    [None, Pipeline(fallback_models=("emb-2",), ranking_fallback_models=("emb-2",))],
+    ids=["no-pipeline", "other-kinds-only"],
+)
+async def test_without_an_embedding_chain_an_embedding_failure_is_the_callers_error(
+    pipeline: Pipeline | None,
+) -> None:
+    """A chain serves its own kind only: a model in the text chain is no stand-in for vectors."""
+    models = _Models("emb-1", "emb-2", failing=("emb-1",))
+    app = _app(models, pipeline)
+    with TestClient(app) as client:
+        await _setup(app, {"emb-1": EMBEDDERS, "emb-2": EMBEDDERS})
+        response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
+
+    assert response.status_code == 503
+    assert models.called == ["emb-1"]
+
+
 async def test_an_embedding_never_falls_back_to_vectors_of_another_width_or_a_text_model() -> None:
     models = _Models("emb-1", "gen-1", "wide-1", failing=("emb-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(embedding_fallback_models=("gen-1", "wide-1")))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"emb-1": EMBEDDERS, "gen-1": GENERATORS, "wide-1": WIDER},
-            chains={"embed": ["gen-1", "wide-1"]},
-        )
+        await _setup(app, {"emb-1": EMBEDDERS, "gen-1": GENERATORS, "wide-1": WIDER})
         response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
         rows = await _rows(app)
 
@@ -366,76 +362,40 @@ async def test_an_embedding_never_falls_back_to_vectors_of_another_width_or_a_te
 async def test_an_embedding_whose_width_is_undeclared_has_no_fallback() -> None:
     """No width to hold a stand-in to, so none can be shown to fit the caller's index."""
     models = _Models("emb-1", "emb-2", failing=("emb-1",))
-    app = _app(models)
+    app = _app(models, Pipeline(embedding_fallback_models=("emb-2",)))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {"emb-1": {"capabilities": ["embed"]}, "emb-2": EMBEDDERS},
-            chains={"embed": ["emb-2"]},
-        )
+        await _setup(app, {"emb-1": {"capabilities": ["embed"]}, "emb-2": EMBEDDERS})
         response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
 
     assert response.status_code == 503
     assert models.called == ["emb-1"]
-
-
-async def test_a_use_case_that_wants_none_keeps_its_embeddings_to_the_model_it_named() -> None:
-    models = _Models("emb-1", "emb-2", failing=("emb-1",))
-    app = _app(models, Pipeline(fallback_mode=FallbackMode.NONE))
-    with TestClient(app) as client:
-        await _setup(app, {"emb-1": EMBEDDERS, "emb-2": EMBEDDERS}, chains={"embed": ["emb-2"]})
-        response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
-
-    assert response.status_code == 503
-    assert models.called == ["emb-1"]
-
-
-async def test_a_use_cases_own_text_chain_leaves_its_embeddings_to_the_installations() -> None:
-    """`own` is about text generation; the other kinds follow the installation's chains."""
-    models = _Models("emb-1", "emb-2", "gen-1", failing=("emb-1",))
-    app = _app(models, Pipeline(fallback_models=("gen-1",), fallback_mode=FallbackMode.OWN))
-    with TestClient(app) as client:
-        await _setup(
-            app,
-            {"emb-1": EMBEDDERS, "emb-2": EMBEDDERS, "gen-1": GENERATORS},
-            chains={"embed": ["emb-2"]},
-        )
-        response = client.post("/v1beta/models/emb-1:embedContent", json=_EMBED, headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    assert models.called == ["emb-1", "emb-2"]
 
 
 # == ranking ======================================================================================
 
+_RANK = "/v1/projects/p/locations/global/rankingConfigs/default_ranking_config:rank"
+_RANK_BODY = {"model": "rank-1", "query": "q", "records": [{"id": "a", "content": "x"}]}
+_RANKERS_PRICED = {
+    "rank-1": {
+        **RERANKERS,
+        "input_price_per_million_nanos": 10**15,
+        "output_price_per_million_nanos": 0,
+    },
+    "gen-1": GENERATORS,
+    "rank-2": {
+        **RERANKERS,
+        "input_price_per_million_nanos": 2 * 10**15,
+        "output_price_per_million_nanos": 0,
+    },
+}
+
 
 async def test_a_ranking_falls_back_to_a_reranker_and_passes_over_anything_else() -> None:
     models = _Models("rank-1", "gen-1", "rank-2", failing=("rank-1",))
-    app = _app(models)
-    body = {"model": "rank-1", "query": "q", "records": [{"id": "a", "content": "x"}]}
+    app = _app(models, Pipeline(ranking_fallback_models=("gen-1", "rank-2")))
     with TestClient(app) as client:
-        await _setup(
-            app,
-            {
-                "rank-1": {
-                    **RERANKERS,
-                    "input_price_per_million_nanos": 10**15,
-                    "output_price_per_million_nanos": 0,
-                },
-                "gen-1": GENERATORS,
-                "rank-2": {
-                    **RERANKERS,
-                    "input_price_per_million_nanos": 2 * 10**15,
-                    "output_price_per_million_nanos": 0,
-                },
-            },
-            chains={"rerank": ["gen-1", "rank-2"]},
-        )
-        response = client.post(
-            "/v1/projects/p/locations/global/rankingConfigs/default_ranking_config:rank",
-            json=body,
-            headers=HEADERS,
-        )
+        await _setup(app, _RANKERS_PRICED)
+        response = client.post(_RANK, json=_RANK_BODY, headers=HEADERS)
         rows = await _rows(app)
 
     assert response.status_code == 200, response.text
@@ -446,42 +406,117 @@ async def test_a_ranking_falls_back_to_a_reranker_and_passes_over_anything_else(
     ]
 
 
-# == what the consumer applies ====================================================================
+async def test_without_a_ranking_chain_a_ranking_failure_is_the_callers_error() -> None:
+    models = _Models("rank-1", "rank-2", failing=("rank-1",))
+    app = _app(models, Pipeline(fallback_models=("rank-2",)))
+    with TestClient(app) as client:
+        await _setup(app, _RANKERS_PRICED)
+        response = client.post(_RANK, json=_RANK_BODY, headers=HEADERS)
+
+    assert response.status_code >= 500
+    assert models.called == ["rank-1"]
 
 
-async def test_the_installations_chain_arrives_bounded_and_whole() -> None:
-    """Held to the bounds a use case's own chain has: a direct write to the topic is a write to
-    every use case that follows the chain. A kind this build does not know is left alone."""
-    names = [f"m-{n}" for n in range(30)]
+# == what the read-model holds ====================================================================
+
+
+async def test_the_consumer_applies_every_kinds_chain_and_reads_an_absent_one_as_none() -> None:
+    """The whole event replaces what an earlier one said: a chain it leaves out is none, and the
+    mode the previous release reads is written empty — a pipeline from before modes existed."""
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     with TestClient(app):
         async with app.state.db_sessionmaker() as session:
+            session.add(PipelineConfigRead(use_case=SLUG, fallback_mode="default"))
+            await session.commit()
             await apply_event(
-                session, "fallback_chain.upserted", {"kind": "embed", "models": [*names, 7, ""]}
+                session,
+                "pipeline.upserted",
+                {
+                    "use_case": SLUG,
+                    "steps": [],
+                    "fallback_models": ["gen-2"],
+                    "embedding_fallback_models": ["emb-2"],
+                    "ranking_fallback_models": ["rank-2"],
+                },
             )
+        whole = await PipelineStore(app.state.db_sessionmaker).get(SLUG)
+        async with app.state.db_sessionmaker() as session:
             await apply_event(
-                session, "fallback_chain.upserted", {"kind": "vision", "models": ["x"]}
+                session,
+                "pipeline.upserted",
+                {"use_case": SLUG, "steps": [], "fallback_models": ["gen-2"]},
             )
+            mode = (await session.get(PipelineConfigRead, SLUG)).fallback_mode
+        older = await PipelineStore(app.state.db_sessionmaker).get(SLUG)
+
+    assert whole == Pipeline(
+        fallback_models=("gen-2",),
+        embedding_fallback_models=("emb-2",),
+        ranking_fallback_models=("rank-2",),
+    )
+    assert older == Pipeline(fallback_models=("gen-2",))
+    assert mode is None
+
+
+async def test_a_pipeline_with_only_an_embedding_chain_is_not_empty() -> None:
+    """The store answers no pipeline for one that changes nothing — and a chain for any kind is a
+    change, or an embedding chain alone would never be read."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app):
+        async with app.state.db_sessionmaker() as session:
+            session.add(
+                PipelineConfigRead(use_case=SLUG, steps=[], embedding_fallback_models=["emb-2"])
+            )
+            session.add(PipelineConfigRead(use_case="plain", steps=[], fallback_models=[]))
+            await session.commit()
+        store = PipelineStore(app.state.db_sessionmaker)
+        embedding_only, plain = await store.get(SLUG), await store.get("plain")
+
+    assert embedding_only == Pipeline(embedding_fallback_models=("emb-2",))
+    assert plain is None
+
+
+async def test_the_installation_chain_event_is_not_applied_and_not_reported() -> None:
+    """The compacted topic still holds the last one the previous release sent; a rebuild reads it,
+    applies nothing, and does not report a control that did not take effect — there is none."""
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    with TestClient(app):
+        async with app.state.db_sessionmaker() as session:
+            with structlog.testing.capture_logs() as logs:
+                await apply_event(
+                    session, "fallback_chain.upserted", {"kind": "generate", "models": ["x"]}
+                )
+                await apply_event(session, "fallback_chain.renamed", {"kind": "generate"})
         async with app.state.db_sessionmaker() as session:
             rows = list((await session.execute(select(FallbackChainRead))).scalars())
 
-    assert [(row.kind, row.models) for row in rows] == [("embed", names[:16])]
+    assert rows == []
+    # The guard on the guard: an event nobody knows is still reported.
+    assert [
+        log.get("event_type") for log in logs if log["event"] == "config_event_not_applied"
+    ] == ["fallback_chain.renamed"]
 
 
-@pytest.mark.parametrize(
-    ("stored", "chain", "expected"),
-    [
-        (None, [], FallbackMode.DEFAULT),
-        (None, ["own-1"], FallbackMode.OWN),
-        ("none", ["own-1"], FallbackMode.NONE),
-        ("Default", [], FallbackMode.NONE),
-    ],
-)
-def test_a_stored_mode_is_read_as_what_it_said(
-    stored: str | None, chain: list[str], expected: FallbackMode
-) -> None:
-    """Absent from an older Management: what such a pipeline always meant. A word this build does
-    not know: `none`, which substitutes no model."""
-    pipeline = Pipeline.from_dict({"steps": [], "fallback_models": chain, "fallback_mode": stored})
+def test_every_kinds_chain_is_held_to_the_bounds() -> None:
+    """Truncated rather than dropped, like the text chain always was: names only, sixteen of them,
+    each a catalogue name's length."""
+    names = [f"m-{n}" for n in range(30)]
+    pipeline = Pipeline.from_dict(
+        {
+            "embedding_fallback_models": [*names, 7, "", None],
+            "ranking_fallback_models": "rank-1",
+        }
+    )
 
-    assert pipeline.mode is expected
+    assert pipeline.embedding_fallback_models == tuple(names[:16])
+    assert pipeline.ranking_fallback_models == ()
+
+
+@pytest.mark.parametrize("field", ["embedding_fallback_models", "ranking_fallback_models"])
+def test_a_dry_run_body_with_a_malformed_chain_is_refused_by_name(field: str) -> None:
+    assert problem_in({"steps": [], field: "emb-1"}) == (
+        f"pipeline.{field} must be a list of at most 16 model names."
+    )
+    assert problem_in({"steps": [], field: ["x" * 500]}) == (
+        f"pipeline.{field} must hold model names of at most 128 characters."
+    )

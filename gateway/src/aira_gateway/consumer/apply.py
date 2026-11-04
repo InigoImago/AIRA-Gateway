@@ -19,17 +19,15 @@ import structlog
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aira_common.fallback import FallbackKind
+from aira_common.fallback import CHAIN_FIELDS
 from aira_common.mail import ThresholdsInvalid, budget_mail_thresholds
 from aira_common.money import to_nanos
-from aira_common.pipelines import MAX_FALLBACK_MODELS, MAX_MODEL_LENGTH
 from aira_gateway.db.base import Base
 from aira_gateway.db.models import (
     AnomalyRuleRead,
     ApiKey,
     BudgetRead,
     BudgetUsage,
-    FallbackChainRead,
     ModelRead,
     PipelineConfigRead,
     RateLimitRead,
@@ -47,7 +45,15 @@ Handler = Callable[[AsyncSession, dict[str, Any]], Awaitable[None]]
 
 #: Event types this gateway knowingly does not apply, each with the reason. Any other type without
 #: a handler is logged, because an unapplied event is a control an operator believes is in force.
-IGNORED_EVENT_TYPES: frozenset[str] = frozenset()
+IGNORED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        # The installation's fallback chains, which `ADR-0052` removed. The compacted pipelines
+        # topic keeps the last one sent for each kind, and a rebuild reads it again; Management's
+        # migration carried every chain into the use cases that followed it, so applying it would
+        # be a control nobody can see or change any more.
+        "fallback_chain.upserted",
+    }
+)
 
 #: A model event's declaration fields, and the value applied when the event carries one as null.
 #: A field the event omits is left alone: an older Management sends prices without capabilities,
@@ -412,35 +418,14 @@ async def _upsert_pipeline(session: AsyncSession, payload: dict[str, Any]) -> No
     """Upsert a use case's pipeline configuration, keyed by use case (`FRD-300`)."""
     if await _is_retired(session, payload["use_case"]):
         return
-    fields = {
-        "steps": payload.get("steps", []),
-        "fallback_models": payload.get("fallback_models", []),
-        # Absent from an older Management: kept absent, and read as what such a pipeline meant
-        # (`aira_common.fallback.stored_mode`) rather than as a mode it never chose.
-        "fallback_mode": payload.get("fallback_mode"),
-    }
+    fields: dict[str, Any] = {"steps": payload.get("steps", [])}
+    # Each kind's chain (`FRD-310`), an absent one empty: an event from before a kind had a chain
+    # says the use case has none for it, and the whole event replaces what an earlier one said.
+    fields |= {field: payload.get(field) or [] for field in CHAIN_FIELDS.values()}
+    # The release before this one reads the mode beside the chains; empty, it reads the pipeline
+    # as one from before modes existed — its own chain where it names one (`FRD-127` §5.4).
+    fields["fallback_mode"] = None
     await _upsert(session, PipelineConfigRead, fields, use_case=payload["use_case"])
-
-
-async def _upsert_fallback_chain(session: AsyncSession, payload: dict[str, Any]) -> None:
-    """The installation's fallback chain for one kind of request, keyed by kind (`FRD-310`).
-
-    Held to the bounds a use case's own chain has (`ADR-0018`): a direct write to the topic is a
-    write to every use case that follows the chain. A kind this build does not know is left alone
-    — it would be a chain no request asks for — and said once in the log.
-    """
-    kind = payload.get("kind")
-    if kind not in {member.value for member in FallbackKind}:
-        _log.warning("fallback_chain_kind_unknown", kind=str(kind)[:32])
-        return
-    names = payload.get("models")
-    models = [
-        name[:MAX_MODEL_LENGTH]
-        for name in (names if isinstance(names, list) else [])
-        if isinstance(name, str) and name
-    ][:MAX_FALLBACK_MODELS]
-    fields = {"models": models, "updated_at": datetime.now(UTC)}
-    await _upsert(session, FallbackChainRead, fields, kind=kind)
 
 
 async def _delete_pipeline(session: AsyncSession, payload: dict[str, Any]) -> None:
@@ -597,7 +582,6 @@ HANDLERS: dict[str, Handler] = {
     "api_key.revoked": _revoke_api_key,
     "pipeline.upserted": _upsert_pipeline,
     "pipeline.deleted": _delete_pipeline,
-    "fallback_chain.upserted": _upsert_fallback_chain,
     "budget.upserted": _upsert_budget,
     "budget.deleted": _delete_budget,
     "ratelimit.upserted": _upsert_rate_limit,

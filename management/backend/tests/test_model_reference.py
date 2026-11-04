@@ -535,7 +535,50 @@ def test_a_price_above_a_prompt_length_is_read_from_its_step() -> None:
         "cached_input": "0.25",
         "cache_write": None,
     }
-    assert "costs more again above 500,000 tokens — only the first step is kept" in made["notes"]
+    kept = "costs more again above 500\u202f000 tokens — only the first step is kept"
+    assert kept in made["notes"]
+
+
+def _sonnet_5_5(cache_read: float) -> dict[str, Any]:
+    """Claude Sonnet 5.5 as the public list states it, with the cache-read price given."""
+    return {
+        "google-vertex-anthropic": {
+            "models": {
+                "claude-sonnet-5-5@default": _entry(
+                    name="Claude Sonnet 5.5",
+                    cost={"input": 2, "output": 10, "cache_read": cache_read, "cache_write": 2.5},
+                )
+            }
+        }
+    }
+
+
+def test_a_price_the_vendor_states_otherwise_is_corrected_and_said() -> None:
+    """The list says 0.10 for Sonnet 5.5's cache reads, Anthropic 0.20: a catalogue filled from the
+    list would book every cache read of an agentic session at half its price."""
+    (made,) = normalize.drafts(_sonnet_5_5(0.1))
+
+    assert (made["platform"], made["name"]) == ("vertex", "claude-sonnet-5-5")
+    assert made["prices"]["cached_input"] == "0.2"
+    assert (made["prices"]["input"], made["prices"]["cache_write"]) == ("2", "2.5")
+    assert any("as Anthropic lists them" in note for note in made["notes"])
+
+
+def test_a_list_that_already_states_the_vendors_price_gets_no_note() -> None:
+    (made,) = normalize.drafts(_sonnet_5_5(0.2))
+
+    assert made["prices"]["cached_input"] == "0.2"
+    assert not any("as Anthropic lists them" in note for note in made["notes"])
+
+
+def test_the_shipped_copy_states_the_vendors_price() -> None:
+    """The copy is made by the same function (`tools/model_reference.py`), so it is corrected
+    when it is refreshed; this one was corrected in place."""
+    entries = {(e["platform"], e["name"]): e for e in snapshot.shipped().entries}
+
+    assert entries[("vertex", "claude-sonnet-5-5")]["prices"]["cached_input"] == "0.2"
+    # And the models it does not name are as the list states them.
+    assert entries[("vertex", "claude-opus-5-5")]["prices"]["cached_input"] == "0.2"
 
 
 def test_the_older_spelling_of_the_step_is_read_at_its_length() -> None:

@@ -916,8 +916,8 @@
                  unit is a million of those, and a price copied off a list per thousand is a
                  thousand times too small. -->
             <span class="field__hint" data-testid="rerank-price-unit">
-              For a reranker this is the price of 1,000,000 ranking units — one unit is one query of
-              up to 100 records. A list price of 1 per 1,000 queries is 1000 here.
+              For a reranker this is the price of a million ranking units — one unit is one query of
+              up to 100 records. A list price of 1 per 1&#8239;000 queries is 1000 here.
             </span>
           }
           @if (priceSources()['input']; as source) {
@@ -1012,11 +1012,11 @@
             <app-info-hint label="Long-prompt prices" testid="long-context-price" [wide]="true">
               Some providers bill a request whose prompt is longer than a stated length at higher
               prices — <strong>every</strong> token of it, the answer included: Gemini 2.5 Pro and
-              3.1 Pro above 200,000 tokens, some Claude models above 200,000 or 100,000. The prompt
-              counts everything the provider read, cached and cache-written tokens too. Leave all of
-              this empty where the provider bills alike at every length. An empty cache price here
-              is read like the ones above: a read at this section's input price, a write at 1.25
-              times it.
+              3.1 Pro above 200&#8239;000 tokens, some Claude models above 200&#8239;000 or
+              100&#8239;000. The prompt counts everything the provider read, cached and
+              cache-written tokens too. Leave all of this empty where the provider bills alike at
+              every length. An empty cache price here is read like the ones above: a read at this
+              section's input price, a write at 1.25 times it.
             </app-info-hint>
           </legend>
           <div class="field">

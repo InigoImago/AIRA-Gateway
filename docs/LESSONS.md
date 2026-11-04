@@ -1318,6 +1318,14 @@ reading code.
   the unfilled template a refusal and the list of prompts come **from the template**, or the
   check and the thing it checks drift apart at the first new section.
 
+- **A default has an owner; ask whose before deciding where it lives.** *"There is no fallback
+  model that can be defined as the default"* was built as the installation's chain on the Models
+  page, which every use case followed unless its pipeline said otherwise. The owner had meant each
+  use case's own setting, whose default is none — the error. The two readings put the decision with
+  different people: whoever writes the catalogue, or whoever answers for the use case; and taking
+  the wrong one back cost a migration that carries the chains into every use case that followed
+  them (`ADR-0052`). When a requirement says *default*, the question is *for whom*, and the answer
+  decides the screen, the permission and the data model before any of them is built.
 - **A default that names a neighbour is wrong the moment there is no neighbour.** Every address in
   `docker-compose.apps.yml` defaults to the container name of the stack it ships beside —
   `postgres`, `kafka:9092`, `keycloak:8080/realms/aira`. In that stack they are right and
@@ -2081,6 +2089,11 @@ reading code.
   disabled: its greyed state says *you may look, not change* without a sentence having to. What is
   removed is only what **acts** — a remove button, a list toggle — and a component that drops its
   whole field when disabled is how a control becomes prose in the first place.
+  *And a greyed control's empty text is a sentence too.* A disabled picker shows its empty hint as
+  its value, so every reader of an empty fallback chain was told *"No model is released to this
+  use case yet"* — written for the editor's open list, and false for a use case with models
+  released. A hint has to be true in every state the control can be drawn in; the reader's is
+  only *None*.
 - **A `<select>` is sized by its widest option, and `max-width: 100%` does not stop it.** That
   percentage is measured against a parent which, as a flex item, is itself sizing to content —
   flex items default to `min-width: auto`, which is exactly what carries an intrinsic width
@@ -2332,6 +2345,14 @@ reading code.
   The fix that stops the instance is the key; the fix that stops the next one is a test comparing
   **every key in the fixture against the producer's own `as_dict()`**. A fixture is a double, and a
   double nothing compares with the original is a second implementation of the contract.
+
+  *And a stand-in can be stricter than the thing it replaces, which is no safer.* jsdom's `click()`
+  gives up on **any** element inside a disabled `<fieldset>`; a browser stops only the fieldset's
+  form controls. The pipeline graph's nodes are `<div>`s inside the read-only fieldset, so a spec
+  clicking them said a reader could not open the fallback node — while Chromium, driven against
+  the running stack, opened it. A test that believed the stand-in would have "fixed" a defect the
+  product does not have. Where a stand-in and the browser disagree about an interaction, the
+  browser is the product: the specs dispatch the pointer's event instead of calling `click()`.
 
   *And the same mismatch in the other direction is loud rather than silent, which is not the same
   as harmless.* Seven spec files stubbed `MeService` with `{get: () => of(…)}`; the service grew one

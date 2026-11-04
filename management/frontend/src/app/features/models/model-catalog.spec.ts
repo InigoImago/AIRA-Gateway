@@ -5,8 +5,6 @@ import { Router, provideRouter } from '@angular/router';
 import { Observable, Subject, defer, map, of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import {
-  FallbackChains,
-  FallbackKind,
   Capability,
   CatalogModel,
   GatewayProvider,
@@ -301,10 +299,6 @@ function setup(
     reference?: Observable<ModelReference>;
     /** What the gateway's billing lookup answers (`FRD-509`). */
     billing?: Observable<BillingPrices>;
-    /** The installation's fallback chains (`FRD-310`); none set unless a case says. */
-    chains?: Observable<FallbackChains>;
-    /** What saving a chain answers; the chain as saved unless a case says. */
-    saveChain?: (kind: FallbackKind, models: string[]) => Observable<FallbackChains>;
   } = {},
 ) {
   const checked: string[] = [];
@@ -320,7 +314,6 @@ function setup(
   TestBed.resetTestingModule();
   const saved: CatalogModel[] = [];
   const removed: string[] = [];
-  const savedChains: { kind: FallbackKind; models: string[] }[] = [];
   const me: Me = {
     subject: 's',
     username: 'admin',
@@ -422,14 +415,6 @@ function setup(
             saved.push(model);
             return options.save ?? of(model);
           },
-          fallbackChains: () => options.chains ?? of({ generate: [], embed: [], rerank: [] }),
-          saveFallbackChain: (kind: FallbackKind, models: string[]) => {
-            savedChains.push({ kind, models });
-            return (
-              options.saveChain?.(kind, models) ??
-              of({ generate: [], embed: [], rerank: [], [kind]: models })
-            );
-          },
           removeModel: (name: string) => {
             removed.push(name);
             return of(undefined as unknown as void);
@@ -447,7 +432,6 @@ function setup(
     fixture,
     saved,
     removed,
-    savedChains,
     component: fixture.componentInstance as unknown as Page,
     editor,
     /** Rendered for a role that may catalogue; `undefined` for a reader. */
@@ -499,7 +483,7 @@ describe('ModelCatalog', () => {
 
     expect(text).toContain('Input EUR / 1M');
     expect(text).toContain('Output EUR / 1M');
-    expect(text).toContain('per 1,000,000 tokens, in EUR. Input');
+    expect(text).toContain('per million tokens, in EUR. Input');
     expect(text).not.toContain('$');
   });
 
@@ -584,7 +568,9 @@ describe('ModelCatalog', () => {
     editor.name.set('m-1');
     editor.inputPrice.set('teuer');
     editor.outputPrice.set('1.00');
-    expect(editor.formError()).toContain('amounts per 1,000,000 tokens');
+    expect(editor.formError()).toContain(
+      'an amount per million tokens, with a point before its decimals',
+    );
     expect(editor.canSave()).toBe(false);
   });
 
@@ -1191,7 +1177,7 @@ describe('ModelCatalog — finding one among many', () => {
       cache_write_price_per_million: { testid: 'cache_write_price', shows: '2.2222' },
       output_price_per_million: { testid: 'output_price', shows: '6.7890' },
       // The price above a prompt length is one line: its length and its four rates together.
-      long_context_threshold: { testid: 'long_context_price', shows: 'above 200,000 tokens' },
+      long_context_threshold: { testid: 'long_context_price', shows: 'above 200\u202f000 tokens' },
       long_context_input_price_per_million: { testid: 'long_context_price', shows: '2.4690' },
       long_context_output_price_per_million: { testid: 'long_context_price', shows: '10.1835' },
       long_context_cached_input_price_per_million: {
@@ -4229,7 +4215,7 @@ describe('ModelEditor — the price above a prompt length (FRD-408)', () => {
     editor.editorTab.set('identity');
     harness.fixture.detectChanges();
     expect(harness.testid('reference-filled')?.textContent).toContain(
-      'the price above 200,000 tokens',
+      'the price above 200\u202f000 tokens',
     );
   });
 
@@ -4347,7 +4333,7 @@ describe('ModelEditor — the price above a prompt length (FRD-408)', () => {
     harness.fixture.detectChanges();
 
     expect(harness.testid('rerank-price-unit')?.textContent).toContain(
-      'A list price of 1 per 1,000 queries is 1000 here',
+      'A list price of 1 per 1\u202f000 queries is 1000 here',
     );
     harness.editor.capabilities.set(['generate']);
     harness.fixture.detectChanges();

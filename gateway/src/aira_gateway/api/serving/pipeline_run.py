@@ -19,7 +19,7 @@ from aira_common.fallback import FallbackKind
 from aira_common.logging import get_logger
 from aira_common.observability import set_span_attributes
 from aira_gateway.api.serving.context import attribution_of, declared_model, provenance
-from aira_gateway.api.serving.fallbacks import fallbacks_for, step_requirements
+from aira_gateway.api.serving.fallbacks import step_requirements
 from aira_gateway.audit import PIPELINE_OPERATION_PREFIX, AuditTrail, Outcome, redaction_failed
 from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
@@ -49,8 +49,8 @@ async def run_pipeline(
     use_case = getattr(attribution_of(request), "use_case", None)
     pipeline = await store.get(use_case)
     if pipeline is None:
-        # No steps, and the installation's chain for text generation (`FRD-310`).
-        return canonical, await fallbacks_for(request, FallbackKind.GENERATE, read=False), ()
+        # No steps and no chain: a model that cannot answer is the caller's error (`FRD-310`).
+        return canonical, (), ()
     rewrites: list[tuple[str, str]] = []
     try:
         outcome = await engine.run(
@@ -84,9 +84,8 @@ async def run_pipeline(
             model=outcome.request.model,
             decisions=outcome.decisions,
         )
-    # The chain the use case chose for text generation — its own, the installation's, or none.
-    fallbacks = await fallbacks_for(request, FallbackKind.GENERATE, pipeline)
-    return outcome.request, fallbacks, tuple(outcome.notices)
+    # The use case's chain for text generation (`FRD-310`), empty for none.
+    return outcome.request, pipeline.chain_for(FallbackKind.GENERATE), tuple(outcome.notices)
 
 
 async def run_pipeline_over_texts(

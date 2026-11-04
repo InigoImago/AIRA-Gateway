@@ -1,14 +1,14 @@
 """Per-use-case pipeline configuration (FRD-300/303).
 
-One config per use case: an ordered list of ``steps`` plus a dispatch ``fallback_models`` chain.
-Authored here and distributed to the gateway over Kafka; the gateway executes it pre-dispatch.
+One config per use case: an ordered list of ``steps``, and a fallback chain for each kind of request
+(`FRD-310`). Authored here and distributed to the gateway over Kafka; the gateway executes it
+pre-dispatch.
 """
 
 from __future__ import annotations
 
 from django.db import models
 
-from aira_common.fallback import FallbackMode
 from aira_management.apps.usecases.models import UseCase
 
 
@@ -23,15 +23,14 @@ class PipelineConfig(models.Model):
 
     use_case = models.OneToOneField(UseCase, on_delete=models.CASCADE, related_name="pipeline")
     steps = models.JSONField(default=list)
-    #: The use case's own chain for text generation, used only under ``fallback_mode = own``.
+    #: The models each kind of the use case's requests falls back to, in the order they are tried
+    #: (`FRD-310`, `aira_common.fallback.CHAIN_FIELDS`). **Empty is the default and an answer**: a
+    #: model that cannot answer is then the caller's error. Text generation, speech included:
     fallback_models = models.JSONField(default=list)
-    #: What the use case does with the installation's fallback chains (`FRD-310`): follow them,
-    #: keep its own for text generation, or have none — `aira_common.fallback.FallbackMode`.
-    fallback_mode = models.CharField(
-        max_length=16,
-        default=FallbackMode.DEFAULT.value,
-        choices=[(mode.value, mode.value) for mode in FallbackMode],
-    )
+    #: Embeddings: models giving vectors of the width the model asked for gives.
+    embedding_fallback_models = models.JSONField(default=list)
+    #: Rankings: rerankers.
+    ranking_fallback_models = models.JSONField(default=list)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:

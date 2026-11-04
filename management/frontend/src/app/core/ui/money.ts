@@ -99,12 +99,19 @@ export function storedAmount(amount: string): string | null {
   return displayAmount(nanos, Math.min(NANOS_PER_UNIT_DIGITS, Math.max(2, significant)));
 }
 
+/** U+202F NARROW NO-BREAK SPACE, between every group of three digits (`displayCount`). */
+export const GROUP_SEPARATOR = '\u202f';
+
 /**
- * A count with thousands separators, so `12840` is read rather than counted.
+ * A count with its thousands grouped, so `12840` is read rather than counted: `12 840`.
  *
- * `en-US` explicitly, not the browser's locale: the console is English throughout (`ADR-0001`), and
- * a figure grouped one way in a chart and another way in the table beside it looks like two figures.
+ * Grouped by a **narrow no-break space**, the way the SI writes a number, and DIN 5008 too: a comma
+ * groups thousands in English and marks the decimals in German, a point the other way round, and a
+ * space means neither — so one figure reads the same to every reader of an English console, and a
+ * line never splits it. One function for every count on every screen: a figure grouped one way in
+ * a chart and another way in the table beside it looks like two figures. The mails and the server's
+ * messages group the same way (`aira_common.counts`).
  */
 export function displayCount(value: number): string {
-  return value.toLocaleString('en-US');
+  return value.toLocaleString('en-US').replace(/,/g, GROUP_SEPARATOR);
 }

@@ -463,7 +463,7 @@ describe('RegisterPage', () => {
   it('says when the sweep last ran, and warns when it never has', () => {
     const ran = setup();
     // Grouped, like every other count in the console.
-    expect(ran.testid('register-erasure')?.textContent).toContain('1,412');
+    expect(ran.testid('register-erasure')?.textContent).toContain('1\u202f412');
     // A time a person reads, not the wire's ISO string with its offset.
     expect(ran.testid('register-erasure')?.textContent).toMatch(
       /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/,

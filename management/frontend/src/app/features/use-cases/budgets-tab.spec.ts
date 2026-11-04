@@ -415,7 +415,9 @@ describe('BudgetsTab rendering', () => {
       usage: usageFor({ used_tokens: 1_234_567 }),
     });
 
-    expect(harness.testid('budget-tokens-1')?.textContent).toContain('1,234,567 / 2,000,000');
+    expect(harness.testid('budget-tokens-1')?.textContent).toContain(
+      '1\u202f234\u202f567 / 2\u202f000\u202f000',
+    );
   });
 
   it('draws nothing it did not measure when the gateway is unreachable', () => {

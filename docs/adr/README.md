@@ -56,7 +56,8 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0045 | [A model call names its use case, whatever the credential](ADR-0045-a-model-call-names-its-use-case.md) | **Accepted** | 2026-10-25 |
 | 0046 | [A stream is never silent for long, and its status waits for a model no longer than that](ADR-0046-a-stream-is-never-silent-for-long.md) | **Accepted** | 2026-10-27 |
 | 0047 | [A model's turn state travels with the caller, sealed into a function call's signature](ADR-0047-a-models-turn-state-travels-with-the-caller.md) | **Accepted** | 2026-10-27 |
-| 0048 | [A fallback chain per kind of request, the installation's by default](ADR-0048-a-fallback-chain-per-kind-of-request.md) | **Accepted** | 2026-10-28 |
+| 0048 | [A fallback chain per kind of request, the installation's by default](ADR-0048-a-fallback-chain-per-kind-of-request.md) | **Accepted** (decisions 1–2 superseded by 0052) | 2026-10-28 |
 | 0049 | [One clock for the installation, set where it is deployed](ADR-0049-one-clock-for-the-installation.md) | **Accepted** | 2026-10-28 |
 | 0050 | [The gateway sends the mail, and asks the directory for the address when it sends](ADR-0050-the-gateway-sends-the-mail.md) | **Accepted** | 2026-10-29 |
 | 0051 | [A thinking block goes back onto the history it was made on, on every turn](ADR-0051-a-thinking-block-goes-back-onto-its-own-history.md) | **Accepted** | 2026-11-02 |
+| 0052 | [A fallback chain belongs to its use case, one per kind of request](ADR-0052-a-fallback-chain-belongs-to-its-use-case.md) | **Accepted** | 2026-11-03 |

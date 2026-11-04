@@ -1,4 +1,5 @@
 import { TechnicalRecord, Trace } from '../../core/api/models';
+import { displayCount } from '../../core/ui/money';
 
 /**
  * A request's technical course in the words a technician reads it in (`FRD-630`): each phase and
@@ -54,7 +55,7 @@ export function phaseSentence(phase: string): string {
 
 /** Milliseconds as a technician compares them: grouped, and in seconds too where that is shorter. */
 export function duration(ms: number): string {
-  const grouped = `${ms.toLocaleString('en-US')} ms`;
+  const grouped = `${displayCount(ms)} ms`;
   return ms >= 1000 ? `${grouped} (${(ms / 1000).toFixed(1)} s)` : grouped;
 }
 
@@ -95,7 +96,7 @@ export function sentLine(record: TechnicalRecord): string | null {
   const sent = record.to_caller;
   if (!sent) return null;
   const keepalives = sent.keepalives === 1 ? '1 keepalive' : `${sent.keepalives} keepalives`;
-  return `${sent.bytes.toLocaleString('en-US')} bytes in ${sent.writes} writes, ${keepalives}`;
+  return `${displayCount(sent.bytes)} bytes in ${sent.writes} writes, ${keepalives}`;
 }
 
 /** The provider's facts that were recorded, labelled. */

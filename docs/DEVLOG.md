@@ -5,6 +5,80 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The fallback panel's caption, measured against a step's (2026-11-04)
+
+The owner did not find the use case's fallback in the pipeline editor: the local stack still ran
+images of 2026-10-25, from before either fallback build. Upgraded to the branch — six management
+migrations, the gateway's 0054 to 0059, nothing for `pipelines/0005` to carry — the stack's own
+console shows the node and offers each kind the models released to the use case.
+
+Seen there beside a step's inspector, the panel's caption sat **42 px** under its title where a
+step's sits **19 px**. The panel is a flex column, and a flex gap does not collapse margins: the
+title's margin, the gap and the paragraph's own top margin added up. The caption now takes a step's
+distance, measured at 19 px in Chromium. Last night's check looked at the panel alone, so it had
+nothing to compare the distance with.
+
+## A use case's own fallback, the spend against the bill, and a count without commas (2026-11-03)
+
+Three of the owner's points from daily use, worked through in one night.
+
+**The fallback belongs to the use case** (`FRD-310` revised, `ADR-0052`). The first build of
+2026-10-28 kept a chain per kind of request for the whole installation, on the Models page, and gave
+each use case a mode between it and its own. The owner had meant the use case's pipeline, with none
+set meaning the error. A pipeline now holds a chain for text generation, one for embeddings and one
+for rankings, each empty by default; the installation's chains, the mode, their API and event are
+gone. What `ADR-0048` decided about kind stands: another kind is passed over by name, an embedding
+falls back only at the same width, every hop meets the release. `pipelines/0005` writes any chain an
+installation had set into each use case that followed it, as far as it was released the model, and
+announces it — tested by migrating the database back and forward. The gateway keeps the old table and
+column one release for the previous release during a rolling update; nothing reads them.
+
+The console's graph ends in a node *When a model cannot answer*, a line per kind, and its inspector
+is a panel of its own. Seen in Chromium against the local stack, with the new bundle swapped in by
+Playwright routes and nothing saved, which found three things no spec had: jsdom's `click()` gives
+up on any element inside a disabled fieldset where the browser opens the node for a reader; a greyed
+picker showed its empty hint as its value, so every reader of an empty chain — the three step chains
+included — was told *"No model is released to this use case yet"* while models were; and the panel's
+fields touched. Two more for the next such check: a redirect's target is not routed (Keycloak's way
+back landed on the stack's own page), and Chromium treats a page answered by a route as no local
+address and refuses its calls to the local Keycloak.
+
+**The spend against the bill** (`FRD-508` FR-2a, `docs/INTEGRATIONS.md` F). Measured first, for
+about 0.67 US dollars of the owner's Vertex project: OpenCode 1 reading seven files of this
+repository and answering four follow-ups in one session, behind the pytest harness's gateway, every
+usage report recorded as the vendor sent it before the gateway read it.
+
+| model | requests | prompt per turn | cached on follow-ups | booked | vendor's report at list price |
+| --- | --- | --- | --- | --- | --- |
+| gemini-2.5-flash | 7 | up to 73 559 | 72 796–72 816 | 0.034240 USD | 0.034240 USD |
+| gemini-3.5-flash | 7 | up to 74 857 | 73 205–73 233 | 0.210288 USD | 0.210288 USD |
+| glm-5.2-maas | 7 | up to 66 176 | 0 four times, 66 048 once | 0.393202 USD | 0.393202 USD |
+
+Every row equal to the vendor's report to the nano-unit; Vertex reports usage once per stream, in
+its last chunk; GLM-5.2's `total_tokens` is always prompt plus completion, so no reasoning is billed
+outside what is booked. Two vendor behaviours that cost money are booked as billed: GLM-5.2 read its
+cache on one follow-up in five (each miss 0.093 against 0.010), and Gemini 3.5 Flash once answered a
+74 618-token turn with nothing at all, 0.112.
+
+So a gap between the console and the invoice is in what is compared. An independent read of the
+cost path found the confirmed one: the model reference states Claude Sonnet 5.5's cache reads at
+0.10 per million tokens, as models.dev does, where Anthropic lists 0.20 — a catalogue filled from it
+books an agentic Sonnet 5.5 session about a fifth short. The reference now corrects a price its
+vendor states otherwise and says so; a catalogue entry made from it before is not changed. The guide
+lists the rest: Claude's regional endpoints at about 10 % over list, other traffic in the project
+(these measurements among it), Google's Pacific-time days, the report against a budget's counters.
+Three gaps are written down rather than built (`GAP-ANALYSIS`): an attempt a chain abandons after the
+gateway's time limit is booked at nothing; the reference carries no regional surcharge; OpenCode's
+own sum prices a Claude cache write as input. Claude itself was not measured: no service account.
+
+**A count reads the same in English and German** (`FRD-210`). Thousands are grouped by a narrow
+no-break space, `12 840`, in the console, the mails and the server's messages; a round number in
+text says *million*.
+
+Checks: `make ci` green — Python 8101 passed at 97.29 %, console 1816; mutations FB-1–FB-43,
+CO-24–25, NUM-1–3 and the re-anchored J9, FXM-M2-12b, FX-F34-F3-24b all caught; 2513 in all. Not run
+here: the integration and browser suites, the full `make mutants`, Claude.
+
 ## A Claude conversation stays in its cache; caching read again against the vendors (2026-11-02)
 
 The owner asked whether every caching fault at the level of a model had been found, Gemini, Anthropic

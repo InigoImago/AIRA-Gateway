@@ -1,8 +1,9 @@
 """Pipeline configuration schema (FRD-300).
 
-A ``Pipeline`` is an ordered list of steps plus a dispatch fallback chain. It is authored in
-Management and distributed to the gateway read-model as JSON; ``Pipeline.from_dict`` parses that
-JSON leniently (unknown step types are ignored so old gateways tolerate new config).
+A ``Pipeline`` is an ordered list of steps plus the use case's fallback chain for each kind of
+request (`FRD-310`). It is authored in Management and distributed to the gateway read-model as JSON;
+``Pipeline.from_dict`` parses that JSON leniently (unknown step types are ignored so old gateways
+tolerate new config).
 
 **The gateway re-applies Management's bounds.** The read-model is also reachable by a direct write,
 a publish onto an unauthenticated broker, and `pipeline:dryRun`'s `pipeline` field, so the
@@ -25,9 +26,9 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
-from aira_common.fallback import FallbackKind, FallbackMode, chain_for, stored_mode
+from aira_common.fallback import CHAIN_FIELDS, FallbackKind
 from aira_common.logging import get_logger
 from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
 from aira_common.pipelines import (
@@ -221,26 +222,22 @@ class PipelineStep:
 @dataclass(frozen=True, slots=True)
 class Pipeline:
     steps: tuple[PipelineStep, ...] = ()
-    #: The use case's own chain for text generation, used under ``FallbackMode.OWN`` only.
+    #: The use case's chain for text generation, speech included (`FRD-302`).
     fallback_models: tuple[str, ...] = ()
-    #: What the use case does with the installation's fallback chains (`FRD-310`); ``None`` where
-    #: nothing said, read as such a pipeline always meant (:attr:`mode`).
-    fallback_mode: FallbackMode | None = None
-
-    @property
-    def mode(self) -> FallbackMode:
-        """The use case's choice — its own chain where it names one and said nothing else."""
-        return stored_mode(self.fallback_mode, self.fallback_models)
+    #: Its chain for embeddings, every candidate held to the width rule (`FRD-310` FR-5).
+    embedding_fallback_models: tuple[str, ...] = ()
+    #: Its chain for rankings, rerankers only.
+    ranking_fallback_models: tuple[str, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        """Whether running this changes nothing — no step, and the installation's chains."""
-        return not self.steps and not self.fallback_models and self.mode is FallbackMode.DEFAULT
+        """Whether running this changes nothing — no step, and no chain of any kind."""
+        return not self.steps and not any(self.chain_for(kind) for kind in FallbackKind)
 
-    def chain_for(self, kind: FallbackKind, installation: tuple[str, ...]) -> tuple[str, ...]:
-        """The models a request of ``kind`` falls back to: this use case's choice, applied to
-        the installation's chain for that kind (`aira_common.fallback.chain_for`)."""
-        return chain_for(kind, self.mode, self.fallback_models, installation)
+    def chain_for(self, kind: FallbackKind) -> tuple[str, ...]:
+        """The models a request of ``kind`` falls back to, in order. Empty means no fallback: the
+        caller gets the error of the model it asked for (`FRD-310`)."""
+        return cast(tuple[str, ...], getattr(self, CHAIN_FIELDS[kind]))
 
     @classmethod
     def from_dict(cls, data: Any) -> Pipeline:
@@ -269,20 +266,27 @@ class Pipeline:
                     ),
                 )
             )
-        chain = data.get("fallback_models") or []
-        if not isinstance(chain, list):
-            _corrected("pipeline", "fallback_models", "not a list")
-            chain = []
-        fallbacks = tuple(
-            str(m)[:MAX_MODEL_LENGTH]
-            for m in _strings(chain, "pipeline", "fallback_models")[:MAX_FALLBACK_MODELS]
-            if m
+        return cls(
+            steps=tuple(steps),
+            fallback_models=_chain(data, FallbackKind.GENERATE),
+            embedding_fallback_models=_chain(data, FallbackKind.EMBED),
+            ranking_fallback_models=_chain(data, FallbackKind.RERANK),
         )
-        said = data.get("fallback_mode")
-        mode = None if said is None else stored_mode(said, fallbacks)
-        if said is not None and str(mode) != said:
-            _corrected("pipeline", "fallback_mode", f"{said!r} is not a mode")
-        return cls(steps=tuple(steps), fallback_models=fallbacks, fallback_mode=mode)
+
+
+def _chain(data: dict[str, Any], kind: FallbackKind) -> tuple[str, ...]:
+    """The use case's chain for ``kind`` as the bounds allow it: model names only, at most
+    `MAX_FALLBACK_MODELS` of them, each no longer than a catalogue name."""
+    key = CHAIN_FIELDS[kind]
+    chain = data.get(key) or []
+    if not isinstance(chain, list):
+        _corrected("pipeline", key, "not a list")
+        chain = []
+    return tuple(
+        str(m)[:MAX_MODEL_LENGTH]
+        for m in _strings(chain, "pipeline", key)[:MAX_FALLBACK_MODELS]
+        if m
+    )
 
 
 def problem_in(data: Any) -> str | None:
@@ -312,10 +316,12 @@ def problem_in(data: Any) -> str | None:
         problem = _config_problem(StepType(step["type"]), config, f"{where}.config")
         if problem is not None:
             return problem
-    mode = data.get("fallback_mode")
-    if mode is not None and not _is_word(mode, FallbackMode):
-        return f"pipeline.fallback_mode must be one of {_words(FallbackMode)}."
-    return _names_problem(data.get("fallback_models", []), "pipeline.fallback_models")
+    for kind in FallbackKind:
+        key = CHAIN_FIELDS[kind]
+        problem = _names_problem(data.get(key, []), f"pipeline.{key}")
+        if problem is not None:
+            return problem
+    return None
 
 
 def _config_problem(step_type: StepType, config: dict[str, Any], where: str) -> str | None:

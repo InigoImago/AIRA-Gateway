@@ -1,0 +1,54 @@
+<h3 class="section-title">When a model cannot answer</h3>
+<p class="muted fallbacks__lead" data-testid="fallback-lead">
+  A model that cannot answer — an outage, a quota, a model its provider retired — is replaced by the
+  models listed here for its kind of request, tried in the order they are listed. A kind with none
+  listed has no fallback: the caller gets the error.
+</p>
+
+@for (kind of kinds; track kind) {
+  <div class="field" [attr.data-testid]="'fallback-' + kind">
+    <label [id]="'insp-fallback-' + kind">{{ label(kind) }}</label>
+    <app-multi-select
+      [label]="label(kind)"
+      [testid]="'fallback-picker-' + kind"
+      placeholder="type part of a model name…"
+      [emptyHint]="emptyHint(kind)"
+      [options]="choices()[kind]"
+      [selected]="chains()[kind]"
+      [disabled]="!canManage()"
+      (changed)="changed.emit({ kind: kind, models: $event })"
+    />
+    @if (!chains()[kind].length) {
+      <span class="field__hint" [attr.data-testid]="'fallback-none-' + kind">
+        No fallback: a model that cannot answer is the caller's error.
+      </span>
+    }
+    @switch (kind) {
+      @case ('generate') {
+        <span class="field__hint">
+          Models that write text, or speak for a spoken answer. A streamed request falls back too,
+          until the first part of the answer has reached the caller.
+        </span>
+      }
+      @case ('embed') {
+        <!-- The owner's concern, said where the chain is set (`FRD-310`): two models' vectors live
+             in two spaces, so a stand-in can answer and still be wrong for an index. -->
+        <span class="field__hint" data-testid="fallback-embed-warning">
+          Vectors from two different models are not comparable: a search against an index built with
+          one returns wrong matches for the other's vectors, with no error. A model here is used
+          only if it gives vectors of the width the model asked for gives. Set this only where the
+          use case searches no stored index, or for the same model served elsewhere.
+        </span>
+      }
+      @case ('rerank') {
+        <span class="field__hint">Rerankers only.</span>
+      }
+    }
+  </div>
+}
+
+<p class="muted">
+  Every model is still held to this use case's release and to what the request asks of it — one that
+  cannot answer it is passed over by name — and the answer, like the request's record, names the
+  model that gave it.
+</p>

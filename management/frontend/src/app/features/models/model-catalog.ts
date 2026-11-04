@@ -31,7 +31,6 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { TablePager } from '../../core/ui/table-pager';
 import { TableView } from '../../core/ui/table-view';
 import { checkVerdict, detailOf, providerLabel } from './catalog-display';
-import { FallbackChainsCard } from './fallback-chains-card';
 import { GatewayProviders } from './gateway-providers';
 import { ModelEditor } from './model-editor';
 import { ServedModels } from './served-models';
@@ -52,15 +51,7 @@ const EDITOR_NEW = 'new';
  */
 @Component({
   selector: 'app-model-catalog',
-  imports: [
-    FormsModule,
-    Modal,
-    TablePager,
-    ModelEditor,
-    ServedModels,
-    ReferenceModels,
-    FallbackChainsCard,
-  ],
+  imports: [FormsModule, Modal, TablePager, ModelEditor, ServedModels, ReferenceModels],
   templateUrl: './model-catalog.html',
   providers: [PageFeedback, GatewayProviders],
 })

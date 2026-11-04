@@ -33,6 +33,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django.utils import timezone
 
+from aira_common.counts import display_count
 from aira_common.kafka import (
     MAX_EVENT_BYTES,
     AiokafkaProducer,
@@ -76,8 +77,8 @@ async def _publish(producer: Producer, pending: list[OutboxEvent]) -> Run:
             size = len(encode_event(event.payload))
             if size > MAX_EVENT_BYTES:
                 run.parked[event.pk] = (
-                    f"{size:,} bytes once encoded; the event channel carries at most "
-                    f"{MAX_EVENT_BYTES:,}."
+                    f"{display_count(size)} bytes once encoded; the event channel carries at "
+                    f"most {display_count(MAX_EVENT_BYTES)}."
                 )
                 continue
             try:

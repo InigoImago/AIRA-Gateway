@@ -55,7 +55,7 @@ from aira_gateway.middleware import (
 from aira_gateway.persistence.redaction import build_redactor
 from aira_gateway.persistence.writer import RequestLogWriter
 from aira_gateway.pipeline.engine import PipelineEngine
-from aira_gateway.pipeline.store import FallbackChains, PipelineStore
+from aira_gateway.pipeline.store import PipelineStore
 from aira_gateway.pricing import PricingService
 from aira_gateway.ratelimit.buckets import (
     FallbackTokenBucket,
@@ -178,8 +178,6 @@ def _assemble_services(
     # readiness as slow as the slowest upstream and wake a scaled-to-zero endpoint on every check.
     app.state.upstream_probe = UpstreamProbe(registry, degradation)
     app.state.pipeline_store = PipelineStore(sessionmaker)
-    # The installation's fallback chain per kind of request (`FRD-310`).
-    app.state.fallback_chains = FallbackChains(sessionmaker)
     app.state.counters = counters
     app.state.degradation = degradation
     # The installation's clock (`FRD-629`), once: the budgets count on it and every surface that
