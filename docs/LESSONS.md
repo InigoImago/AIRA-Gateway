@@ -2315,7 +2315,10 @@ reading code.
 - **A subset that passes is not a suite that passes.** Including *a layer* as the subset: the model
   editor was split into three tabs, verified by hand in a browser, and shipped — and nine browser
   specs had been red ever since, because they open the editor and go straight to a field. A layout
-  change is precisely what the browser layer exists for, and it was the layer not run.
+  change is precisely what the browser layer exists for, and it was the layer not run. Or the
+  subset the touched file suggests: a console style fix passed the console's format, build and unit
+  gates and failed CI's Python job, which holds the repository's scan of every class a template
+  uses — the rule had been written in a form that scan does not read.
 - **A gate nobody runs is a gate that is already red.** The Angular branch-coverage threshold had
   been failing on `main` at 91.37 % against 92 — so `make ci` was red before any change, and every
   local run since had been reading the tail of the output rather than its exit code. Fixed by

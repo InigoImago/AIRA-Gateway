@@ -18,6 +18,12 @@ title's margin, the gap and the paragraph's own top margin added up. The caption
 distance, measured at 19 px in Chromium. Last night's check looked at the panel alone, so it had
 nothing to compare the distance with.
 
+The fix reached `main` with only the console's gates run on it, and CI's Python job refused it:
+the rule was a quoted string in a `styles` array, where the scan of the classes templates use
+(`test_every_class_the_console_uses_exists.py`) reads only the template literal every other
+component writes — so `.fallbacks__lead` looked styled by nothing. Written that way now, and the
+whole of `make ci` run before it landed.
+
 ## A use case's own fallback, the spend against the bill, and a count without commas (2026-11-03)
 
 Three of the owner's points from daily use, worked through in one night.

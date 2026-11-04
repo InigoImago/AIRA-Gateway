@@ -35,13 +35,20 @@ const NOTHING_RELEASED: Record<FallbackKind, string> = {
   selector: 'app-pipeline-fallbacks',
   imports: [MultiSelect],
   templateUrl: './pipeline-fallbacks.html',
-  styles: [
-    // The inspector's own rhythm: the panel is one child of it, and its fields would touch.
-    ':host { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; }',
-    // The sentence under the title sits as close to it as a step's does in the same inspector: a
-    // flex gap does not collapse margins, so the paragraph's own top margin would double it.
-    '.fallbacks__lead { margin-top: -0.4rem; }',
-  ],
+  styles: `
+    /* The inspector's own rhythm: the panel is one child of it, and its fields would touch. */
+    :host {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      min-width: 0;
+    }
+    /* The sentence under the title sits as close to it as a step's does in the same inspector: a
+       flex gap does not collapse margins, so the paragraph's own top margin would double it. */
+    .fallbacks__lead {
+      margin-top: -0.4rem;
+    }
+  `,
 })
 export class PipelineFallbacks {
   /** The chain each kind of request falls back along, as the form holds it. */
