@@ -6,13 +6,14 @@ per request — authentication, the read-model lookups, the pipeline, the rate l
 reservation, the audit row — is work no model ever sees.
 
 The overlay, `deploy/compose/docker-compose.loadtest.yml`, adds the free upstream double
-(`modelsim`) and points the gateway at it as one more OpenAI-dialect server. It also empties the
-gateway's cloud settings **in its environment** for the duration: the Vertex project, credentials,
-API key and models, the Google AI Studio key and models, the Foundry endpoint and deployments, and
-the local Ollama — so no adapter for a paid platform is configured from there, and the driver asks
-for nothing but the simulated models. **Vault is not touched**, and it ranks above the environment:
-a cloud credential held in Vault is not emptied. Run load tests on a stack whose Vault holds none —
-with `VAULT_ADDR` empty, the bundled default, nothing comes from Vault at all.
+(`modelsim`) and makes it the gateway's only OpenAI-dialect server, in place of any the environment
+named. It also empties the gateway's other cloud settings **in its environment** for the duration:
+the Vertex project, credentials, API key and models, the Google AI Studio key and models, the
+Foundry endpoint and deployments, and the local Ollama — so no adapter for a paid platform is
+configured from there, and the driver asks for nothing but the simulated models, so a run bills
+nothing. **Vault is not touched**, and it ranks above the environment: a cloud credential held in
+Vault is not emptied. Run load tests on a stack whose Vault holds none — with `VAULT_ADDR` empty,
+the bundled default, nothing comes from Vault at all.
 
 ## Run it
 
@@ -20,7 +21,7 @@ with `VAULT_ADDR` empty, the bundled default, nothing comes from Vault at all.
 make loadtest-up                     # the double, the gateway pointed at it, the seed
 make loadtest SCENARIO=smoke         # ~3 min: every path, end to end
 make loadtest SCENARIO=cost          # what one request of each workload costs
-make loadtest SCENARIO=ceiling       # ramped until throughput stops rising
+make loadtest SCENARIO=ceiling       # bare requests at 16 / 48 / 96, buffered and streamed
 make loadtest SCENARIO=capacity      # chat and agentic at 50 / 150 / 300 users, embedding at 4 and 8
 make loadtest SCENARIO=beyond        # past the requirement: agentic at 450 / 600, chat at 600 / 900
 make loadtest-clean                  # remove the rows, request logs included
@@ -29,7 +30,8 @@ make loadtest-down                   # stop the double, restore the gateway's co
 
 `make loadtest-up` runs `make loadtest-seed`, which writes the `lt-` use cases, keys, budgets, rate
 limits and catalogue rows straight into the gateway's read-model; run it on its own to refresh them.
-A scenario stops at the first step that saturates, and says so.
+A scenario stops at the first step that saturates — more than 2 % of its requests failed, or, in
+`capacity`, a median overhead above 250 ms — and says so.
 
 `make loadtest` writes `report.md`, rewritten after every step, and **appends** to `results.jsonl`,
 both in `docs/measurements/` — `MEASUREMENTS=` puts them somewhere else. A second run therefore adds
@@ -66,8 +68,9 @@ clock less what the model promised the answer would take. Without that subtracti
 a statement about the double.
 
 **Every step runs twice.** Once at the gateway, once straight at the double from the same driver at
-the same concurrency. If the baseline is already slow, the run is measuring the driver, and the
-verdict says so instead of blaming the gateway.
+the same concurrency, and a passing step's verdict gives both medians. A step whose driver used
+most of its cores is called inconclusive — the run was measuring the driver — instead of blaming
+the gateway.
 
 **CPU comes from the cgroup, not from `docker stats`.** During one step `docker stats` reported the
 gateway at 21% while its own `cpu.stat` showed 0.91 cores — a process out of CPU, reported as idle.

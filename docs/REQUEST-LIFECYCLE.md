@@ -25,7 +25,7 @@ sequenceDiagram
     participant W as Audit writer
 
     C->>M: POST /v1beta/models/{model}:generateContent
-    M->>M: trace id · use-case path · body-size ceiling
+    M->>M: request id · trace id · use-case path · body-size ceiling
     Note over M: too large → 413, recorded without an identity
     M->>S: the request
     S->>S: authenticate, then attribute to a use case
@@ -42,6 +42,7 @@ sequenceDiagram
     P-->>S: prepared — routed model, reservation
     Note over S,A: from here on, accounting owns every exit
     S->>U: dispatch chain, every condition per candidate
+    Note over S,U: a stream's status waits for its first chunk<br/>at most AIRA_STREAM_KEEPALIVE_SECONDS (§5)
     U-->>S: an answer, or every candidate failed
     S->>A: what was produced
     A->>A: settle or release the reservation
@@ -54,10 +55,11 @@ sequenceDiagram
 
 ## 2. Before any route: the middleware
 
-Up to five things run outside the application, in this order (outermost first):
+Up to six things run outside the application, in this order (outermost first):
 
 | Middleware                  | Does                                                   | If it refuses              |
 | --------------------------- | ------------------------------------------------------ | -------------------------- |
+| `RequestIdMiddleware`       | draws the request's id before anything can refuse, puts it in `X-AIRA-Request-Id` with the headers that say what happened (`X-AIRA-Model`, `X-AIRA-Pipeline`, `X-AIRA-Reason`), and starts the request's technical record — every millisecond in it counts from here, and every byte sent is counted here | — |
 | `TraceIdMiddleware`         | puts `x-trace-id` on **every** traced response         | —                          |
 | `SecurityHeadersMiddleware` | `nosniff` · `no-referrer` · `DENY` · `no-store`        | —                          |
 | `CORSMiddleware`            | the cross-origin headers, with `AIRA_CORS_ORIGINS` set | —                          |
@@ -66,12 +68,12 @@ Up to five things run outside the application, in this order (outermost first):
 
 **The order is what decides which responses carry the headers.** The ceiling is enforced by
 wrapping `receive`, so nothing above it buffers anything either way, and it is innermost: its 413
-passes through every layer above it, headers, trace id and CORS included. It sits inside the path
-selector, so it refuses on the path every route sees — `/uc/<slug>/kira/…` is a KIRA request when it
-is too large too, answered in KIRA's envelope and audited as `api="kira"`. The one response no
-middleware reaches is Starlette's answer to an unhandled error, a 500 written outside all of them;
-its handler adds the security headers, the trace id, the KIRA surface's headers and the CORS
-headers itself.
+passes through every layer above it, headers, request id, trace id and CORS included — and its row
+takes the same id. It sits inside the path selector, so it refuses on the path every route sees —
+`/uc/<slug>/kira/…` is a KIRA request when it is too large too, answered in KIRA's envelope and
+audited as `api="kira"`. The one response no middleware reaches is Starlette's answer to an
+unhandled error, a 500 written outside all of them; its handler adds the security headers, the
+trace id, the KIRA surface's headers and the CORS headers itself.
 
 The ceiling has two exits — a declared `Content-Length` that is too large, and a body that lies and
 is cut off mid-read — and **both record an audit row** under the outcome `request_too_large`. That
@@ -142,7 +144,8 @@ graph LR
 **A request refused here leaves no audit row**, and that is a decision: it was never attributed,
 and an unauthenticated request is a security event, not a usage row attributed to nobody. Its
 **span** is its record, marked with `aira.outcome`, the status, the source address, and — where
-they are known — the subject, the credential and the use case asked for (`aira.use_case.requested`):
+they are known — the subject (a pseudonym under strict data mode), the credential and the use case
+asked for (`aira.use_case.requested`):
 
 | `aira.outcome` | refused for |
 | --- | --- |
@@ -173,14 +176,16 @@ parts (20 000 across them) before validating any of them, and offer the model at
 functions — counted first on the Gemini surface, after parsing on the KIRA one, in its own code.
 The Gemini surface refuses a model nothing serves (**404**, before the body is read), a body that
 is not JSON or carries a field Google's API does not define (**400**, naming the field). The KIRA
-surface
-turns the predecessor's numeric model id into a model (**422** `MODEL_NOT_FOUND`; **503** when the
-id is assigned to two models), applies the contract's own checks (**422** `NO_CHAT_CAPABILITIES`,
+surface turns the predecessor's numeric model id into a model (**422** `MODEL_NOT_FOUND`; **503**
+when the id is assigned to two models), applies the contract's own checks (**422** `NO_CHAT_CAPABILITIES`,
 `MAX_TOKENS_EXCEEDS_CAP`, `VALIDATION_ERROR` for a cap of zero or less, `INVALID_TOOL_CONFIGURATION`
 and `INVALID_FUNCTION_RESPONSE` for functions), and accepts a field it does not model, naming it in
-`X-AIRA-Unmodelled-Fields` (§8). A ranking request takes the same seven steps, with its own
-refusals: a model not declared a reranker (**400**, on KIRA **422** `NO_RERANKER_CAPABILITIES`), and
-a weight of one request per hundred records at step 4.
+`X-AIRA-Unmodelled-Fields` (§8). A ranking request — on Google's ranking path
+(`/v1/projects/…/rankingConfigs/…:rank`) or KIRA's `/rerank` — takes the same seven steps, with its
+own refusals: no query or no record, more records than `AIRA_RERANK_MAX_RECORDS` (200), a record
+with neither title nor content (**400**, at step 2 — an empty query or list on KIRA is already its
+parser's **422**), a model not declared a reranker (**400**, on KIRA **422**
+`NO_RERANKER_CAPABILITIES`, at step 6), and its own weight (step 3).
 
 Then seven steps, one owner. The right-hand column is what breaks if the step moves.
 
@@ -229,9 +234,9 @@ request that names no use case — the break-glass key's — is not this rule's 
 A generation with no text and no attachment; more attachments, or more bytes of them, than one
 request may carry; a sampling value outside the range every dialect accepts, named; functions
 declared, or a function call or a function's result carried, where the use case has not switched
-tool calling on — a result is content no pipeline step reads (§5), so a use case with tool calling
-off receives none, whether or not the request declares anything; the model's reasoning asked for
-where the use case does not return it. For an embedding, an empty batch or one beyond the bounds.
+tool calling on — a result is content no pipeline step reads (step 5), so a use case with tool
+calling off receives none, whether or not the request declares anything; the model's reasoning
+asked for where the use case does not return it. For an embedding, an empty batch or one beyond the bounds.
 Each is the caller's to fix (§8), and each is refused before the rate limit takes its weight.
 
 ### 3 — the weight
@@ -270,12 +275,14 @@ budget **of the same period** for that person, and everybody else is held to the
 Switched off, a person's own budget refuses nothing and hands them back to the per-person budget,
 never to no limit. The two count on one counter per person and period, so replacing one with the
 other mid-period starts from what that person already spent, and a request is booked once whichever
-of them binds.
+of them binds. A period begins at midnight on the installation's clock, `AIRA_TIME_ZONE` (UTC
+unless set, and the same on both planes), and a refusal for an exhausted budget names that moment.
 
-It is called once, _before the verb branch_. Inside the pipeline it would have been tidier, and every
-request that runs no pipeline step — a use case with no pipeline, an embedding without a
-`pii_filter` — would have passed it unlimited. That is the reason this project writes controls on
-the path every branch takes rather than inside one of them.
+It is called once on every verb's path, _before the pipeline_ — generation and embedding share one
+call, a ranking makes its own at the same point of its sequence. Inside the pipeline it would have
+been tidier, and every request that runs no pipeline step — a use case with no pipeline, an
+embedding without a `pii_filter` — would have passed it unlimited. That is the reason this project
+writes controls on the path every branch takes rather than inside one of them.
 
 **Cost of getting this wrong, measured:** with the pipeline running first, one served request and
 seven refused ones spent 72 400 against a 20 000 cost limit — the refusals cost more than the answer.
@@ -327,14 +334,15 @@ release, checked as a dispatch condition at every hop. As a step it would run on
 and a route or a fallback would go straight past it.
 
 Every model a pipeline names — the classifier a filter runs, the classifier a router runs, each
-category's target, the default target, the fallback chain — must be **released to the use case**.
-Refused when the pipeline is saved and again at dispatch, and the builder offers only those. The
-dry run follows the same rule and the membership rule with it: it calls a real model, so it belongs
-to a use case exactly as a request does — and it asks of every model it will *call* that a Global
-Administrator has approved it for the installation, which the release alone would not ensure: until
-an event from Management has described a use case's release, the release refuses no model, and
-approval has no such undecided state. It asks both up front rather than per call, and never asks
-the price condition a production step asks (below).
+category's target, the default target, each step's own fallback models and the use case's fallback
+chain for every kind of request — must be **released to the use case**. Refused when the pipeline
+is saved and again at dispatch, and the builder offers only those. The dry run follows the same rule
+and the membership rule with it: it calls a real model, so it belongs to a use case exactly as a
+request does — and it asks of every model it will *call* that a Global Administrator has approved
+it for the installation, which the release alone would not ensure: until an event from Management
+has described a use case's release, the release refuses no model, and approval has no such
+undecided state. It asks both up front, and each of its steps then asks of every model it is about
+to call what a production step asks (below), a price where spend is capped included.
 **Trying a pipeline is authoring one**: an unsaved pipeline, and steps run past a block, are for the
 use case's administrators; a member may test the saved pipeline and sees what each step decided, not
 what its model wrote. A malformed `pipeline` is a `400` naming the field.
@@ -375,19 +383,21 @@ After routing, the model that will be asked first is the routed one. It must hav
 the speech capability is asked instead, per hop — and a cap the caller set is positive, within the
 model's declared maximum and within what the counters can hold.
 
-The catalog is a **runtime authority**. It declares eight capabilities — `generate`, `embed`,
-`structured_output`, `thinking`, `attachments`, `tools`, `prompt_caching` and `speech` — beside the
-output cap, the per-model default cap, the thinking modes and levels, the media types it reads and
-a deprecation. **Undeclared means the baseline and nothing more** — absence of information is not
-permission.
+The catalog is a **runtime authority**. It declares nine capabilities — `generate`, `embed`,
+`structured_output`, `thinking`, `attachments`, `tools`, `prompt_caching`, `speech` and `rerank` —
+beside the output cap, the per-model default cap, the thinking modes and levels, the media types it
+reads, whether it samples only at its own settings, the sampling it uses where the caller sets none,
+and a deprecation. **Undeclared means the baseline and nothing more** — absence of information is
+not permission.
 
 Checked **after routing and at every hop of the fallback chain**, because a chain that quietly
 answers with less than was asked for returns a 200.
 
 **And fitted per hop.** What the caller left to the model — the output cap when none was set, the
-thinking, the cache marker — is filled in by the model being tried, never by the model in front of
-it: the chain starts from the request as the caller made it and fits it to each candidate the way
-the routed model was fitted (`fitting`). A cap the caller *did* set is a condition on every
+thinking, the sampling, the cache marker — is filled in by the model being tried, never by the model
+in front of it, and a sampling default only where that model's dialect can say it: the chain starts
+from the request as the caller made it and fits it to each candidate the way the routed model was
+fitted (`fitting`). A cap the caller *did* set is a condition on every
 candidate, so a fallback declaring a lower maximum is passed over by name rather than called. A
 thinking budget has to fit inside the cap that will be sent: for the routed model that is the
 caller's 400, for any other candidate a reason to pass it over.
@@ -402,11 +412,17 @@ lifetime.
 
 **What the switch reaches depends on the model.** Claude takes a marker, on four places: the last
 tool, the system prompt, the conversation's last block and the caller's last message before that.
-Without one it caches nothing. For the cache to hold from one message to the next, a model's thinking
-goes back with every turn, and stays out only where the client changed the history it was made on.
-Gemini and the managed open models on Google Cloud take no marker: they cache a long prompt on their
-own, whatever the switch says, from 2 048 to 6 144 tokens depending on the model, and what they report
-reading shows in the same figures.
+Without one it caches nothing. For the cache to hold from one message to the next, Claude's thinking
+goes back with the turns it was made in. A message of the model's that calls a function carries its
+thinking sealed into that call's signature, which a client hands back unread, so the gateway keeps
+no state between requests: it goes back on the turn in progress, as Anthropic requires, and on an
+earlier turn wherever the history before it is unchanged — a block made on a history the client has
+since changed stays out. It is sealed only where the use case returns reasoning or the model showed
+none; otherwise the next turn goes without it. Where Anthropic refuses what was carried back, the
+turn is sent again carrying less — without the earlier turns' thinking, then without any — rather
+than refused. Gemini and the managed open models on Google Cloud take no marker: they cache a long
+prompt on their own, whatever the switch says, from 2 048 to 6 144 tokens depending on the model,
+and what they report reading shows in the same figures.
 
 ### 7 — the reservation
 
@@ -423,7 +439,8 @@ cap goes on the wire, the most the model can answer (its declared maximum), and 
 that declares none `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` (1024) plus any thinking budget. A thinking
 budget is drawn from the output allowance, so where a cap bounds the answer it bounds the thinking
 too and is not reserved again. For input, the prompt — counted at four characters a token — each
-attachment at what the model declares, and a ranking's billing units; each side at its own price.
+attachment at what the model declares, and a ranking's billing units; each side at its own price,
+and for a model priced higher above a prompt length, at the rates a prompt that long is billed at.
 A reservation of the output alone would let a dozen agentic requests, each carrying a 100 000-token
 context, all pass a 50 000-token limit together — and one that assumes a short answer where none
 was asked for lets a hundred requests in flight pass a limit with room for two.
@@ -452,7 +469,7 @@ graph LR
     skipped --> more{"another candidate?"}
     failed --> more
     more -->|"yes"| c1
-    more -->|"no, one was tried"| lasterror["<b>the last upstream error</b><br/>429 · 503 · 504 passed through<br/>400 kept, anything else 502"]
+    more -->|"no, one was tried"| lasterror["<b>the last upstream error</b><br/>404 · 413 · 429 · 503 · 504 passed through, 529 as 503<br/>400 kept, AIRA's own wait 504, its pool 503<br/>anything else 502"]
     more -->|"no, none was tried"| nocap["<b>NoCapableModel</b><br/>400 FAILED_PRECONDITION"]
 
     style lasterror fill:#dc2626,color:#fff
@@ -489,9 +506,12 @@ carries both lists, and the refusal's row records them.
   because its wire format cannot carry the request, the dialect's own refusal is the answer instead
   (below).
 - **At least one was tried and failed** — the last upstream error is the answer, outcome
-  `upstream_error`: an upstream 429, 503 or 504 is passed through, an upstream 400 becomes
-  **400 `FAILED_PRECONDITION`** carrying its reason, and anything else — a 401 or 403 included, and
-  a platform that could not be reached — is a **502** (§8).
+  `upstream_error`, its message naming every model tried and why each did not answer: an upstream
+  404, 413, 429, 503 or 504 is passed through and Anthropic's 529 answers 503, an upstream 400
+  becomes **400 `FAILED_PRECONDITION`** carrying its reason, this gateway's own time limit answers
+  504 and its own connection pool 503, and anything else — a 401 or 403 included, and a platform
+  that could not be reached — is a **502** (§8). On the KIRA surface every one of them is a **502**
+  but a 429.
 
 **A streamed request uses this chain too.** The chain is *opened* rather than awaited: for each
 candidate in turn, the conditions, then the upstream stream, then its **first chunk** — the
@@ -502,9 +522,9 @@ the failure it hid.
 
 **The response waits for that first chunk for at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15).** A
 model that reads a large context, thinks, or writes a function call's arguments produces no chunk
-for minutes — for Claude the first chunk is the first *visible* word — and a proxy between caller
-and gateway closes a connection that carries nothing for its idle timeout (nginx: 60 s), as a
-client gives up on headers that do not come. So:
+for minutes — for Claude the first chunk is the first word, or the first thought where the use case
+returns reasoning — and a proxy between caller and gateway closes a connection that carries nothing
+for its idle timeout (nginx: 60 s), as a client gives up on headers that do not come. So:
 
 - a chain that decides within that time answers as it always did — a stream, or a refusal with its
   **status**, so a streamed request nothing can serve is still a status rather than a `200`;
@@ -536,9 +556,11 @@ rather than each feature inventing its own:
   case by its administrators, and — while `AIRA_ENFORCE_PRICED_MODELS` is on, the default — **a
   price**, wherever a cost limit binds this caller;
 - **when the request asks for it** — the **media types** of its attachments, **structured output**
-  and whether the dialect can express the **schema**, the **thinking** setting, the **output cap**
-  the caller set, **sampling** the dialect can express, **tool calling**, and **speech**, which only
-  the Gemini surface can ask for.
+  and whether the dialect can express the **schema** (a JSON Schema document is carried as written,
+  and a provider that cannot take it answers 400), the **thinking** setting, the **output cap** the
+  caller set, **sampling** the dialect can express and the model takes — a model the catalogue says
+  samples only at its own settings is passed over for a request that sets a control to anything but
+  its neutral value — **tool calling**, and **speech**, which only the Gemini surface can ask for.
 
 Each asks about what the caller asked for: a default the model in front of a candidate declares is
 that model's, not a condition on the next. Sampling expressibility is a property of the _dialect_,
@@ -546,14 +568,17 @@ since no catalog entry can say whether `top_k` exists. A candidate no provider s
 same way, and so is one that cannot be addressed — no region catalogued, or one outside the list.
 
 A candidate whose **wire format cannot carry** the request — found while its body is built, one
-step after the conditions: a thinking budget that does not fit Anthropic's output cap, thinking on a
-Claude turn that continues a function call — is skipped the same way, by name. Where every candidate
-was skipped for that reason, the dialect's own refusal is the answer (a `400` naming what to
-change). And a stream counts as **failed**, not finished, when the provider reports an error inside
-its `200` or the connection breaks: before the first chunk the chain moves on; after it the audit
-row says `upstream_error`, what was reported is settled, a Gemini client receives Google's own
-error element as the stream's last — which the google-genai SDK raises, where a stream that merely
-stopped would read as a complete answer — and a KIRA stream ends without its `completed` event.
+step after the conditions: a thinking budget that does not fit Anthropic's output cap, a thinking
+budget on a Claude turn that continues a function call whose thinking the history does not carry
+back — is skipped the same way, by name. Where every candidate was skipped for that reason, the
+dialect's own refusal is the answer (a `400` naming what to change). And a stream counts as
+**failed**, not finished, when the provider reports an error inside its `200` or the connection
+breaks: before the first chunk the chain moves on; after it the audit row says `upstream_error`,
+what was reported is settled — where nothing was, and the connection or this gateway's own time
+limit ended the stream rather than the vendor, it is counted at the vendor as a stream its caller
+left is (§6) — a Gemini client receives Google's own error element as the stream's last — which
+the google-genai SDK raises, where a stream that merely stopped would read as a complete answer —
+and a KIRA stream ends without its `completed` event.
 
 **The rule that matters:** a model that cannot read the attachment is refused **by name**, never
 sent the prompt without it. A dropped attachment produces no error — it produces a fluent wrong
@@ -586,8 +611,9 @@ and what system (the credential), which use case and which surface, requested **
 how the model was chosen, provider/publisher/**region**, status and outcome, pipeline decisions —
 each step's verdict, and every candidate the chain skipped or tried — whether a step flagged the
 request, the tools offered and the names of those called, tokens and how they were established
-(`usage_basis`), latency, cost in nano-units, request bytes, trace id, and which controls were
-degraded at the time.
+(`usage_basis`), latency, cost in nano-units, request bytes, trace id, which controls were
+degraded at the time, the message a caller who was not served was given (`error`, through the same
+redactor as the bodies), and the request's technical record (`technical`, §9).
 
 **A request that reached this point is recorded however it ended.** A dropped socket _cancels_ the
 response task, so settling or releasing the reservation and writing the row run to their end as one
@@ -625,7 +651,9 @@ vendor's own free token count is asked for the request as it was sent and the an
 received, in the region that answered. Either way the answer the vendor produced after the caller
 left is in no count, and reports call the spend a lower bound. A vendor that cannot count, a count
 that fails, or `AIRA_COUNT_CANCELLED_STREAMS=false` leaves the usage unknown and releases the
-reservation.
+reservation. The same count is asked for a stream that broke off with nothing reported when the
+connection or this gateway's time limit ended it: the vendor was not the one that stopped, and goes
+on answering — and billing — on its side.
 
 **Refusals are recorded at the route's exception boundary** — one site, because a fact repeated at
 every `return` is a fact eventually forgotten at one of them.
@@ -640,8 +668,9 @@ every `return` is a fact eventually forgotten at one of them.
   of the request is kept. The answer as the caller received it. Neither keeps a model's
   signature: it is the state a model needs to continue a turn, not anything said.
   Inline attachments and audio are replaced by a description — media type, size, SHA-256; an
-  embedding's vectors are described, never stored; and credential-shaped strings are replaced by
-  `[REDACTED]` (`AIRA_REDACT_PATTERNS` adds shapes).
+  embedding's vectors are described, never stored, and a ranking's answer by how many records came
+  back and the range of their scores; and credential-shaped strings are replaced by `[REDACTED]`
+  (`AIRA_REDACT_PATTERNS` adds shapes).
 - **On which rows.** A refused request keeps the body it sent, once that body was read. The `413`
   row, a pipeline step's own `pipeline:<step>` row and a model check's `diagnostic` row keep none.
 - **For how long.** Until the use case's retention period has passed (default 7 days), or until the
@@ -651,22 +680,23 @@ every `return` is a fact eventually forgotten at one of them.
   only*, so the bodies are kept for the retention period and read by the Global Administrator and
   IT Security alone — not by the use case's own administrators either. A use case that stores
   content is read as the second whatever visibility it chose, and gets that choice back when the
-  mode is switched off. With the mode off,
-  two more choices return — every member reads the use case's requests, or its administrators read
-  all and everybody else their own — and `payload.read_any` decides who outside the use case may.
-  Every read is recorded in `payload_access` before the content is handed over.
+  mode is switched off. With the mode off, two more choices return — every member reads the use
+  case's requests, or its administrators read all and everybody else their own — and
+  `payload.read_any` decides who outside the use case may.
+  Every read is recorded in `payload_access` before the content is handed over, and so is every
+  opening of a request's details: a look that cannot be recorded does not happen.
 - **What a reader is told when there is nothing.** The request's row and every figure on it stay
   readable after the bodies are gone; only the content read answers differently, and always with
   the reason rather than an error. In the order it is decided: whether this reader may read the
   use case's content at all — a refusal says why, and nobody who may not is told whether anything
   was there, so under strict data mode only the two oversight roles reach the next answers, and the
-  console offers the button to nobody else; then *not stored* (the use case keeps no bodies);
-  *removed by retention* (a served request whose period has passed); *past retention* (a refused
-  request older than the period: whatever it kept is gone); *refused before its content was kept*;
-  and *never kept* (a pipeline step's or a model check's own call). The period is the one the
-  retention run applies — the use case's own, else `AIRA_DEFAULT_RETENTION_DAYS` — so a period
-  raised later makes an older refusal read as never kept, although the shorter period removed it.
-  When only one half is absent — a refusal has no answer, a failed redaction keeps no request —
+  console offers the button to nobody else; then *never kept* (a pipeline step's or a model check's
+  own call); *not stored* (the use case keeps no bodies); *removed by retention* (a served request
+  whose period has passed); *past retention* (a refused request older than the period: whatever it
+  kept is gone); and *refused before its content was kept*. The period is the one the retention run
+  applies — the use case's own, else `AIRA_DEFAULT_RETENTION_DAYS` — so a period raised later makes
+  an older refusal read as refused before its content was kept, although the shorter period removed
+  it. When only one half is absent — a refusal has no answer, a failed redaction keeps no request —
   the view says so under that heading.
 
 ---
@@ -684,6 +714,7 @@ graph LR
     act -->|"block / throttle"| dec["access_suspensions<br/><i>author · reason · expiry</i>"]
     act -->|"enforcement off,<br/>or no duration"| noop["recorded as<br/><i>detected_not_enforced</i>"]
     dec -.->|"read at step 4<br/>of the next request"| gate["pre-dispatch gate"]
+    ev -.->|"mail round, where a relay is named"| mail["mail to the use case's administrators<br/><i>no person, key or address named</i>"]
 ```
 
 Detection is **asynchronous**, enforcement is **synchronous**, and they meet at a written decision:
@@ -694,6 +725,19 @@ each tick under a Postgres advisory lock, and which scopes saw traffic is read f
 so it sees the whole fleet's traffic. A `block` or `throttle` rule writes a suspension only while
 `AIRA_ENFORCE_SUSPENSIONS` is on and the rule has a duration; otherwise — and for an action this
 build does not know — the finding is recorded as `detected_not_enforced`.
+
+**Mail**, where the installation names a relay (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`), is a second
+round beside the evaluator, once a minute and one instance a round under an advisory lock of its
+own. It reads what the requests left behind — the budget counters in `budget_usage` and the
+findings in `anomaly_events` — and owes one mail per counter that crossed a share its use case
+names (by default the moment it is used up), only the highest share crossed at once, to the person
+whose allowance it is or, for the use case's shared budget, to its administrators; and one mail a
+round per use case listing its new findings, to its administrators unless they switched that off,
+naming no person, key or address. Each mail owed is a row in `mail_notices`, so a crossing seen
+again owes nothing new and a mail that fails is tried again the next round, up to five times; one
+whose period has ended, or a finding older than a day, is not sent late. The address is read from
+the directory when the mail is sent, by exact username, and the members of a group that administers
+the use case are asked for theirs. Nothing on the request path waits for any of it.
 
 Also afterwards: the **retention worker** clears stored prompts and answers once the use case's
 period has passed (default 7 days), and on its next run for a use case that has switched storage
@@ -714,7 +758,7 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Too many refused credentials from one address | 429 + `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` + `Retry-After` | _(no row)_ |
 | Use case named in a form that is not an identifier | 400 `INVALID_ARGUMENT` | 400 `VALIDATION_ERROR` | _(no row)_ |
 | Not a member of the use case named, or a key bound to another | 403 `PERMISSION_DENIED` | 403 `STANDARD_USER_PERMISSION_REQUIRED` | _(no row — the span)_ |
-| No use case named where one is required | 400 `INVALID_ARGUMENT` | 403 `STANDARD_USER_PERMISSION_REQUIRED`, also when several could be meant | _(no row)_ |
+| No use case named where one is required | 400 `INVALID_ARGUMENT` | 403 `STANDARD_USER_PERMISSION_REQUIRED`, whatever the credential reaches | _(no row)_ |
 | Use case retired, or not known to this gateway | 403 `PERMISSION_DENIED` | 403 `STANDARD_USER_PERMISSION_REQUIRED` | `invalid_request` |
 | Stopped by a rule or an operator | **429** `RESOURCE_EXHAUSTED` + `Retry-After` | 429 `EXTERNAL_KI_API_TOO_MANY_REQUEST` + `Retry-After` | `suspended` |
 | Over the rate limit | 429 + `Retry-After` | 429 + `Retry-After` | `rate_limited` |

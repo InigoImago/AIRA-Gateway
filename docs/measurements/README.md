@@ -12,7 +12,7 @@ figures that travel to another one are per request and per core.
 
 | Run | What it was |
 | --- | --- |
-| `2026-09-20-capacity-one-worker.*` | the gateway as the image ships it — `uvicorn` with no `--workers` |
+| `2026-09-20-capacity-one-worker.*` | the gateway as the image ships it — one `uvicorn` worker |
 | `2026-09-20-capacity-four-workers.*` | the same eight steps with `--workers 4` |
 
 `.md` is the report; `.jsonl` is one JSON object per step, with the baseline run, the per-container
@@ -22,11 +22,15 @@ To take a fresh set:
 
 ```bash
 make loadtest-up                                   # AIRA_GATEWAY_WORKERS=4 make loadtest-up for four
-make loadtest SCENARIO=capacity MEASUREMENTS=docs/measurements
+uv run python -m tools.loadtest.run --scenario capacity --keep-going --out docs/measurements
 make loadtest-clean && make loadtest-down
 ```
 
+`--keep-going` is what makes it the same eight steps. Without it a scenario stops at the first step
+that saturates — in the one-worker run above, chat at 300 users, the third — and `make loadtest`
+cannot pass it.
+
 A run writes `report.md` — rewritten after every step — and **appends** one line per step to
-`results.jsonl`, both in the `MEASUREMENTS` directory (`docs/measurements` by default). Rename the
-pair to the dated form above before the next run, or the next run's steps join this one's in the
-same `.jsonl`.
+`results.jsonl`, both in the `--out` directory (`make loadtest` passes `MEASUREMENTS`,
+`docs/measurements` by default; with no `--out` nothing is written). Rename the pair to the dated
+form above before the next run, or the next run's steps join this one's in the same `.jsonl`.

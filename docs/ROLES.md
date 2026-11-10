@@ -20,7 +20,7 @@ permission across the installation. The rule behind both:
 Administering every use case is a permission of its own, `usecase.manage_all`. The Global
 Administrator holds it by construction; another role holds it only if somebody gives it that
 permission. It acts in **Management** — the console and the control-plane API. In the gateway it
-opens nothing by itself (§2).
+opens no use case by itself (§2).
 
 **Keycloak decides who holds a role; AIRA decides what a role may do.** Every check in
 the gateway, in Management and in the console asks one function, `allows()`, for one permission.
@@ -76,7 +76,7 @@ built-in roles hold; IT Steuerung's column is its default, which an installation
 | --------------------------- | ----------------------------------------------------------------------------- | :-: | :----------: | :---------: | :----------: |
 | `usecase.create`            | Create a use case                                                             |     |      ✓       |             |              |
 | `usecase.read_all`          | See every use case and its configuration                                      |     |      ✓       |      ✓      |      ✓       |
-| `usecase.manage_all`        | Administer every use case in Management as if it were its administrator, which includes seeing them; nothing in the gateway | ⚠ | ✓ |   |              |
+| `usecase.manage_all`        | Administer every use case in Management as if it were its administrator, which includes seeing them; in the gateway, only trying a pipeline as an administrator, in a use case its holder belongs to | ⚠ | ✓ |   |              |
 | `usecase.read_retired`      | See retired use cases                                                         |     |      ✓       |             |      ✓       |
 | `usecase.purge`             | Purge a retired use case for good                                             |  ⚠  |      ✓       |             |              |
 | `catalog.write`             | Declare, price and release models; read the providers' offerings              |  ⚠  |      ✓       |             |              |
@@ -101,10 +101,15 @@ Some rules that follow from the table:
 - **IT Steuerung sees every figure and no content.** Visibility and content are different
   permissions.
 - **`usecase.manage_all` is Management's.** Its holder administers every use case in the console
-  and through the control-plane API. In the gateway it opens nothing by itself: calling a use case,
-  seeing its requests and reading its content still take a grant, or the oversight permissions
-  above. Its holder can give themselves that grant like any administrator, and it is then
-  recorded like any other — issuing themselves a key makes them a member of the use case.
+  and through the control-plane API. In the gateway it opens no use case by itself: calling a use
+  case, seeing its requests and reading its content still take a grant, or the oversight
+  permissions above. The one thing it adds there is the pipeline dry run's authoring — an unsaved
+  pipeline, steps past a block, what each step's model wrote — in a use case its holder already
+  belongs to, as that use case's administrators may. Its holder can give themselves a grant like
+  any administrator, and it is then recorded like any other — issuing themselves a key makes them
+  a member of the use case.
+- **Creating a use case makes its creator its administrator**, by a membership recorded like any
+  other. `usecase.create` gives no standing in a use case somebody else created.
 - **Every content read is recorded**: who, which request, when, on what ground and with which
   roles, before the content is returned. The log is under **Platform → Content reads**, for
   `content_read.read`. Reading also needs the use case to store content and
@@ -118,6 +123,26 @@ Some rules that follow from the table:
 - **A global anomaly rule** lands on use cases its author cannot otherwise touch, which is why
   writing one is a permission and reading one is everybody's.
 
+### What the console offers whom
+
+The console offers a screen or a button by the permission its server answer needs, as `/me` lists
+the reader's permissions, and inside a use case by what the server says this reader may do there;
+the server decides every request again.
+
+| In the console                              | Offered to                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Use cases**, **Models & prices**, **Reporting** | everybody signed in, each with what the reader may see; creating a use case `usecase.create`, editing the catalogue `catalog.write`, checking whether a model answers `operations.diagnose`, setting the installation's budget `budget.installation.write` |
+| **Pipeline tests**                          | `smoketest.run_any`, or an administrator of a use case they may call; writing the questions `smoketest.author` |
+| **Requests**                                | `incident.investigate`                                                                            |
+| **Register**                                | `report.read_all`                                                                                 |
+| **Security**                                | `anomaly.read_all`; stopping and resuming `incident.suspend`, global rules `anomaly.rule.global.write` |
+| **Platform → Content reads**                | `content_read.read`                                                                               |
+| **Platform → Roles**                        | `role.read`; creating, changing and deleting a role `role.manage`                                 |
+
+Retired use cases have no screen: `usecase.read_retired` lists them through the control-plane API
+(`GET /api/v1/use-cases/retired/`), and `usecase.purge` removes one there
+(`DELETE /api/v1/use-cases/<slug>/purge/`) once it has been retired for 30 days.
+
 ---
 
 ## 3. Grants: what happens inside one use case
@@ -128,7 +153,7 @@ A grant binds a **principal** — a person or a Keycloak group — to a use case
 | Grant role | May                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------- |
 | `user`     | call the gateway attributed to this use case; see it, its requests, its figures, its findings (**Warnings**) and its anomaly rules (**Rules**), as far as its `payload_visibility` allows; issue an API key for itself |
-| `admin`    | additionally change what happens inside it: members and group grants, API keys, the models released to it, pipeline, budgets — a budget for one named person included — and the shares of a budget at which a mail goes out, rate limits, its own anomaly rules and whether its administrators are mailed what they find, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
+| `admin`    | additionally change it and what happens inside it: its name and description, members and group grants, API keys — one issued in a member's name included — the models released to it, pipeline and fallback chains, budgets — a budget for one named person included — and the shares of a budget at which a mail goes out, rate limits, its own anomaly rules and whether its administrators are mailed what they find, whether tool calls, reasoning and prompt caching pass, storage, visibility and retention; run the question catalogue on it; search the directory for people and groups to add; and retire it |
 
 Two rules the code enforces so that neither plane has to restate them:
 
@@ -150,11 +175,9 @@ installation setting, not a use case's, so no administrator can lift it. While i
   filtered by person or key. Each reader sees their own rows in full. The button that opens the
   prompt and response is offered only to the two roles that can read it.
 - **Figures split by person** — on the reporting screen and its export — carry only the reader's
-  own row, and the reporting screen does not offer a breakdown by member. KIRA's `ki-usage`
-  answers every caller about themselves only, one row per model, in the use cases the credential
-  may act in — a key issued in a member's name answers for that member in its own use case only.
-  `report.read_all` is no exemption: IT Steuerung sees every total and every breakdown, and no
-  person. Totals and breakdowns by use case, model and outcome stay for everybody.
+  own row, and the reporting screen does not offer a breakdown by member. `report.read_all` is no
+  exemption: IT Steuerung sees every total and every breakdown, and no person. Totals and
+  breakdowns by use case, model and outcome stay for everybody.
 - **No latency per person** is computed for anybody. How fast a model answers stays, per model.
 - **Findings and stops** that name a person or a key show "a person" or "a key", except to the
   person concerned.
@@ -167,17 +190,27 @@ installation setting, not a use case's, so no administrator can lift it. While i
 - **`payload.read_any` and `incident.investigate`** — the two permissions that see a person —
   cannot be granted to IT Steuerung or to a role the installation defines.
 
-**In either mode**, two more rules hold:
+**In either mode**:
 
-- **Opening a request's details** — model, tokens, cost, latency, trace — is recorded, for every
-  reader, as reading its content is; the content-read log lists both and says which was opened.
-- **"What each person used"** on a use case's Members tab is shown to the Global Administrator only
-  (`usecase.manage_all`); everybody else sees their own figures on the Overview tab.
+- **Opening a request's details** — model, tokens, cost, latency, trace, what each pipeline step
+  decided and where the request ended — is recorded, for every reader, as reading its content is;
+  the content-read log lists both and says which was opened.
+- **"What each person used"** on a use case's Members tab is shown only to a holder of
+  `usecase.manage_all` — by default the Global Administrator alone — whose figures by person the
+  gateway does not narrow; everybody else sees their own figures on the Overview tab.
+- **What a client asks about itself** answers about the caller only: `GET /v1beta/me/budget`
+  carries no colleague's counter, and KIRA's `ki-usage` gives one row per model for the caller, in
+  the use cases the credential may act in — a key issued in a member's name answers for that member
+  in its own use case only.
+- **A mail carries nothing its reader could not already see**: a budget mail goes to the person
+  whose counter crossed, or for the use case's shared budget to its administrators; an anomaly mail
+  goes to the administrators, unless they switched it off, and names no person, key or address.
 
 Who sees a person, then, is whoever holds `incident.investigate`: the Global Administrator and IT
-Security. Spans, the SIEM feed and the logs carry a **pseudonym** in place of a person's name — the
-same person always the same one, keyed so that nobody can hash the directory back to names. They
-keep the key prefix and the source address, which an incident needs.
+Security. While the mode is on, spans, the SIEM feed and the logs carry a **pseudonym** in place
+of a person's name, keyed so that nobody can hash the directory back to names — the same person
+always the same one where `AIRA_PSEUDONYM_SECRET` is set, and a different one per process and
+restart where it is not. They keep the key prefix and the source address, which an incident needs.
 
 Switched off, each use case's own setting decides again, as below.
 
@@ -222,7 +255,8 @@ is refused — `400` on the Gemini surface, `403` on the KIRA surface, whose con
 for one — and the refusal names the use case to add, the key's own or those the caller reaches. A
 read (`GET`) names none, and a key's read is its own use case's. The operator's break-glass key,
 bound to no use case, is the one credential that may call without naming one
-(`gateway/src/aira_gateway/auth/dependencies.py`).
+(`gateway/src/aira_gateway/auth/dependencies.py`). `AIRA_REQUIRE_USE_CASE=false` lifts the rule
+for everybody, and the gateway refuses to start with it anywhere but `local`.
 
 For a bearer token, membership comes from the Keycloak group `/use-cases/<slug>` and from grants
 distributed to the gateway. A caller who names a use case they are not in is refused — **an empty
@@ -276,5 +310,5 @@ another address). Without it no group can be checked, so none is bound. [`INTEGR
   relay interval and a few seconds, without a new login.
 - A change of **group membership** in Keycloak takes effect with the caller's next token, as every
   group change does.
-- If the gateway cannot read its role table, stored roles confer nothing and the two fixed roles are
-  unaffected.
+- If the gateway cannot read its role table, IT Steuerung and every role the installation defined
+  confer nothing there, and the two fixed roles are unaffected.

@@ -1,12 +1,15 @@
 # Testing strategy
 
-AIRA is tested in layers, each for what the layer below cannot see. The hermetic layer runs
-anywhere **without any infrastructure**; the others need the live stack and run on demand and in CI.
+AIRA is tested in layers, each for what the layer below cannot see. The hermetic layer, the mutation
+checks and the real clients run **without any infrastructure**; the others need the live stack. CI
+runs every layer on every push except the mutation checks, the load runs and the UI audit, which
+run on demand.
 
 | Layer | Command | Needs |
 | --- | --- | --- |
 | Hermetic unit tests — Python, the repository's own checks, the console | `make test`, `make ci` | `uv` and Node; no Docker |
 | Mutation checks | `make mutants` | the same |
+| Real clients | `make test-clients` | the same, and `tmux`; no Docker |
 | Integration tests | `make test-integration` | the containerised stack, ready (below) |
 | A real local model | `make test-verify` | the stack with its local models |
 | Load runs | `make loadtest` | the stack and the load overlay |
@@ -14,16 +17,26 @@ anywhere **without any infrastructure**; the others need the live stack and run 
 | Windows sign-on | `make test-windows-sso` | the stack and a Windows domain beside it |
 | UI audit | `make ui-audit` | the stack, Playwright and Chromium |
 
+**Only the integration suite can spend money.** One of its files asks a paid Vertex speech model
+for audio whenever the gateway can reach Vertex — the warning under
+[Integration tests](#integration-tests-the-live-stack-opt-in) says when, and how to leave it out.
+Every other layer asks for the mock model, the local models or the load test's double alone; the
+browser suite also lists a provider's models with the stack's own key where it holds one, which is
+not billed.
+
 ## The hermetic layer (default)
 
 Runs everywhere, no services required. This is what CI's first two jobs run on every push.
 
 - **Python** (`make test-py` → `uv run pytest`): `gateway/tests`, `libs/tests`,
-  `management/backend/tests` and `tools/tests`. The product's tests use **in-memory SQLite**
+  `management/backend/tests`, `tools/tests`, and the checks in `tests/integration` that carry no
+  `integration` mark. The product's tests use **in-memory SQLite**
   (auto-detected under pytest), a **fake JWKS resolver** + self-signed RS256 for OIDC, the
   **deterministic mock provider**, and FastAPI `TestClient` / `httpx.ASGITransport`. No
   Postgres/Keycloak/Kafka/OTel needed, and the gateway's suite empties `AIRA_REDIS_URL` for the
-  whole session, so a Redis running on the machine is never shared between runs.
+  whole session, so a Redis running on the machine is never shared between runs. The root
+  `conftest.py` reads no `.env` and removes every `AIRA_*` and `VAULT_*` variable for the session,
+  so no credential on the machine reaches a hermetic test.
 - **The repository's own checks** (`tools/tests`) read the repository rather than the product: that
   a document names only `make` targets, ports, topics and links that exist, that the Compose files,
   the Makefile and CI agree with each other, that the two planes agree on the event vocabulary and
@@ -37,22 +50,22 @@ Runs everywhere, no services required. This is what CI's first two jobs run on e
 
   | | gate | last measured |
   | --- | --- | --- |
-  | Python (`--cov-fail-under`) | **90%** | 97.26% |
+  | Python (`--cov-fail-under`) | **90%** | 97.29% |
   | Console statements | 90% | 95.9% |
   | Console branches | **92%** | 93.8% |
   | Console lines | 93% | 97.2% |
   | Console functions | 75% | 86.7% |
 
-  The last measurement was taken with 6397 Python tests and 1523 console tests; `make test-py` and
-  `make test-frontend` print the current figures at the end of their runs. **A number here is a
-  floor and not an achievement**: 100% enforced would mean no line could be added without a test
-  that reaches it, and that is not what CI does.
+  The Python figure was measured over 8101 tests, the console's over 1523, when it had not yet
+  grown past 1800; `make test-py` and `make test-frontend` print the current figures at the end of
+  their runs. **A number here is a floor and not an achievement**: 100% enforced would mean no line
+  could be added without a test that reaches it, and that is not what CI does.
 
 Proof of the hermeticity: with the **entire Compose stack stopped**, `uv run pytest` passes.
 
 `make ci` is `make lint` and `make test` — `lint-py` and `lint-frontend`, `test-py` and
-`test-frontend`. It is the hermetic half of CI, not all of it: the integration and browser jobs run
-on live stacks.
+`test-frontend`. It is the hermetic half of CI, not all of it: the `clients` job is
+`make test-clients`, and the integration and browser jobs run on live stacks.
 
 ## Real clients (`make test-clients`)
 
@@ -71,18 +84,25 @@ sends forty requests together and requires every answer whole and every one reco
 **OpenCode, both generations.** `tools/clients` also installs OpenCode 1 (`opencode-ai`) and
 OpenCode 2 (`@opencode/cli`), two products with different Gemini clients. Each runs a coding turn
 headless — a tool call, its result and the answer — OpenCode 2 also with the configuration the
-console hands out. Each then runs its terminal interface in a `tmux` pane with the budget plugin
-installed, and the test reads the sidebar section and the `/budget` dialog back from the screen.
-Every OpenCode run has a home directory of its own, so nothing of the developer's OpenCode is read
-or written.
+console hands out — and the turns a real session meets: a model quiet for a while behind a stream
+kept alive, a thinking model's reasoning at the variant chosen, a conversation sent as one growing
+prefix, a model its provider no longer serves, a request id it must not read as an outage. Each
+then runs its terminal interface in a `tmux` pane with the budget plugin installed — from the
+project, and from the release archive unpacked into OpenCode's configuration directory — and the
+test reads the sidebar section and the `/budget` dialog back from the screen. Every OpenCode run
+has a home directory of its own, so nothing of the developer's OpenCode is read or written. Every
+client asks the gateway for its mock model, so none of this reaches a paid one.
 
 **The budget plugin's own tests** run under Bun, installed by `tools/clients` too, because Bun is
 what OpenCode runs plugins on: `tools/clients/opencode-budget-plugin.test.ts` loads the shipped file
 as OpenCode does and has OpenTUI's test renderer draw the sidebar, the footer line and the dialog,
 compared line by line. `tools/tests/test_the_opencode_plugin_holds_its_properties.py` runs it.
 
-`uv run pytest` skips all of this when `tools/clients` or `tmux` is not installed; `make
-test-clients` and CI's `clients` job install them and fail on a skip.
+`uv run pytest` skips the Node clients and the plugin's tests when `tools/clients` is not
+installed, and the terminal tests when `tmux` is not; the forty requests and the `google-genai`
+cases need neither and always run. `make test-clients` and CI's `clients` job install
+`tools/clients` (CI also `tmux`) and fail on a skip; [`tools/clients/README.md`](../tools/clients/README.md)
+has what they need.
 
 ## Mutation checks (hermetic, on demand)
 
@@ -109,8 +129,8 @@ somebody has edited since.
 
 `tests/integration/`, marked `@pytest.mark.integration` and **excluded from the default run**
 (`-m 'not integration'` in `addopts`). They run against the real Postgres, Keycloak, Kafka, Redis,
-Vault, collector, local model and both planes, with realm-signed tokens from the development realm's
-service-account clients. Bring the stack up first, and wait for it properly:
+Vault, collector, mail catcher, local model and both planes, with realm-signed tokens from the
+development realm's service-account clients. Bring the stack up first, and wait for it properly:
 
 ```bash
 make up-full            # infrastructure, both planes, the console, the demo provisioning
@@ -126,13 +146,28 @@ in and check that mode's answer, so the same commands test either; switch the st
 with `make showcase-strict-off` and `make showcase-strict-on` (`make showcase-mode` says which runs),
 or start it with the variable set: `AIRA_STRICT_DATA_MODE=false make up-full`.
 
-> **`make test-integration` can spend money.** `tests/integration/test_speech_live.py` sends
-> requests to the paid Vertex model `gemini-2.5-flash-tts` (in `europe-west1`) whenever the stack
-> has Vertex credentials — in `deploy/compose/.env` or in its Vault — and skips only when nothing on
-> the stack serves that model. On a machine configured with a real Vertex project, remove the
-> credentials first, or run the suite without that file:
+**The mail round needs the mail catcher.** `test_mail_round.py` uses up a budget and reads the mail
+it caused out of the showcase's mail catcher (`mailpit`, on port 8025), so the gateway has to send
+there, with a link to the console: start the stack as CI's integration job does, with
+`AIRA_SMTP_HOST=mailpit AIRA_SMTP_PORT=1025 AIRA_SMTP_SECURITY=none AIRA_MAIL_FROM=aira@demo.aira
+AIRA_CONSOLE_URL=http://localhost:4200`. Without them that test fails after two and a half minutes;
+it does not skip.
+
+> **`make test-integration` can spend money.** `tests/integration/test_speech_live.py` asks the
+> paid Vertex model `gemini-2.5-flash-tts` (in `europe-west1`) for speech twice, buffered and
+> streamed, whenever the gateway has a Vertex project and a way to authenticate to it — a
+> credential, a credentials file, the metadata server, or running on Google Cloud — from its
+> environment (`deploy/compose/.env`) or its Vault. It catalogues the model itself, so the model
+> need not be configured anywhere, and it skips only when the gateway answers `404`, which means no
+> Vertex at all. It also replaces the gateway's catalogue entry of that name for the run and
+> deletes it afterwards. No marker leaves it out — `-m "integration and not model_output"` keeps
+> it. On a machine configured with a real Vertex project, remove the credentials first, or run the
+> suite without that file:
 > `uv run pytest -m integration --no-cov --ignore=tests/integration/test_speech_live.py`.
-> CI's stacks have no cloud credentials.
+> `test_serving_options.py` also addresses a real catalogued model — the first approved one with a
+> bounded thinking mode, a paid one where the catalogue has it — with a request the gateway must
+> refuse before dispatch: it spends only if that refusal is broken. CI's stacks have no cloud
+> credentials.
 
 **`demo-ready` is not optional.** `wait-healthy` answers *"do four endpoints respond?"*; the suite
 calls models, and both planes learn the model catalogue through the seed. The seed deliberately
@@ -191,7 +226,8 @@ for what the ones above **structurally cannot see**: a real authorization-code f
 renders and does nothing, a layout that only a viewport has an opinion about. Anything needing a
 *user token* belongs here — the dev realm has the password grant off, so a token only comes from
 the real flow. It needs the same ready stack as the integration tests (`make up-full`,
-`make wait-healthy`, `make demo-ready`) and Chromium for Playwright
+`make wait-healthy`, `make demo-ready`), started with Management's per-user throttle raised for a
+whole run (`AIRA_THROTTLE_USER=6000/minute`, as CI starts it), and Chromium for Playwright
 (`cd e2e && npx playwright install --with-deps chromium`); [`e2e/README.md`](../e2e/README.md) has
 the rest.
 
@@ -231,13 +267,13 @@ Every push to any branch, every pull request, and every release tag runs:
 | `python` | `uv sync --frozen`; `ruff check`, `ruff format --check`, `mypy`; `uv run pytest` with the coverage gate | 20 min |
 | `frontend` | `npm ci`; Prettier over the console and `proxy.conf.cjs`; the production build; the unit tests with the coverage gate; Prettier and `tsc --noEmit` over the browser suite | 20 min |
 | `clients` | `uv sync --frozen`; `npm ci` in `tools/clients`; `tmux`; the real-client test — every major of the AI SDK's Google provider, `google-genai`, OpenCode 1 and 2 headless and in their terminal interface — and the budget plugin's own tests, which fail rather than skip here | 20 min |
-| `stack` | `make up-full`, `make wait-healthy`, `make demo-ready`, then the integration suite; the application logs on failure; `make down-full` | 40 min |
-| `browser` | a stack of its own, made ready the same way; Chromium; the browser suite, then `make test-windows-sso`; the logs and the Playwright report on failure | 30 min |
+| `stack` | the gateway's mail pointed at the showcase's mail catcher; `make up-full`, `make wait-healthy`, `make demo-ready`, then the integration suite; the application logs on failure; `make down-full` | 40 min |
+| `browser` | a stack of its own, with Management's per-user throttle at `6000/minute`, made ready the same way; Chromium; the browser suite, then `make test-windows-sso`; the logs and the Playwright report on failure | 30 min |
 
-The two stack jobs run side by side, each on its own stack. The first two run the commands of
-`make lint-py`, `make test-py`, `make lint-frontend` and `make test-frontend` written out, so each
-job installs its toolchain once; `tools/tests/test_ci_runs_what_a_developer_runs.py` holds the two
-in step.
+The two stack jobs run side by side, each once with strict data mode on and once off, and each of
+the four runs on a stack of its own. The first two run the commands of `make lint-py`,
+`make test-py`, `make lint-frontend` and `make test-frontend` written out, so each job installs its
+toolchain once; `tools/tests/test_ci_runs_what_a_developer_runs.py` holds the two in step.
 
 A pushed release tag adds four jobs: `described`, which checks the tag's annotation with no
 dependencies so a bad one is refused within a minute; `publish`, which needs all six and builds and
@@ -256,13 +292,19 @@ uv sync --frozen
 (cd management/frontend && npm ci)
 (cd e2e && npm ci)          # `make lint-frontend` type-checks the browser suite
 make ci
+make test-clients           # the real clients; also needs tmux
 ```
 
-The live half needs Docker, and one stack per suite run:
+The live half needs Docker and a stack, with one suite at a time against it. CI starts each suite
+on a stack of its own with the settings that suite needs; on one stack for both, set them all, and
+leave the speech test out on a machine that holds Vertex credentials:
 
 ```bash
+export AIRA_SMTP_HOST=mailpit AIRA_SMTP_PORT=1025 AIRA_SMTP_SECURITY=none \
+       AIRA_MAIL_FROM=aira@demo.aira AIRA_CONSOLE_URL=http://localhost:4200 \
+       AIRA_THROTTLE_USER=6000/minute
 make up-full && make wait-healthy && make demo-ready
-make test-integration
+make test-integration       # or: uv run pytest -m integration --no-cov --ignore=tests/integration/test_speech_live.py
 (cd e2e && npx playwright install --with-deps chromium)
 make test-e2e
 make test-windows-sso

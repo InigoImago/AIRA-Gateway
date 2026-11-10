@@ -3,7 +3,7 @@
 **For:** running the whole product on one machine, in containers, without touching your
 organisation's infrastructure.
 **You need:** Docker with Compose, `make`, `python3`, [`uv`](https://docs.astral.sh/uv/) and
-`curl`; about 20 GB of disk.
+`curl` — and `jq` for the health check in Step 5; about 20 GB of disk.
 **Shape:** every component in a container, including the two application planes.
 
 This is the setup for a workshop machine, a demonstration laptop, or a first evaluation. It is
@@ -23,14 +23,14 @@ make up-full
 This creates `deploy/compose/.env` from `deploy/compose/.env.example` if needed, builds the three
 application images, and starts:
 
-| Container | Port on `127.0.0.1` | What it is |
+| Container | Port on `127.0.0.1` and `::1` | What it is |
 |---|---|---|
 | `aira-frontend` | 4200 | the console |
 | `aira-gateway` | 8001 | the data plane, where model requests go |
 | `aira-management` | 8002 | the control plane API |
 | `aira-management-relay` | — | moves configuration changes to Kafka, every 10 seconds |
 | `aira-gateway-consumer` | — | applies them to the gateway |
-| `aira-gateway-retention` | — | deletes expired stored payloads, hourly |
+| `aira-gateway-retention` | — | deletes stored prompts and responses past their use case's retention period — and whole request rows past `AIRA_LOG_RETENTION_DAYS`, where that is set — hourly |
 | `aira-keycloak` | 8080, 9000 | sign-in: the development realm, imported on first start; 9000 is its health port |
 | `aira-postgres` | 5432 | the gateway's, Management's and Keycloak's databases |
 | `aira-kafka` | 29092 | the event bus |
@@ -38,22 +38,25 @@ application images, and starts:
 | `aira-vault` | 8200 | Vault in development mode — read only when `VAULT_ADDR` and a token or role id are set |
 | `aira-schema-registry` | 8081 | runs; nothing uses it |
 | `aira-otel-collector` | 4317, 4318, 8889 | OTLP in, and its own counters |
-| `aira-otel-lgtm` | 3000 | Grafana, with a provisioned dashboard — it receives nothing until `AIRA_OTEL_ENABLED=true` |
+| `aira-otel-lgtm` | 3000 | Grafana, with a provisioned dashboard — it receives nothing until `AIRA_OTEL_ENABLED=true`; an anonymous visitor sees the dashboards, and *Explore* needs Grafana's own administrator |
+| `aira-mailpit` | 8025 | a mail catcher, which receives the gateway's mail once it is pointed there ([Showcase](showcase.md) Step 4) |
 | `aira-ollama` | 11434 | the two local models |
 
 And, once each, the migrations of both planes, the topics, the realm repair (`keycloak-init`), the
-development Vault's secrets (`vault-init`), the seed (`management-seed`) and the model download
-(`ollama-pull`).
+development Vault's secrets (`vault-init`, which writes them only once `VAULT_ADDR` is set — the
+shipped file leaves it empty), the seed (`management-seed`) and the model download (`ollama-pull`).
 
 Wait for health, and then for the models:
 
 ```bash
 make ps            # every service, and whether it is healthy
-make demo-ready    # until the download has finished and the gateway serves both models
+make demo-ready    # waits for the download, seeds again, waits until the gateway serves both models
 ```
 
 The download runs in the background, so a stack whose containers are all healthy may still be
-without its models for a few minutes; `make demo-ready` is what waits for them.
+without its models for a few minutes. `make demo-ready` is what waits for them — and, on a first
+start, what catalogues them: the seed has run while the download was still going, and it catalogues
+only a model the endpoint already serves.
 
 ### Without building: run a published release
 
@@ -78,9 +81,9 @@ the version numbers exist for.
 The accounts already exist: the realm import created them in Keycloak, and the stack's own seed
 created their counterparts in Management — `make seed` is not needed here. Sign in at
 <http://localhost:4200> as `admin` / `demo-password`: the Global Administrator, who may create use
-cases and price models. `itsec`,
-`itgov`, `ucadmin` and `ucuser` are the others, all with `demo-password`; [Showcase](showcase.md)
-Step 3 says what each one sees.
+cases and price models. `itsec`, `itgov`, `ucadmin` and `ucuser` are the others, all with
+`demo-password`; [Showcase](showcase.md) Step 3 says what each one sees, and the privacy notice each
+acknowledges first.
 
 ---
 
@@ -92,17 +95,24 @@ to it.
 ### The local models are already there
 
 `qwen3:0.6b` for chat and `all-minilm` for embeddings are catalogued and approved by the seed — with
-prices that are invented and labelled so — once the download has finished; `make demo-ready` waits
-for that. The gateway reaches them through `AIRA_OPENAI_SERVERS` in `deploy/compose/.env`.
+prices that are invented and labelled so — once they are on disk: the seed catalogues only what the
+endpoint serves, and `make demo-ready` runs it again after the download. The gateway reaches them
+through `AIRA_OPENAI_SERVERS` in `deploy/compose/.env`.
 
 ### Or a cloud model
 
 The credential goes into `deploy/compose/.env`: `AIRA_VERTEX_PROJECT` with `AIRA_VERTEX_API_KEY`
 (or `AIRA_VERTEX_CREDENTIALS`, the service account's JSON as one line — or
-`AIRA_VERTEX_CREDENTIALS_FILE`, the path of the key file as the gateway container sees it) for Vertex AI in an EU region, or `AIRA_GOOGLE_API_KEY` for Google AI
-Studio — which also needs `global` in `AIRA_ALLOWED_REGIONS`, or the gateway refuses to start. Then
-`make up-full` again. This setup's Vault runs in development mode and keeps nothing across a
-restart, so on this machine the key lives in that file; [Integrated](integrated.md) §4 is how a key
+`AIRA_VERTEX_CREDENTIALS_FILE=/run/aira-secrets/vertex/key.json`, the key file saved as
+`deploy/compose/secrets/vertex/key.json` and readable by uid 10001, the gateway's user) for Vertex
+AI in an EU region, or `AIRA_GOOGLE_API_KEY` for Google AI Studio — which also needs `global` in
+`AIRA_ALLOWED_REGIONS`, or the gateway refuses to start. Microsoft Foundry (`AIRA_FOUNDRY_ENDPOINT`,
+`AIRA_FOUNDRY_API_KEY`, `AIRA_FOUNDRY_DEPLOYMENTS`) and another OpenAI-compatible server (one more
+entry in `AIRA_OPENAI_SERVERS`) go into the same file;
+[`../CONFIGURATION.md`](../CONFIGURATION.md) §3 has each platform's variables. Then `make up-full`
+again. The shipped file leaves `VAULT_ADDR` empty, so every credential is read from it, and this
+setup's Vault, when it is used, runs in development mode and keeps nothing across a restart — so on
+this machine the key lives in that file either way; [Integrated](integrated.md) §4 is how a key
 leaves it.
 
 Then catalogue the model in the console:
@@ -110,9 +120,13 @@ Then catalogue the model in the console:
 1. Sign in as `admin`.
 2. **Models & prices → + Add a model**, and choose the provider.
 3. Under **From the model reference**, find the model and press **Catalogue…**: the editor opens
-   with its limits, capabilities, how it reasons and — where this installation counts in US
-   dollars — its list prices filled in from a public model list, and says so. Check them; add the
-   region the model is reached in. A model the reference does not carry, you name yourself: the
+   with its limits, capabilities, how it reasons and its list prices filled in from a public model
+   list, and says so. The list counts in US dollars: in any other currency (`AIRA_CURRENCY`, `EUR`
+   by default) a list price is filled in only when `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` converts
+   it, and is shown beside the field otherwise. On Vertex with `AIRA_VERTEX_BILLING_ACCOUNT` set,
+   the editor also asks the billing account what this installation actually pays, and those prices
+   replace the list's — **Prices from the billing account** asks again. Check them; add the region
+   the model is reached in. A model the reference does not carry, you name yourself: the
    name exactly as the provider spells it, the prices per million tokens, and what the model can
    do. By default a model with no price is refused wherever a cost budget applies.
 4. Press **Check reachability**. You check before you add — not because the answer has to be good,
@@ -127,8 +141,9 @@ Then catalogue the model in the console:
 
 ## Step 4: a use case, its model, and a key
 
-1. **Use cases → + New use case** (as `admin`). A name; the technical id is derived from it. You
-   are its administrator from then on.
+1. **Use cases → + New use case** (as `admin`). A name; the **Technical id** is filled in from it,
+   is permanent, and is the `<use-case>` in the address below. You are its administrator from then
+   on.
 2. On its **Overview** tab, under **Models this use case may call**, release the model —
    `qwen3:0.6b` for the local one. A use case with nothing released can call nothing.
 3. On its **Members** tab, add the people or a group who will use it.
@@ -189,8 +204,9 @@ make config-verify      # does the deployment run what the file says?
 belong in Vault — and the infrastructure containers' own settings (`POSTGRES_PASSWORD`,
 `KEYCLOAK_ADMIN`, `AIRA_BIND_HOST`, the `AIRA_PUBLISH_*` ports), which are not AIRA settings.
 Compose fills those from the development defaults in `docker-compose.yml`, and both planes' database
-password comes from `POSTGRES_PASSWORD`. That is fine for a workshop machine and is the thing
-[Integrated](integrated.md) must not inherit.
+password comes from `POSTGRES_PASSWORD` unless a plane is given its own
+(`AIRA_GATEWAY_POSTGRES_PASSWORD`, `AIRA_MANAGEMENT_POSTGRES_PASSWORD`). That is fine for a
+workshop machine and is the thing [Integrated](integrated.md) must not inherit.
 
 ---
 
@@ -211,7 +227,7 @@ downloaded models.
 
 The compose file ships a **development** Keycloak realm with fixed passwords, a published Postgres
 password and Vault in dev mode, and the applications run with `AIRA_ENVIRONMENT=local`, which
-switches every start-up check off. That is fine on a laptop and unacceptable anywhere else. Outside
+switches every hardening check off. That is fine on a laptop and unacceptable anywhere else. Outside
 `local` the gateway refuses the published Postgres password, a missing audience, `PLAINTEXT` Kafka
 and plain-HTTP identity and Vault addresses — unless `AIRA_DEMO_MODE` is on, which waives exactly
 those — and Management refuses its own development defaults with no waiver at all.

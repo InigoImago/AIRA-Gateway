@@ -39,7 +39,9 @@ read before changing anything substantial.
    nothing that check can see: add it to the register and the texts by hand.
 6. **Update the reader-facing documents** when a change alters what a reader would do or expect:
    architecture, request lifecycle, API reference, deployment, configuration, integrations, gap
-   analysis, roles.
+   analysis, roles, testing. They describe and never cite: the fact goes in the sentence, not an
+   FRD or ADR number, a link into `docs/features/` or `docs/adr/`, or the devlog —
+   `tools/tests/test_reader_documents_describe_rather_than_cite.py` fails otherwise.
 7. **Cutting a release is one of these, not a chore after them.** A release is an annotated tag and
    **its message is the release notes** — there is no changelog. `make release-tag VERSION=vX.Y.Z`
    opens your editor on `docs/RELEASE-TEMPLATE.txt`; five rules refuse an annotation that says
@@ -51,13 +53,17 @@ read before changing anything substantial.
 ```bash
 make ci                # the hermetic gates: lint, types, unit tests with coverage
 make mutants           # break each guarded property; a test must notice
+make test-clients      # real clients against the gateway (tools/clients/README.md)
 make test-integration  # against the live stack (tests/integration/README.md)
 make test-e2e          # a real browser (e2e/README.md)
 ```
 
-`make ci` runs what CI's first two jobs run, and `tools/tests/test_ci_runs_what_a_developer_runs.py`
-keeps the two in step. CI then starts the full stack twice: once for the integration suite, once for
-the browser suites (end to end, then Windows sign-on).
+[`docs/TESTING.md`](docs/TESTING.md) has every layer, what each needs running, and which can spend
+money. `make ci` runs what CI's first two jobs run, and
+`tools/tests/test_ci_runs_what_a_developer_runs.py` keeps the two in step; CI's third job is
+`make test-clients`. CI then starts the full stack four times, side by side: for the integration
+suite and for the browser suites (end to end, then Windows sign-on), each once with strict data mode
+on and once off.
 
 Three rules that are not negotiable:
 
@@ -72,19 +78,22 @@ Three rules that are not negotiable:
 
 ## Generated files
 
-Edit the source and regenerate; never edit the copy. Each guard fails when the copy is stale.
+Edit the source and regenerate; never edit the copy. Each guard fails when the copy is stale; the
+model reference has none, because its source is outside the repository.
 
 | Generated | From | Regenerate with | Guard |
 |---|---|---|---|
 | `docs/features/README.md` | each FRD's header | `uv run python tools/features_index.py --write` | `tools/tests/test_features_index.py` |
 | `management/frontend/src/app/features/use-cases/opencode-plugin.generated.ts` | `tools/opencode/plugins/aira-budget/tui.tsx` | `uv run python tools/opencode_plugin_asset.py --write` | `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py` |
 | `management/frontend/public/favicon.ico` | `management/frontend/public/aira-mark.svg` | `uv run python tools/make_favicon.py --write` | `tools/tests/test_favicon_is_the_aira_mark.py` |
+| `management/backend/src/aira_management/apps/catalog/reference/models.json` | the public model list at models.dev | `make model-reference WRITE=1`, before a release; read the diff first | — |
 
 ## Database migrations
 
 - **Gateway (Alembic).** One file per revision in `gateway/migrations/versions/`, named
-  `00NN_<what>.py`, whose `revision` is that stem and whose `down_revision` is the current head.
-  Keep the id within 32 characters: that is all Alembic's `alembic_version` column holds. SQLite,
+  `00NN_<what>.py`, whose `revision` starts with the same `00NN_` — the stem, or a shorter id — and
+  whose `down_revision` is the current head. Keep the id within 32 characters: that is all
+  Alembic's `alembic_version` column holds. SQLite,
   which the hermetic suite runs on, enforces no length, so only Postgres refuses to record a longer
   one. `gateway/tests/test_the_migration_graph_is_a_line.py` fails on a second head, a second root
   or a missing parent; `tests/integration/test_the_gateway_migrations_match_its_models.py` compares

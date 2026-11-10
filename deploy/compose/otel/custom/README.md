@@ -11,4 +11,6 @@ Everything in this directory except this file is git-ignored. The directory is m
 
       AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/custom/my-destination.yaml
 
-The rules in `../recipes/README.md` apply to these fragments too.
+The collector reads a fragment when it starts and `collector.env` when its container is created,
+so recreate it after a change to either. The rules in `../recipes/README.md` apply to these
+fragments too.

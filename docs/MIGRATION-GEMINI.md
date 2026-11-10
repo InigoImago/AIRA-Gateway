@@ -38,8 +38,9 @@ its endpoint, with an API key or token of the gateway as its credential — and 
 as any client does, with `/uc/<use-case>` in front of the path or the `X-AIRA-Use-Case` header
 (§3). `model` is required and names a catalogue entry declared a reranker; the project, location
 and configuration in the path select nothing — the gateway ranks in its own Google project, at the
-locations the catalogue gives the model, for the use case the request belongs to. A ranking weighs one request per hundred records
-against the use case's rate limit and budget.
+locations the catalogue gives the model, for the use case the request belongs to. A ranking weighs
+one request per hundred records against the use case's rate limit and budget; where the use case's
+pipeline reads each text, it weighs one per text against the rate limit.
 
 The credential goes in `x-goog-api-key`, `?key=` or a bearer header — whichever your client already
 uses. Errors keep Google's envelope, `{"error": {"code": …, "message": …, "status": …}}`, so a
@@ -122,7 +123,9 @@ refusal says what to add — for a key, its own use case:
       "message": "Missing use case: every model call names one, with the /uc/<use-case> path prefix
                   or the X-AIRA-Use-Case header. This key belongs to 'assistant': put /uc/assistant
                   in front of the path.",
-      "status": "INVALID_ARGUMENT"}}
+      "status": "INVALID_ARGUMENT",
+      "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                   "reason": "INVALID_REQUEST", "domain": "aira.gateway", …}]}}
 ```
 
 The KIRA surface applies the same rule ([`MIGRATION-KIRA.md`
@@ -138,11 +141,14 @@ so is a key naming a use case other than its own.
 
 ### `google-genai` (the official Python SDK)
 
-Generation, SSE streaming, embedding, the error envelope, an attached image, and turning thinking
-off — all unmodified; and the JSON Schema fields (`parameters_json_schema`, `response_json_schema`)
-and `thinking_level`. `gateway/tests/test_google_sdk_speaks_to_us.py` runs ten cases from this SDK
-against the gateway in AIRA's own test suite, so the compatibility is asserted by the client rather
-than by us.
+Generation, SSE streaming, embedding, the error envelope with the reason and the request id, an
+attached image, and turning thinking off — all unmodified; a stream kept alive while the model is
+quiet, read by the synchronous and the asynchronous client alike, and one that breaks off raised as
+an error; a function call's signature handed back by a chat; and the JSON Schema fields
+(`parameters_json_schema`, `response_json_schema`) and `thinking_level`.
+`gateway/tests/test_google_sdk_speaks_to_us.py` runs twelve cases from this SDK against the gateway
+on a real socket in AIRA's own test suite, and `gateway/tests/test_real_gemini_clients.py` three
+more, so the compatibility is asserted by the client rather than by us.
 
 ```python
 from google import genai
@@ -191,8 +197,7 @@ rewrite with a Gemini client of its own, which streams with `streamGenerateConte
 declares every tool in JSON Schema (`parametersJsonSchema`). Both are run against the gateway in its
 own test suite (`make test-clients`): a coding turn with a real tool call and its answer, and the
 terminal interface with the budget plugin, read back from the screen. OpenCode 2 is run with its own
-configuration and with the one the console hands out, which is OpenCode 1's shape and which it
-still reads.
+configuration and with OpenCode 1's, the shape the console hands out, which it still reads.
 
 Two places write the configuration, with the key in it — so treat the file as the credential it is:
 
@@ -210,16 +215,28 @@ generations read:
   "provider": {
     "aira": {
       "npm": "@ai-sdk/google",
+      "name": "AIRA Gateway",
       "options": {
         "baseURL": "http://localhost:8001/uc/assistant/v1beta",
         "apiKey": "aira_…"
       },
-      "models": { "qwen3:0.6b": { "name": "qwen3:0.6b via AIRA …" } }
+      "models": {
+        "qwen3:0.6b": { "name": "qwen3:0.6b via AIRA", "limit": { … }, "cost": { … } }
+      }
     }
   },
   "model": "aira/qwen3:0.6b"
 }
 ```
+
+The console's file gives each model, where the catalogue has the figures, its `limit` — the context
+window and output cap — and its `cost`: input, output, cache-read and cache-write prices per million
+tokens (a cache price the catalogue leaves out written as the gateway charges it), plus the rates
+above 200 000 prompt tokens where the catalogue prices a long prompt from that length. OpenCode
+draws its context gauge and adds up a session's cost from these, and counts a rate it is not given
+as free. The prices are the installation's, unconverted; OpenCode prints every cost with `$`, so
+where the installation does not count in US dollars its currency is in the model's name
+(`qwen3:0.6b via AIRA (EUR)`).
 
 OpenCode 2's own shape for the same provider, with the key taken from the environment or from its
 credential store:
@@ -243,8 +260,8 @@ credential store:
 **The budget in the session.** The budget plugin adds an *AIRA budget* section to OpenCode's session
 sidebar — the limit that will refuse first, as a bar and a sentence, then what you spent today, this
 week and this month — and a `/budget` dialog with every allowance. One file serves both generations:
-save it as `.opencode/plugins/aira-budget/tui.tsx` (or under `~/.config/opencode/plugins/` for
-every project). OpenCode 2 finds it there; OpenCode 1, from 1.4, also needs `.opencode/tui.json`
+save it as `.opencode/plugins/aira-budget/tui.tsx` (or under `~/.config/opencode/plugins/aira-budget/`
+for every project). OpenCode 2 finds it there; OpenCode 1, from 1.4, also needs `.opencode/tui.json`
 with `{"plugin": ["./plugins/aira-budget/tui.tsx"]}`. It uses the key OpenCode already sends to the
 gateway and stores none. For many workstations, every release from v0.1.7 on carries the file as
 `opencode-aira-budget-<version>.tar.gz` with its checksum. Unpack it into `~/.config/opencode`; for
@@ -302,9 +319,10 @@ Any client that lets you override the base URL should work — that is the whole
 compatible surface — given a base URL that names its use case, `…/uc/<use-case>/v1beta`. AIRA has
 not been run against LangChain, LlamaIndex or the Vertex SDK, and this page will not pretend
 otherwise. If you try one, the fastest check is `GET /v1beta/models` with your key: a `200` means
-the credential is accepted, and lists what this gateway serves. It does not check the use case — a
-model call does: a `400` *"Missing use case"* means the base URL lacks `/uc/<use-case>`, and a `403`
-saying the use case is *not known to this gateway* means its configuration has not arrived yet.
+the credential is accepted, and lists what this gateway serves. It checks only that the credential
+may name the use case in the base URL, not that the gateway holds it yet — a model call does: a
+`400` *"Missing use case"* means the base URL lacks `/uc/<use-case>`, and a `403` saying the use
+case is *not known to this gateway* means its configuration has not arrived yet.
 Anything after that is the client's own configuration.
 
 ---
@@ -325,7 +343,8 @@ body of at most 250 000 JSON values nesting at most 64 levels — the last two c
 is decoded, the others before the request is validated — each refused with a `400` naming it: what
 a body costs is its structure, and every bit of it is paid before a rate limit can refuse anything.
 An inline attachment or a long text is one value, however long, so the bound is never about size —
-a large tool result that would break it travels as text.
+a large tool result that would break it travels as text. Size has its own bound: a body larger than
+`AIRA_MAX_REQUEST_BYTES` (8 MiB by default) is refused `413`, unread, naming the limit.
 
 **Functions, as current clients write them.**
 
@@ -402,8 +421,10 @@ parses anything new:
   `google-genai` SDK keeps `details` on its `APIError` and prints it, so the reason and the id are in
   the line a developer reads;
 * every response carries `X-AIRA-Request-Id`; an answer carries `X-AIRA-Model`, the model that
-  actually answered, and `X-AIRA-Pipeline`, what the use case's pipeline did (`pii_filter=redacted`,
-  `model_route=a>b`, …); a refusal carries `X-AIRA-Reason`;
+  actually answered; wherever the use case's pipeline ran, a block included, `X-AIRA-Pipeline` says
+  what it did (`pii_filter=redacted`, `model_route=a>b`, …); a refusal carries `X-AIRA-Reason`; an
+  answer from a model the catalogue marks deprecated carries
+  `Warning: 299 - "Model … is deprecated and will be withdrawn."`;
 * the message says who acted: the provider by its name (`Google Vertex AI returned 529. Reason:
   overloaded_error.`), or AIRA where the gateway stopped (`AIRA stopped waiting: …`, a `504`).
 

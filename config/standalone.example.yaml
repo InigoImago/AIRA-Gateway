@@ -192,11 +192,13 @@ privacy:
 # A read-only Keycloak service account, so the console can *search* your groups and people when
 # granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
 # role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
-# no custom role can be bound. `url` is where Management reaches Keycloak when that is not the
-# issuer's server; empty means the issuer's.
+# no custom role can be bound. `url` is where Management, and the gateway for a mail's address,
+# reach Keycloak's admin API. The settings read an empty one as the issuer's server, but Compose
+# replaces it with `http://keycloak:8080` — and an empty `client_id` with the development realm's
+# `aira-directory` — so the values below name that client, and the file says what the stack runs.
 directory:
-  client_id: ''
-  url: ''
+  client_id: aira-directory
+  url: http://keycloak:8080
   # client_secret: → Vault.
 
 # Mail: a person when their own budget crosses one of their use case's thresholds, a use case's
@@ -233,14 +235,15 @@ model:
 # ---------------------------------------------------------------------------------------------
 # The console, a static bundle behind nginx, configured when its **container starts**
 # (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane: the entrypoint writes
-# `runtime-config.js` from `oidc.issuer` and `oidc.client_id`, and templates the proxy from these.
+# `runtime-config.js` from `oidc.issuer`, `oidc.client_id` and `trace.url`, and templates the proxy
+# from these.
 # ---------------------------------------------------------------------------------------------
 
-# What the console's content policy lets it call. Left empty it is derived from the issuer's
-# origin, which is the only thing the console calls cross-origin — set it only for something the
-# derivation cannot guess, a second origin or a websocket host, and then name the issuer's origin
-# too: a value replaces the derivation. Getting it wrong produces a login that fails **in the
-# browser and nowhere else**.
+# What the console's content policy lets it call. Left empty it is `'self'` and the issuer's
+# origin, the only thing the console calls cross-origin — set it only for something the
+# derivation cannot guess, a second origin or a websocket host, and then name `'self'` and the
+# issuer's origin too: a value replaces the derivation. Getting it wrong produces a login that
+# fails **in the browser and nowhere else**.
 csp:
   connect_src: ''
 
@@ -446,6 +449,9 @@ log:
 # Bounds. Every one of these refuses something, so every one of them is a decision.
 # ---------------------------------------------------------------------------------------------
 max:
+  # The largest request body. 1 MiB refuses a coding assistant's session from about 300 000
+  # tokens of conversation; the gateway's own default, when this line is absent, is 8 MiB, and
+  # every proxy in front must let through at least what is set here.
   request_bytes: 1048576
   auth_failures_per_minute: 60
   embedding_batch: 64
@@ -490,6 +496,10 @@ vault:
   # `AIRA_SECRET_KEY` must not be the development default and this file cannot carry it, so Vault
   # is how it arrives: `make vault-init` creates the path, the read-only policy and the AppRole,
   # and prints the role id to put here. Until then Management refuses to start, naming the key.
+  # The role id needs its secret-id beside it: `make vault-init` writes that to
+  # `deploy/compose/secrets/vault-secret-id`, which reaches the containers only through a
+  # `secret_id_file:` line here and a mount of your own (`docs/deployment/integrated.md` §4). And
+  # the bundled Vault runs `-dev`, in memory: a restarted Vault container has forgotten the AppRole.
   role_id: ''
   namespace: ''
   timeout: 10

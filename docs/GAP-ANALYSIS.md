@@ -10,10 +10,11 @@ how much they matter, not by how hard they are.
 
 Legend: done built and verified · partly partial, with the missing half named · missing not built
 
-**Last re-read against the code: 2026-10-14.** That matters for a document of this kind: a gap
+**Last re-read against the code: 2026-11-10.** That matters for a document of this kind: a gap
 analysis is a *snapshot*, and one nobody re-reads becomes the opposite of what it is for — an
 authoritative-looking list of things that were true a fortnight ago. Row 24 was `missing · not
-scheduled` here while `FRD-118` had shipped.
+scheduled` here while `FRD-118` had shipped, and §3.5 said that nobody is told two weeks after
+budget and anomaly mail had shipped.
 
 ---
 
@@ -21,7 +22,7 @@ scheduled` here while `FRD-118` had shipped.
 
 | # | Feature | Stand | Where |
 |--:|---|---|---|
-| 1 | Unified provision of models | partly | Vertex in the EU — Gemini and Anthropic (`FRD-115`/`119`); Agent Platform's managed open models (GLM, DeepSeek), served only at `global` and so permitted by name (`ADR-0034`); Google AI Studio (`FRD-304`); any OpenAI-compatible server (`FRD-123`). Not built: Model Garden's **self-deployed** endpoints (`FRD-115` FR-2a). Foundry is built but **hermetic only** — no Azure subscription has ever run it (§3.7) |
+| 1 | Unified provision of models | partly | Vertex in the EU — Gemini and Anthropic (`FRD-115`/`119`); Agent Platform's managed open models, served only at `global` and so permitted by name (`ADR-0034`) — GLM-5.2 among them today, since Google retired the earlier GLM versions and serves no DeepSeek model any more; Google AI Studio (`FRD-304`); any OpenAI-compatible server (`FRD-123`). Not built: Model Garden's **self-deployed** endpoints (`FRD-115` FR-2a). Built and never run against the platform itself: Foundry — no Azure subscription has ever answered it — and Claude, which no test or check here has called (§3.7) |
 | 2 | Role assignment | done | `FRD-201`, `ADR-0009`, `ADR-0017`/`FRD-605` — a role is held **through a Keycloak group and nothing else**; a realm role assigned directly grants nothing. What a role may do is a permission set, and an installation defines its own roles, each bound to one checked group (`FRD-614`, `ADR-0025`) |
 | 3 | KIRA API compatibility | partly | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding; `FRD-146` — function calling, the predecessor's `gemini-embedding-2` vectors, two ids for one model, its values and statuses; `FRD-147` — reranking. Not built: **Live** (`WS /live/{model_id}`), which needs a transport of its own and decisions on budget, duration and audit; `/version-info`'s `jenkins` block, left out on purpose |
 | 4 | Auditability | partly | **Requests: done** (`FRD-122`, `FRD-128`) — every request attributed to a use case leaves a row, served or refused, including one whose caller hung up; requested vs. served model, pipeline decisions and degradation are on the row. A refusal *before* attribution is recorded on its span instead (§3.2). **Configuration: not built** — only role changes have a history (§3.1) |
@@ -29,7 +30,7 @@ scheduled` here while `FRD-118` had shipped.
 | 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
 | 7 | Blocking dangerous requests | partly | injection filter, personal data replaced before the prompt is sent and stored (`pii_filter`, opt-in per use case, `FRD-309`), operator kill switch; `FRD-504` **measures** what a model refuses. Not controls: jailbreak categories beyond injection, data exfiltration, output filtering — and no filter reads an attachment or a tool result (§3.4) |
 | 8 | Model routing from the definition | done | `FRD-300`, `FRD-306` |
-| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently. **Every model access is a chain since 2026-10-11** (`FRD-302`, `ADR-0032`) — a streamed request falls back for as long as nothing has reached the caller, and each pipeline step has its own chain. What a chain does not do is in §3.6 |
+| 9 | Model fallback | done | capability-homogeneous: a chain skips an incapable candidate rather than degrading silently. **Every model access is a chain since 2026-10-11** (`FRD-302`, `ADR-0032`) — a streamed request falls back for as long as nothing has reached the caller, and each pipeline step has its own chain. The chains are the **use case's own**, one per kind of request — text, embeddings, rankings — and empty until somebody sets one, so without it a failure is the caller's error (`FRD-310`, `ADR-0052`). What a chain does not do is in §3.6 |
 | 10 | Independence from Google / Microsoft | partly | proven for **three** platforms by an architecture assertion — Foundry reused the OpenAI dialect unchanged and its diff never left `upstreams/`; still unproven against a real Azure subscription (§3.7) |
 | 11 | Overview of all use cases | done | the list (`FRD-202`) and the **register** (`FRD-608`): one row per use case — purpose, processing notes, models and where they ran, storage, retention, who may read content — sortable, and exported as CSV |
 | 12 | Self-service filter and routing pipeline | done | `FRD-303`, `FRD-306`, `FRD-309` — three step types: injection filter, PII replacement, routing |
@@ -39,9 +40,10 @@ scheduled` here while `FRD-118` had shipped.
 | 16 | Anomaly detection | done | `FRD-500`/`501` — seven kinds, evaluated against the audit trail: refusal rate, error rate, spend spike, request spike, a new source address for a credential, payload size, blocked-prompt rate. None of them looks for leaked data (§3.4) |
 | 17 | Central overview of all use cases | done | see 11 |
 
-**Score:** 13 built, 4 partial, 0 missing (re-counted 2026-10-14). Three of the partials are
-*breadth* — each does what it says for what it covers. Row 4 is a missing half: the control plane
-does not record who changed it.
+**Score:** 12 built, 5 partial, 0 missing (re-counted 2026-11-10). Four of the partials are
+*breadth* — each does what it says for what it covers; row 3 became one when the comparison with
+the predecessor found its Live endpoint, which was left out. Row 4 is a missing half: the control
+plane does not record who changed it.
 
 > **Why this table was wrong.** Re-checked against the code on 2026-08-09 after `FRD-603`, and six
 > rows understated what exists — smoke tests and Foundry were built and still recorded as missing.
@@ -58,7 +60,7 @@ does not record who changed it.
 | 18 | Document processing (PDF, images) | done `FRD-110` — 15 media types, signature checks, a model that cannot read it is **refused by name** |
 | 19 | Extensibility as a measurable property | done the assertion passes and the claim has now been tested **four** times — Vertex/Gemini, Vertex/Anthropic, Foundry, which reused the OpenAI dialect without a line of change, and Vertex's managed open models, which reused it on a second transport; the dialect gained two readings (`reasoning_content`, a `usage` with no count) that every OpenAI-compatible server benefits from |
 | 20 | Secrets from Vault | done `FRD-116` — a settings source, fail-closed |
-| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS and traced outgoing calls done; Postgres alone decides readiness, and a Kafka outage reports *degraded* (FR-3a); **FR-7 (a second OpenAPI 3.0 document) not built** |
+| 21 | Operational diagnostics | partly `FRD-117` — build identity, upstream health, trace header, CORS and traced outgoing calls done; Postgres alone decides readiness, and a Kafka outage reports *degraded* (FR-3a); **FR-7 (a second OpenAPI 3.0 document) not built**; the build identity is read from settings that no published image and no overlay sets, so a pulled release reports none (§4) |
 | 22 | Masking sensitive content in stored payloads | partly `FRD-406` — **credentials** are masked in every stored payload; personal data is not, by decision (§6). A use case that must not send or keep it switches on `pii_filter` (`FRD-309`) |
 | 23 | Report export | done `FRD-602` — CSV as a renderer on the existing endpoint |
 | 24 | Multiple Keycloak backends / groups from UserInfo | **partly** `FRD-118` — the gateway accepts several issuers, each with its own keys and audience, chosen by the token's `iss` (`AIRA_OIDC_ISSUERS`); Management verifies tokens of one. **Groups from UserInfo stays declined** (FR-3) |
@@ -104,13 +106,13 @@ Three consequences:
   credential (401), a caller who names no use case (400) or one they are not a member of (403), a
   key used for another use case (403): none writes to `request_logs`, because a row per
   unauthenticated request would make the audit table a denial-of-service target. The span is
-  marked `aira.outcome = unauthenticated | forbidden`, with the status, the source address, the
-  subject where known and the use case asked for (`aira.use_case.requested`), and the delivery
-  channel keeps it. Reporting and the anomaly rules read `request_logs`, so they do not see these
-  attempts; a SIEM does. The 429 that throttles repeated failures from one address is raised before
-  that mark is set, so its span carries no `aira.outcome` — the attribute the channel keeps a
-  refused attempt by. A defect before dispatch answers 500 and writes no row either (logged as
-  `unhandled_error`); one inside `accounting` writes a `500` / `internal_error` row.
+  marked `aira.outcome` — `unauthenticated`, `forbidden`, or `unattributed` for a known caller who
+  named no use case — with the status, the source address, the subject where known and the use
+  case asked for (`aira.use_case.requested`), and the delivery channel keeps it. The 429 that
+  throttles repeated failures from one address is marked `unauthenticated` as well. Reporting and
+  the anomaly rules read `request_logs`, so they do not see these attempts; a SIEM does. A defect
+  before dispatch answers 500 and writes no row either (logged as `unhandled_error`); one inside
+  `accounting` writes a `500` / `internal_error` row.
 - **Sampling thins the channel.** Its records are spans, so `AIRA_OTEL_SAMPLE_RATIO` below 1
   forwards that share of requests and refusals and no more. The installation decides the ratio; a
   caller's `traceparent` flag does not.
@@ -163,17 +165,21 @@ another.
 
 ---
 
-### 3.5 Nobody is told
+### 3.5 Mail is the only way anybody is told — [`FRD-409`](features/FRD-409-a-mail-when-a-budget-runs-low.md)
 
-An anomaly finding is a row, shown in the console — **Security → Findings**, and **Warnings** on the
-use case. Nothing sends it anywhere: no mail, no webhook. Who gets told is a decision with its own
-blast radius, and `FRD-503` leaves it unmade.
+Once an installation names a relay (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`), the gateway mails a
+member whose per-person budget — the one every member has, or one set for them alone — crosses a
+threshold their use case set (100 % by default, up to five shares); the use case's administrators
+about its shared budget; and, unless they switch it off, the administrators about its anomaly
+findings, naming no person, key or address. The addresses are read from Keycloak
+when a mail is sent. Without a relay nothing is sent, and the console says so where the thresholds
+and the switch are set.
 
-Budgets have the same shape. The console colours a bar from 80 %, and a caller can read its own
-allowance (`GET /v1beta/me/budget`, `FRD-139`). A developer in OpenCode with the budget plugin sees
-it in the session sidebar and is warned at four fifths and at the limit (`FRD-144`); every other
-caller is told nothing before a limit refuses, and a use case learns it is over budget when its
-traffic starts failing with a 429.
+What stays in the console: the installation's own budget, which belongs to no use case, and a
+global rule's finding about one person or key (**Security → Findings**). There is no webhook, no
+chat and no paging, and a mail is in English only. Before a limit refuses, a caller can read what
+is left (`GET /v1beta/me/budget`, `FRD-139`), and a developer in OpenCode with the budget plugin sees
+it in the session and is warned at four fifths and at the limit (`FRD-144`).
 
 ---
 
@@ -198,7 +204,7 @@ traffic starts failing with a 429.
 
 ---
 
-### 3.7 Two upstreams have never answered a request — `FRD-120`, `FRD-115` FR-2a
+### 3.7 Built, and never run against the real system — `FRD-120`, `FRD-119`, `FRD-142`, `FRD-115` FR-2a
 
 **Microsoft Foundry has never met Azure.** The transport, the routing axis and the dialect are built
 and hermetically tested. **No Azure subscription has ever been called.** Everything the earlier live
@@ -206,6 +212,24 @@ rounds found — a model name with a colon, usage in an empty `choices` array, m
 was found by running against a real endpoint, and none of those classes of defect can be ruled out
 here. Feature 10 ("independence from Google/Microsoft") is therefore proven against live endpoints
 for Google and for a self-hosted server, and for Microsoft only by the architecture assertion.
+
+**No test and no check here has called Claude.** Vertex accepts no API key for Anthropic models, and
+the development environment holds no service account it would accept, so every live round measured
+Gemini and the open models only. The Anthropic dialect — thinking blocks carried with a function
+call (`FRD-152`), the cache breakpoints (`FRD-133` §6b), adaptive thinking, structured output as a
+forced tool (`FRD-145`) — follows Anthropic's documentation and is held to it by stand-ins. A rule a
+stand-in reads more kindly than Anthropic does costs a refused request, which falls back in two
+steps. What to read after the first deployment that calls Claude: `cache_read_input_tokens` growing
+from one message to the next, and `carried_thinking_refused` staying out of the log.
+
+**Keyless Google access and prices from the billing account have not met Google.** The workload
+identity exchange (`FRD-142`) and the SKU matching behind a price filled from the billing account
+(`FRD-509`) are tested against Google's documented shapes; the first real installation is the test,
+and every such price shows the SKU it was matched to before it is saved.
+
+**Two infrastructure paths ran in part.** Each plane's own database user was run against Postgres,
+its own Kafka identity over SASL was not (`FRD-150`); and mail has gone only to the showcase's
+catcher, never through a relay with STARTTLS and a login (`FRD-409`).
 
 **Model Garden's self-deployed endpoints are not built.** Models deployed onto the installation's
 own capacity — Nemotron and similar NIM containers — are addressed by endpoint id and fail
@@ -221,10 +245,12 @@ transport are built; the addressing and the cold-start policy for these are not 
   `tools/tests` (for example `test_the_two_planes_agree_on_the_event_vocabulary.py`). The Compose
   stack runs a `schema-registry` container that no code uses; removing it is open, because a local
   overlay still names it.
-- **No API reference.** Management's API has no OpenAPI document — it renders JSON and nothing
-  describes it. The gateway serves `/openapi.json`, `/docs` and `/redoc` only locally or in a demo,
-  so a deployment publishes no map of its control, reporting and incident endpoints. `FRD-117`
-  FR-7, a second OpenAPI 3.0 document for clients that cannot read 3.1, is not built either.
+- **No machine-readable API description.** [`API.md`](API.md) describes both planes' routes and the
+  events between them, and a test fails when a route is missing from it. But Management's API has
+  no OpenAPI document, and the gateway serves `/openapi.json`, `/docs` and `/redoc` only locally or
+  in a demo, so a deployment publishes no machine-readable map of its control, reporting and
+  incident endpoints. `FRD-117` FR-7, a second OpenAPI 3.0 document for clients that cannot read
+  3.1, is not built either.
 
 ---
 
@@ -237,13 +263,19 @@ runs **once**, so the result is an anecdote where the specification asked for a 
 attempts, and a model that refuses nine times in ten still reads as a refusal. A person judges every
 answer; nothing is checked by machine.
 
+**And only the demo comes with questions.** The 100 questions are written by the demo seed
+(`seed_demo`), which refuses outside `local` and demo mode and, forced, also creates the demo
+accounts, use cases and keys. An integrated installation's catalogue is therefore empty until
+somebody holding `smoketest.author` writes one in the console; no command loads the shipped
+questions alone.
+
 ---
 
 ## 4. Smaller, known, and written down
 
 | Gap | Note |
 |---|---|
-| Whoever can write to the configuration topics configures the gateway | The consumer applies what arrives there to the read-model its authorization comes from, and the broker's credentials are the only boundary: outside local the gateway's API process and Management refuse `PLAINTEXT`, the consumer and retention workers check nothing, and `SASL_PLAINTEXT` and TLS without a client certificate pass everywhere. Signed events and the stricter transport rule are built and not merged, because both need infrastructure that already runs to change — a signing key in Vault, its public half with the gateway, TLS with an identity per service at the broker |
+| Whoever can write to the configuration topics configures the gateway | The consumer applies what arrives there to the read-model its authorization comes from, and the broker's credentials are the only boundary: outside local the gateway's API process and Management refuse `PLAINTEXT`, the consumer and retention workers check nothing, and `SASL_PLAINTEXT` and TLS without a client certificate pass everywhere. Signed events and the stricter transport rule are built on the branch `fix/kafka-trust-boundary` and not merged, because both need infrastructure that already runs to change — a signing key in Vault, its public half with the gateway, TLS with an identity per service at the broker |
 | A use case purged before retirement ended its children can grant again on a replay | Each child is on a compaction key of its own; for a use case purged before retirement and purge ended them there, the children's last records still grant, a rebuild or an offset reset applies them again, and a re-created slug inherits them. Management no longer holds the rows that name those keys |
 | Google AI Studio embeddings are booked unpriced | Its embedding answer carries no token count, so such a request is counted apart as unpriced and no cost limit sees it (Vertex and the OpenAI dialect report one). What AI Studio returns has not been looked at live |
 | Audio input is priced at the text rate | Several Gemini models price audio input apart; the catalogue has one input price, and no dialect's audio share of the prompt is read. A price field on both planes and the share from each dialect's usage is the feature |
@@ -258,6 +290,10 @@ answer; nothing is checked by machine.
 | A cache's writes are stored, priced and shown nowhere | `cache_write_tokens` is on every row and in the cost, and the reports and the console show only reads, the `Cached` share. A conversation being written to the cache again on every message looks like a modest share and a high bill: exactly the fault [`FRD-133`](features/FRD-133-prompt-caching.md) §6b found, by reading the code rather than a figure. A column beside the share would show it |
 | Claude's thinking blocks are carried, and not yet measured against Claude | A Claude model gets its own thinking blocks back, carried in the signature of its first function call: within a tool loop always, on later turns wherever the history they were made on is unchanged. No Claude model is reachable from the environment this was built in: the blocks follow Anthropic's documented rules, and a refusal of them is sent again with less, so a mistake costs a refused request or two. A client that drops a call's signature — the AI SDK's first major — continues without the model's reasoning |
 | A model's thinking default is the vendor's statement, read once | The model reference proposes what a vendor documents a model doing when a request names no thinking setting, from a table of named models. A model the table does not name, or a vendor that changes its default, is proposed nothing, and an administrator decides |
+| Configuration that reaches the gateway late, or not at all, is not measured | The consumer meters neither its lag behind the topics nor its apply errors (`FRD-204` FR-5). An event it cannot apply is skipped so that it cannot stop the consumer, and leaves a `config_event_failed` log line and a failed span; the read-model keeps what it had until the next event on that key. A gateway that has fallen behind serves the configuration it has, and refuses a use case it has not heard of yet |
+| A published image does not say which build it is | `/healthz` and the KIRA surface's `/version-info` report a build number, time, commit and branch from `AIRA_BUILD_NUMBER`, `AIRA_BUILD_TIME`, `AIRA_GIT_COMMIT` and `AIRA_GIT_BRANCH`. The release job bakes none of them into the images and no overlay sets them, so a pulled `vX.Y.Z` answers nulls, and only the image tag says what runs |
+| The KIRA surface's deprecation link leads nowhere | Every KIRA response carries `Deprecation: true` and `Link: </docs/migration>; rel="deprecation"`; the gateway serves no such page, so a client that follows the link gets a `404` |
+| The previous release's fallback table is still in the gateway's schema | Gateway migration `0059` moved the chains into each use case's pipeline and left `fallback_chains` and `pipeline_configs.fallback_mode` in place for a release that still reads them during a rolling update. Nothing reads them now; the release after `v0.1.14` is the one that drops them |
 
 ---
 
@@ -279,6 +315,9 @@ Kept so a closed gap is not reopened by somebody reading an older copy.
 | A stream was silent until the model's first visible word, and callers behind a proxy were recorded as gone (`499`) | [`ADR-0046`](adr/ADR-0046-a-stream-is-never-silent-for-long.md) — the status goes out within `AIRA_STREAM_KEEPALIVE_SECONDS`, and a quiet stream sends a keepalive |
 | A Claude model lost its own reasoning at every step of a tool loop, and a thinking budget could not continue a call | [`FRD-152`](features/FRD-152-claudes-thinking-travels-with-the-turn.md), [`ADR-0047`](adr/ADR-0047-a-models-turn-state-travels-with-the-caller.md) — the thinking blocks travel with the function call and go back in their places |
 | A model's reasoning never showed in OpenCode | [`FRD-151`](features/FRD-151-a-models-reasoning-in-opencode.md) — the console's file offers the catalogue's thinking settings as variants, and a model that thinks unasked has a default proposed from its vendor's documentation, which is what makes the gateway ask for the reasoning |
+| Nobody was told before a budget refused, or about an anomaly finding | [`FRD-409`](features/FRD-409-a-mail-when-a-budget-runs-low.md), `ADR-0050` — the gateway mails the person, or the administrators for the shared budget and the findings, through the installation's relay (§3.5) |
+| The throttle on repeated failed sign-ins left no outcome on its span | `FRD-616` — its `429` is marked `unauthenticated` like the `401`, so the delivery channel keeps a probing address's attempts |
+| Both planes shared one database user and one Kafka identity | [`FRD-150`](features/FRD-150-each-plane-its-own-credentials.md) — `AIRA_GATEWAY_*` and `AIRA_MANAGEMENT_*`, read from one Vault path |
 | A failure did not say whether AIRA or the provider stopped | `FRD-628` FR-6, `FRD-141` — a message names who acted, AIRA's own time limit is a `504`, the console says where a request ended |
 | A `499` did not say how long the connection was open or silent, and a provider failure kept neither its error word nor its request id | [`FRD-630`](features/FRD-630-a-request-explained-to-a-technician.md) — every request keeps its technical record: milestones in milliseconds, what reached the caller, the provider's facts, the exception chain by class |
 | The pipeline dry run did not ask a step's model the price condition | `FRD-306` — a dry run's steps meet production's conditions, and it weighs one per step |
@@ -314,10 +353,11 @@ Recorded so the same questions are not re-asked:
   a grant is picked from the directory search; through the API a mistyped path is a grant that
   reaches nobody, and the grant list says `reaches: 0`. Only a role's group is checked against
   Keycloak, and that is refused while Keycloak cannot be asked.
-- **`usecase.manage_all` does not reach into the gateway.** Its holder administers every use case in
-  Management; calling a use case, or trying a pipeline on it, still takes a grant
+- **`usecase.manage_all` opens no use case in the gateway.** Its holder administers every use case
+  in Management; calling a use case, or trying a pipeline on it, still takes a grant
   ([`ADR-0007`](adr/ADR-0007-security-hardening-baseline.md): visibility never implies the right to
-  act inside a use case).
+  act inside a use case). Where a grant reaches the use case, the dry run lets its holder try an
+  unsaved pipeline there, as the use case's administrators may.
 - **Whole-row retention defaults to never.** Deliberate: deleting rows would truncate the spend
   history that cost reporting is made of.
 - **`alert` is the default for a new anomaly rule.** A safety property, not timidity.
@@ -354,5 +394,7 @@ on a decision rather than on code — who gets told — and the owner made it (`
 person whose own budget crosses a threshold its use case set, to the administrators about the shared
 budget, and to them about the use case's findings unless they switch that off, naming nobody. The installation's
 own budget and a global rule's finding about one person stay in the console; no channel but mail is
-built. `FRD-127` needs no new mechanism, only the two changes named in §3.3. Everything else is
-breadth.
+built. `FRD-127` needs no new mechanism, only the two changes named in §3.3. Three items of §3.7
+need access rather than code — a service account Vertex accepts for Anthropic models, an Azure
+subscription, and a first installation that reaches Google without a key — and each turns a stated
+risk into a measured one. Everything else is breadth.

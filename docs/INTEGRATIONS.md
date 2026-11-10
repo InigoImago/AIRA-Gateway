@@ -21,6 +21,7 @@ graph LR
     end
     subgraph optional["Optional"]
         vault["Vault"]
+        mail["Mail relay"]
     end
     aira["AIRA Gateway"] --> required
     aira --> recommended
@@ -72,7 +73,7 @@ counters are in `make otel-status` (§6).
 | Database | Owner | Holds |
 |---|---|---|
 | `aira_mgmt` | Management | configuration: use cases, memberships and group grants, hashed API keys, pipelines, budgets, limits, rules, roles, model catalog, outbox |
-| `aira_gateway` | Gateway | read-model of the above, plus `request_logs`, `payload_access` (every read of stored content), `anomaly_events`, `access_suspensions`, `budget_usage`, `retention_runs` |
+| `aira_gateway` | Gateway | read-model of the above, plus `request_logs`, `payload_access` (every read of stored content), `anomaly_events`, `access_suspensions`, `budget_usage`, `retention_runs`, `mail_notices` (every mail owed, and what became of it) |
 
 **What you provide**
 
@@ -82,13 +83,16 @@ counters are in `make otel-status` (§6).
   The migrations create their tables in `public`, and from PostgreSQL 15 on, `CREATE` on the
   *database* allows new schemas only: `public` belongs to the database's owner and is not writable
   by others. Run every migration as the same role, because a later one alters tables an earlier one
-  created; the services connect as that role as well.
+  created; the services connect as that role as well. Each plane names its role in
+  `AIRA_POSTGRES_USER` / `AIRA_POSTGRES_PASSWORD`; where both planes share one environment or one
+  Vault path, `AIRA_GATEWAY_POSTGRES_USER` / `_PASSWORD` and `AIRA_MANAGEMENT_POSTGRES_USER` /
+  `_PASSWORD` carry each plane's own and replace the shared pair.
 - No extensions beyond the defaults.
 - **Direct connections, or session pooling** — not transaction pooling (PgBouncer's transaction
   mode). The relay holds a session-level advisory lock for its run, so that two runs never publish
   out of order; through a transaction pooler the lock can stay behind on one connection or let two
-  runs overlap. The gateway lets psycopg prepare a statement on its fifth run, which a transaction
-  pooler hands to connections that never prepared it.
+  runs overlap. The gateway lets psycopg prepare a statement once it has run five times, and a
+  transaction pooler hands the next run to a connection that never prepared it.
 
 **Sizing.** `request_logs` is the one table that grows with traffic: one row per request, plus one
 per pipeline model call. Payloads (`request_payload`, `response_payload`) dominate its size and are
@@ -111,7 +115,8 @@ migration dropped, which every event then fails against.
 
 AIRA needs **one realm** — the gateway can trust several, the console reads one (below) — three
 role groups, whatever groups your organisation already uses, a public client for the console, one
-confidential client per machine caller, and optionally one for directory lookups.
+confidential client per machine caller, and optionally one for directory lookups. The Compose stack
+runs Keycloak 26.1, the only version CI tests.
 
 How the pieces fit — signing in, API keys, what the gateway checks, the directory lookups — is drawn
 in [`ARCHITECTURE.md`](ARCHITECTURE.md) §8.
@@ -128,19 +133,22 @@ AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;
 | Role | Holds by default | Changeable |
 |---|---|---|
 | `global-admin` | every permission, and alone the one that defines roles (`role.manage`) | no |
-| `it-security` | sees every use case, figure, request and anomaly; authors global anomaly rules; stops traffic and investigates; reads any stored content; runs the question catalogue | no |
+| `it-security` | sees every use case, figure, request and anomaly, and the record of content reads; authors global anomaly rules; stops traffic and investigates; reads any stored content; checks whether a model answers; writes and runs the question catalogue | no |
 | `it-steuerung` | sees every use case, retired ones included, every figure, request and anomaly, and the record of content reads; **changes nothing** | its permissions |
 
 The rest is a matter of what a role holds, not of which role it is: creating a use case
 or pricing a model can be granted to IT Steuerung, or to a role an installation defines; only
-`role.manage` stays with the Global Administrator. A role an installation defines is bound to
-**one** group in the console, not through `AIRA_ROLE_GROUPS`, and that group must exist in
-Keycloak. Who may do what, permission by permission, is [`ROLES.md`](ROLES.md).
+`role.manage` stays with the Global Administrator — and, while strict data mode is on, as it is by
+default, reading any stored content (`payload.read_any`) and investigating (`incident.investigate`)
+stay with the Global Administrator and IT Security. A role an installation defines is bound to
+**one** group in the console, not through `AIRA_ROLE_GROUPS`; that group must exist in Keycloak and
+confer no other role. Who may do what, permission by permission, is [`ROLES.md`](ROLES.md).
 
 **Administering every use case is not calling one.** `usecase.manage_all`, a Global
-Administrator's by default, lets its holder administer any use case in Management, and grants
+Administrator's by default, lets its holder administer any use case in Management, and opens
 nothing in the gateway: calling a use case, or seeing its requests there, takes a grant on it — or,
-for the requests, `trace.read_all`, a permission of its own.
+for the requests, `trace.read_all`, a permission of its own. Where its holder has such a grant, the
+pipeline dry run lets them try an unsaved pipeline there, as the use case's administrators may.
 
 The paths are yours — `/it/security-team` is as good as `/aira/it-security`, and several groups may
 confer one role (`it-security=/a/one,/b/two`). The match is **exact**: a sub-group does not inherit,
@@ -252,27 +260,36 @@ else's Keycloak.
 The console sends the browser to the issuer, and the services compare it with each token's `iss` as
 a string — a trailing slash included. No service calls it. Both planes fetch the signing keys from
 `AIRA_OIDC_JWKS_URI`, which defaults to Keycloak's `<issuer>/protocol/openid-connect/certs`, and
-Management asks the directory at `AIRA_DIRECTORY_URL`, which defaults to the issuer without its
-`/realms/<name>`. Where the services reach Keycloak by another name than browsers do — inside a
-cluster, usually — set those two and leave the issuer as the browser sees it.
+Management — and, where mail is sent, the gateway — asks the directory at `AIRA_DIRECTORY_URL`,
+which defaults to the issuer without its `/realms/<name>`. Where the services reach Keycloak by
+another name than browsers do — inside a cluster, usually — set those two and leave the issuer as
+the browser sees it.
+
+**Named, outside `local`.** Management refuses to start without `AIRA_OIDC_ISSUER`, and the gateway
+with `AIRA_OIDC_ENABLED=true` and no issuer in `AIRA_OIDC_ISSUER` or `AIRA_OIDC_ISSUERS`: no token
+could be verified, while the configuration read as though single sign-on worked.
 
 **HTTPS, outside `local`.** Both planes refuse to start while the issuer or the JWKS URI is
 `http://` to anything but a loopback address, and so does `VAULT_ADDR` ([§4a](#4a-hashicorp-vault)):
 over plain HTTP, anything on the path can substitute the signing keys and mint tokens that verify.
-The gateway waives this under `AIRA_DEMO_MODE`; Management does not.
+The gateway waives this under `AIRA_DEMO_MODE`; Management does not. Nothing checks
+`AIRA_DIRECTORY_URL`: over `http://` it carries the directory account's secret, and every name and
+address it reads, in the clear — give it `https://` as well.
 
 **What a token must be**, from Keycloak or any other provider:
 
 - signed with **RS256**, by a key the JWKS lists;
 - carrying `exp`, `iat`, `sub` and `iss`, and `aud` where an audience is configured;
 - issued at most `AIRA_OIDC_CLOCK_SKEW_SECONDS` (60) in the future, and used until `exp` plus
-  `AIRA_OIDC_EXPIRY_LEEWAY_SECONDS` (0);
+  `AIRA_OIDC_EXPIRY_LEEWAY_SECONDS` (0) — each at most 300 seconds, or the service does not start:
+  more is a second lifetime for every token, not a tolerance;
 - at most 16 KiB — a longer credential is refused with `401` before it is parsed.
 
 A provider other than Keycloak signs people in on those terms, with `AIRA_OIDC_JWKS_URI` set and a
 `groups` claim of full paths. What it does not get is the directory: those lookups use Keycloak's
 admin API, with the realm read from `/realms/<name>` in the issuer — so no directory search, no
-role bound to a group, and nobody granted by name before they have signed in once.
+role bound to a group, nobody granted by name before they have signed in once, and no mail, whose
+addresses come from there.
 
 #### Several realms — the gateway only
 
@@ -291,7 +308,9 @@ entry needs an audience. The realms are **trusted equally**: one `AIRA_ROLE_GROU
 grants, and the same group path or username from either grants the same, which is sound only while
 they describe one population. The audit row records the issuer a token came from. Management and
 the console read one issuer, `AIRA_OIDC_ISSUER`: people from the other realms call the gateway and
-do not sign in to the console.
+do not sign in to the console. The gateway asks the first entry's realm for mail addresses
+([§4b](#4b-a-mail-relay--optional)), so list the console's realm first — the one the directory
+account belongs to.
 
 #### And one that decides whose allowance is whose
 
@@ -373,17 +392,19 @@ This is not something the gateway can close for you: joining a directory id to a
 question put to the directory, and the gateway never asks the directory while it serves a request —
 it decides from its own copy of the configuration, which Management sends it over Kafka.
 
-#### Asking your directory (needed for custom roles)
+#### Asking your directory (needed for custom roles and for mail)
 
 To let the console **search** your groups and users when granting access, and to **check that a
 group exists before a role is bound to it**, give AIRA a read-only service account and
 set `AIRA_DIRECTORY_CLIENT_ID` / `AIRA_DIRECTORY_CLIENT_SECRET`. It needs `view-users` and
 `query-groups` on the realm — nothing else, and it is used for nothing but these lookups, which are
-Keycloak's admin API. Where the services reach Keycloak by another address than the one in
-`AIRA_OIDC_ISSUER` (inside a container, usually), set `AIRA_DIRECTORY_URL` to it. Where the
-installation sends mail ([§4b](#4b-a-mail-relay--optional)), the gateway reads the recipient's address
-with the same account; an installation that gives each service its own Vault path puts the secret on
-the gateway's as well.
+Keycloak's admin API, `/admin/realms/<realm>/…`. Where the services reach Keycloak by another
+address than the one in `AIRA_OIDC_ISSUER` — inside a container, usually, or where the admin paths
+are not served on the address browsers use — set `AIRA_DIRECTORY_URL` to it. Where the installation
+sends mail ([§4b](#4b-a-mail-relay--optional)), the gateway reads each recipient's address, and the
+members of a group that administers a use case, with the same account — and so holds read access
+to every profile in the realm; an installation that gives each service its own Vault path puts the
+secret on the gateway's as well.
 
 **Binding a role to a group is refused without it.** A group nobody could check is not trusted: the
 console says the group could not be verified, and the three built-in roles keep working. The
@@ -391,7 +412,9 @@ development realm ships such a client, `aira-directory`, and the compose stack u
 
 Without it the console still works, with one real limit. It offers the people who have signed in
 and the groups already granted somewhere, and **says that is what it is showing**; it cannot invent
-a group nobody has used, so on a fresh installation the first grant of a new group has to be typed.
+a group nobody has used, and it grants only what it offers — so on a fresh installation the first
+grant of a new group goes through the API ([`API.md` §3.4](API.md#34-who-reaches-a-use-case)), or
+the group is named `/use-cases/<slug>` and needs no grant.
 
 > **And granting a *person* who has never signed in needs this client.** AIRA creates their account
 > — with an invitation their first token claims — only for a username the directory
@@ -404,9 +427,10 @@ a group nobody has used, so on a fresh installation the first grant of a new gro
 
 | Client | Type | Used by | Needs |
 |---|---|---|---|
-| `aira-gateway` | public, **PKCE S256** | the SPA and the gateway's JWKS validation | exact redirect URIs and web origins — never `*` |
+| `aira-gateway` | public, **PKCE S256** | the console, whose tokens both planes accept | exact redirect URIs and web origins — never `*`; the client scopes `profile` and `email` |
 | *(service accounts)* | confidential | machine-to-machine callers | `client_credentials`; membership of the groups that grant what the caller may do, and the groups and audience mappers. A realm role grants nothing |
 | *(directory, optional)* | confidential | Management's directory lookups, and the gateway's mail addresses | `view-users` and `query-groups` from `realm-management`, nothing else — see above |
+| *(Google federation, optional)* | confidential | the gateway's access to Vertex without a key | service accounts on, every other flow off, and an audience mapper for Google's pool — see [§5 D](#d--no-key-at-all-workload-identity-federation-through-your-keycloak) |
 
 **Settings on your side that matter**
 
@@ -419,6 +443,10 @@ a group nobody has used, so on a fresh installation the first grant of a new gro
   hold — and if the realm forbids offline tokens, the code-to-token exchange fails with an error
   Keycloak returns *without* CORS headers, so the browser reports something that names neither the
   scope nor the setting.
+- **Keep the client scopes Keycloak gives a new client** — `basic`, `profile` and `email` among
+  them. Since Keycloak 25 the `sub` claim comes from `basic`, and both planes refuse a token without
+  one; the console asks for `openid profile email`, and Keycloak refuses a sign-in that asks for a
+  scope its client does not offer (`invalid_scope`).
 - **Client description length**: Keycloak stores it in `varchar(255)`. A longer one breaks the
   realm import, and the failure looks like Keycloak not starting.
 
@@ -565,7 +593,8 @@ A person disabled in AD whose session is still open is refused at its next renew
 > password grant off · `AIRA_OIDC_ISSUER` **as the browser sees it**, and `AIRA_OIDC_JWKS_URI`
 > reachable from both services · `https://` for both · with an **AD federation**: a **bounded cache
 > policy** and the *MSAD account controls* mapper · *(optional)* a read-only service account for
-> directory search, binding a role to a group and granting a person who has not signed in ·
+> directory search, binding a role to a group, granting a person who has not signed in and the
+> addresses mail goes to ·
 > *(optional)* Windows sign-on: an SPN and an AES keytab in AD, Kerberos on the federation with the
 > principal attribute **empty**, and the browsers' allowlist policy
 
@@ -666,7 +695,8 @@ relay (Management's). The database works the same way, with `AIRA_GATEWAY_POSTGR
 The identity is a username and a password: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`. Kerberos
 (`GSSAPI`) and `OAUTHBEARER` are not supported, and `SSL` on its own identifies nobody — there is no
 client-certificate setting — so it is `SASL_SSL`. `SASL_PLAINTEXT` is not refused outside `local`,
-and carries every event unencrypted.
+and carries every event unencrypted. The gateway waives the `PLAINTEXT` refusal under
+`AIRA_DEMO_MODE`; Management does not.
 
 **What you provide**: one broker principal per service (relay and consumer) — `Write` on the nine
 topics for the relay; `Read` on them for the consumer, and `Read` on its consumer group,
@@ -728,7 +758,7 @@ there wins over the environment.
 | A **KV-v2** secrets engine | read at `<VAULT_ADDR>/v1/<VAULT_MOUNT>/data/<VAULT_PATH>`; the defaults are `secret` and `aira` |
 | The **AppRole** auth method at the path `approle` | the login is `POST /v1/auth/approle/login`; that path is fixed in the code, and no setting moves it |
 | A **policy** with `read` on `<mount>/data/<path>` | nothing else: an AppRole that may write its secrets is one whose compromise rewrites the installation |
-| An **AppRole** holding that policy | its role id in `VAULT_ROLE_ID`, its secret-id in a mounted file named by `VAULT_SECRET_ID_FILE` |
+| An **AppRole** holding that policy | its role id in `VAULT_ROLE_ID`, its secret-id in a mounted file named by `VAULT_SECRET_ID_FILE` — or in `VAULT_SECRET_ID`, which puts it in the environment |
 | **HTTPS** | outside `local`, a `VAULT_ADDR` that is `http://` to anything but loopback refuses to start, on both planes |
 | The namespace, on Vault Enterprise | `VAULT_NAMESPACE` |
 
@@ -753,7 +783,9 @@ What decides how it behaves:
   (`"secrets": {"source": "environment"}`).
 - **Both planes read the same path by default** — the Compose files give each `VAULT_PATH=aira` —
   so each can read the other's credentials. `VAULT_PATH` and `VAULT_ROLE_ID` are set per process if
-  you want them apart; the setup tool makes one policy and one role.
+  you want them apart; the setup tool makes one policy and one role. One path can still give each
+  plane its own database user and Kafka identity, under the per-plane names
+  ([§3](#the-bus-is-a-trust-boundary)).
 - **A key is a setting's name**, with or without the `AIRA_` prefix and in either case. Two
   spellings of one setting with different values refuse to start.
 
@@ -774,19 +806,32 @@ the use case's, set by its administrators; a new one mails at 100 %, the moment 
 | A relay the gateway may send through: host, port, and whether it speaks STARTTLS (the default), TLS from the first byte, or neither (`AIRA_SMTP_HOST`, `AIRA_SMTP_PORT`, `AIRA_SMTP_SECURITY`) | The gateway hands each mail to it over SMTP | No mail: nothing is checked or stored, and nothing refuses to start |
 | A sender address the relay accepts (`AIRA_MAIL_FROM`), and a login if it asks for one (`AIRA_SMTP_USERNAME`, the password in Vault) | A relay rejects a sender it does not know | No mail, said once at start |
 | A route from the gateway's host to the relay | The gateway sends, not Management | Every mail is tried five times, a minute apart, and given up with the reason in the log |
-| The directory account above, and an address on each profile | The address is read from Keycloak when a mail is sent, and kept nowhere | A person without an address gets no mail; the log says so |
+| The directory account above, on the gateway as well, and an address on each profile | The address is read from Keycloak when a mail is sent, and kept nowhere | Without the account no mail finds an address, said once at start, and each mail fails its five tries; a person without an address gets no mail, and the log says so |
 | Where people open the console (`AIRA_CONSOLE_URL`), optional | A mail links the tab it is about | The mail names the tab |
 
 **What a mail carries.** A budget mail goes to the person it is about, with their own figures, or to
 a use case's administrators with the use case's. A mail about anomaly findings names the rule, what
 it measured and what was done — never the person, key or IP address concerned, whatever the data
 mode; the console's Warnings tab shows each reader what they may see. Each crossing is mailed once,
-however many gateway instances run; a mail about a period that has ended is dropped rather than sent
-late. The record of each mail is kept 30 days past its period, and the privacy notice describes it.
+however many gateway instances run — again only when an instance stops between sending a mail and
+recording it, never not at all; a mail about a period that has ended, or about a finding more
+than a day old, is dropped rather than sent late. The record of each mail is kept 30 days past its
+period, and the privacy notice describes it.
+
+**Who is found.** An administrator granted by name, and the enabled, direct members of a group
+granted `admin` — at most 200 per group, and the log says when a group was cut short. The gateway
+asks the realm of its issuer, the first entry where `AIRA_OIDC_ISSUERS` names several, so a person
+known only to another realm gets no mail.
 
 To try it locally, the showcase runs a mail catcher at `http://localhost:8025`: set
 `AIRA_SMTP_HOST=mailpit`, `AIRA_SMTP_PORT=1025`, `AIRA_SMTP_SECURITY=none` and
 `AIRA_MAIL_FROM=aira@demo.aira` in `.env`. The people of the development realm have addresses.
+
+> done a relay the gateway can reach · `AIRA_SMTP_HOST` and `AIRA_MAIL_FROM` on the gateway, the
+> relay's password in Vault · the directory account on the gateway too · an address on every
+> profile that should be mailed
+
+---
 
 ## 5. Model platforms
 
@@ -806,14 +851,24 @@ provider, publisher and region.
 | You provide | Why |
 |---|---|
 | A GCP **project** with the Agent Platform (Vertex AI) API enabled | |
-| A service account with `roles/aiplatform.user` — reached by its key, **without a key** through workload identity federation (D), or as the machine's own on Google Cloud — **or** an API key | One adapter for all of them — but **Claude needs the service account**: Vertex refuses an API key for Anthropic models — see below |
+| A service account with `roles/aiplatform.user` — reached by its key, **without a key** through workload identity federation (D), or as the machine's own on Google Cloud — **or** an API key | One adapter for all of them — but **Claude needs the service account**: Vertex refuses an API key for Anthropic models, for `gemini-embedding-2` and for the ranking API — see below |
 | The credential, from the environment, **Vault** or a file | `AIRA_VERTEX_CREDENTIALS` (JSON), `AIRA_VERTEX_CREDENTIALS_FILE` (a path to the same JSON) or `AIRA_VERTEX_API_KEY` |
-| The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and the console refuses one **as it is typed**, naming what is allowed. `global` is not in the shipped default: it names no region and guarantees none, so an installation that wants it says so out loud |
+| The **regions** you are permitted to use | Listed in `AIRA_ALLOWED_REGIONS`; a model outside them refuses to start, and the console refuses one **as it is typed**, naming what is allowed. Left empty, it is the EU regions of both clouds — Google's `eu`, `europe-west1`, `europe-west3`, `europe-west4`, `europe-north1` and Azure's `westeurope`, `northeurope`, `germanywestcentral`, `swedencentral`, `francecentral` — and a list replaces them. `global` is not among them: it names no region and guarantees none, so an installation that wants it says so out loud |
 | **Model Garden access** for the publishers you want | Anthropic models need to be enabled in your project; an open model the project cannot use answers the model check with `404` |
-| For an **open model** (GLM, DeepSeek): a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-5.2-maas` permits it for that model and no other |
+| For an **open model**: a permission by name | They are served only at `global`, which names no region. `AIRA_ALLOWED_MODEL_REGIONS=global=glm-5.2-maas` permits it for that model and no other. Of the open models the model reference lists, GLM-5.2 answered when last measured (2026-10-28); GLM-4.7, GLM-5 and every DeepSeek model answered `404`, retired by Google, and the reference marks them *deprecated* |
 
-One transport, three dialects. Anthropic on Vertex uses `:rawPredict` with the Messages API:
-`max_tokens` is always sent, cache tokens count as input, and there are no embeddings.
+**A model may name several regions.** A catalogue entry's regions are tried in order — a model in
+`AIRA_VERTEX_MODELS` has one — and a region that answers `404`, `408`, `429`, `500`, `502`–`504`
+or `529`, or that the allow-list does not permit, hands the request to the next before anything
+has reached the caller. One that refuses the request itself (`400`, `401`, `403`) does not, because
+that answer is the same in every region; nor does one that cannot be connected to, which is left
+to the fallback chain. A second region with quota of its own is what absorbs a `429`.
+
+One transport, three dialects. Anthropic on Vertex uses `:streamRawPredict` with the Messages API,
+for every request: one the caller did not stream is read from the stream and answered whole, so
+`AIRA_VERTEX_TIMEOUT_SECONDS` bounds a silence rather than the whole answer. `max_tokens` is always
+sent (`AIRA_VERTEX_DEFAULT_MAX_TOKENS`, 4096, where neither the request nor the catalogue names
+one), cache tokens count as input, and there are no embeddings.
 
 - **Thinking** takes the shape the catalogue declares for the model. A token budget (`limited`,
   1024 tokens at least) is the `enabled` thinking Claude 4.5 and earlier take. A level word (`low`,
@@ -829,8 +884,14 @@ One transport, three dialects. Anthropic on Vertex uses `:rawPredict` with the M
   `duration`, `email`, `hostname`, `uri`, `ipv4`, `ipv6`, `uuid`). A number's width (`int32`,
   `double`) is left out of the schema it is sent. A constraint it cannot take — a length, a
   minimum, `minItems` above 1 — skips the model by name.
-- **A cache write for an hour** is billed at twice the input price, a five-minute one at the
-  model's cache-write price.
+- **A cache write for an hour** is billed at twice the input price, never below the five-minute
+  price, and a five-minute one at the model's cache-write price — 1.25 times its input price where
+  the catalogue states none.
+- **Strict tools** stay off unless `AIRA_VERTEX_PARTNER_STRICT_TOOLS` is on. On Vertex a strict tool
+  is the partner-model feature `structured_outputs`, which the organisation policy
+  `constraints/vertexai.allowedPartnerModelFeatures` forbids unless your organisation allows it —
+  and then every request carrying a tool is refused with `FAILED_PRECONDITION`. The same policy can
+  refuse a request for structured output.
 
 The managed open models speak the **OpenAI**
 dialect at one endpoint, `endpoints/openapi/chat/completions`, with the model named in the body as
@@ -846,13 +907,23 @@ reasoning is returned only to a use case that asked for it, and there are no emb
   only a request for audio, and a text request to it is refused by name.
 - The audit trail keeps a description and hash of the audio, not the audio.
 
+**Ranking models** — `semantic-ranker-default-004` and later — are Google's ranking API, which the
+Discovery Engine serves rather than Vertex, at a location: `discoveryengine.googleapis.com` for
+`global`, `<location>-discoveryengine.googleapis.com` for another. Catalogue one under provider
+`vertex` and publisher `google`, with the capability `rerank` and its location as the region, and
+permit `global` for it by name (`AIRA_ALLOWED_MODEL_REGIONS=global=semantic-ranker-default-004`),
+the location Google documents. It needs the installation's Google identity, not an API key, and the
+Discovery Engine API enabled in the project. Each call names `AIRA_VERTEX_PROJECT` in the
+`X-Goog-User-Project` header, so Google bills it there, which needs `serviceusage.services.use` on
+that project (*Service Usage Consumer*). The records go to that service, not to Vertex.
+
 #### Which credential — and why it is not a free choice
 
 |  | Service account key | API key | No key (D, **recommended**) |
 |---|---|---|---|
 | Setting | `AIRA_VERTEX_CREDENTIALS`, or `AIRA_VERTEX_CREDENTIALS_FILE` | `AIRA_VERTEX_API_KEY` | `AIRA_VERTEX_CREDENTIALS(_FILE)` with Google's federation configuration, and `AIRA_VERTEX_FEDERATION_*` — or `AIRA_VERTEX_METADATA_SERVER` on Google Cloud |
 | How it authenticates | signed JWT exchanged for a short-lived token | `x-goog-api-key`, sent as-is | your Keycloak's token, exchanged at Google's STS, acting as the service account for an hour |
-| Publishers it reaches | all | Google and the open models — **not Anthropic**: Vertex answers `401`, and the caller gets `502` | all |
+| Publishers it reaches | all | Google and the open models — **not Anthropic**: Vertex answers `401`, and the caller gets `502`. Nor `gemini-embedding-2`, embedded through `:embedContent`, the ranking API or a billing account | all |
 | Rotation | a new JSON key: create it in IAM, store it, restart, then delete the old one — or, from a file, write it over the file: the next token is signed with it, no restart | a new key: store it, restart, then revoke the old one | your Keycloak client's secret; nothing at Google |
 | Scope | one IAM role, auditable per principal in Cloud Logging | whatever the key is restricted to | the same role, through the binding that lets the client act as the account |
 | Region | locational host, real residency | **the same** — see the note below | the same |
@@ -898,7 +969,7 @@ Console, or the equivalent `gcloud`. Replace `PROJECT` with your project id.
    `aira-gateway`. No project role at creation.
    `gcloud iam service-accounts create aira-gateway --project PROJECT`
 3. **Grant exactly one role.** `roles/aiplatform.user` — the narrowest that can call
-   `:generateContent` and `:rawPredict`. Not `roles/editor`.
+   `:generateContent` and `:streamRawPredict`. Not `roles/editor`.
    ```
    gcloud projects add-iam-policy-binding PROJECT \
      --member "serviceAccount:aira-gateway@PROJECT.iam.gserviceaccount.com" \
@@ -908,8 +979,9 @@ Console, or the equivalent `gcloud`. Replace `PROJECT` with your project id.
    `gcloud iam service-accounts keys create key.json --iam-account aira-gateway@PROJECT.iam.gserviceaccount.com`
 5. **Store it.** Either leave it a file and name it — the simplest, and the one that rotates
    without a restart:
-   `AIRA_VERTEX_CREDENTIALS_FILE=/run/secrets/vertex-key.json`
-   (in Compose, a `secrets:` entry or a read-only volume; the gateway's user must be able to read
+   `AIRA_VERTEX_CREDENTIALS_FILE=/run/aira-secrets/vertex/key.json`
+   (the shipped Compose mounts `deploy/compose/secrets/vertex/` read-only there; elsewhere, a
+   `secrets:` entry or a read-only volume. The gateway runs as uid 10001, which must be able to read
    it). Or the whole file, as one line, in Vault (below) or in the environment:
    `AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"-----BEGIN PRIVATE KEY-----\n…"}'`
 6. **Name the project and the models:**
@@ -940,7 +1012,8 @@ Reference: [Authenticate to Agent Platform](https://docs.cloud.google.com/gemini
 5. **Except for Claude.** Vertex refuses an API key for Anthropic models (`401`, which the caller
    receives as a `502`), so a deployment on a key cannot serve them. The gateway sends the key to
    every publisher alike and does not refuse such a model at start-up; to serve Claude, configure
-   the service account (B).
+   the service account (B). The same holds for `gemini-embedding-2`, which is embedded through
+   `:embedContent`, for a ranking model, and for prices from the billing account (E).
 
 #### D — no key at all: workload identity federation through your Keycloak
 
@@ -973,6 +1046,9 @@ it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model che
 2. *Client scopes → aira-gateway-gcp-dedicated → Add mapper → By configuration → Audience*:
    **Included Custom Audience** `aira-gcp`, **Add to access token** on. Google checks the token's
    `aud` against the provider's allowed audiences, and Keycloak's default `aud` is not one of them.
+   Keycloak keeps `account` beside it (`aud: ["aira-gcp", "account"]`), from the client's default
+   `roles` scope. Should the exchange answer `AUDIENCE_MISMATCH` with the mapper in place, remove
+   `roles` from the client's *Client scopes*, so `aira-gcp` is the only audience.
 
 **At Google** (replace `PROJECT` and `PROJECT_NUMBER`):
 
@@ -986,9 +1062,11 @@ it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model che
      --attribute-mapping "google.subject=assertion.azp" \
      --attribute-condition "assertion.azp == 'aira-gateway-gcp'"
    ```
-   The issuer is the realm's URL exactly as it stands in the token's `iss`. **If Google cannot reach
-   your Keycloak** — it lives on the internal network — upload the realm's keys instead, without
-   the certificate fields Google refuses, by adding `--jwk-json-path realm-jwks.json` after:
+   The issuer is the realm's URL exactly as it stands in the token's `iss` — the address Keycloak
+   is reached at, `https://sso.example.com/realms/aira`, not an internal container name. **If
+   Google cannot reach your Keycloak** — it lives on the internal network — upload the realm's keys
+   instead, without the certificate fields Google refuses, by adding
+   `--jwk-json-path realm-jwks.json` after:
    ```
    curl -s https://sso.example.com/realms/aira/protocol/openid-connect/certs \
      | jq '{keys: [.keys[] | select(.use == "sig") | del(.x5c, .x5t, ."x5t#S256")]}' \
@@ -1026,10 +1104,13 @@ it is refused with `Org Policy violated` (`ORG_POLICY_VIOLATED` in the model che
    AIRA_VERTEX_FEDERATION_CLIENT_SECRET=…        # from Vault
    ```
    and `AIRA_VERTEX_PROJECT`, `AIRA_VERTEX_MODELS`, `AIRA_ALLOWED_REGIONS` as in B.
-7. **Check reachability** on a model in the console. A refusal names its cause:
-   `AUDIENCE_MISMATCH` (step 2), `ATTRIBUTE_CONDITION_REJECTED` (step 3's condition),
-   `ISSUER_UNREACHABLE` (upload the keys), `IAM_PERMISSION_DENIED` naming
-   `iam.serviceAccounts.getAccessToken` (step 4), `CLIENT_REJECTED` (step 1's secret).
+7. **Check reachability** on a Gemini or an open model in the console — a Claude model's check asks
+   Google nothing. A refusal names its cause: `AUDIENCE_MISMATCH` (step 2),
+   `ATTRIBUTE_CONDITION_REJECTED` (step 3's condition), `ISSUER_UNREACHABLE` (upload the keys),
+   `SIGNATURE_NOT_VERIFIED` (upload them again), `ORG_POLICY_VIOLATED` (the organisation policy
+   above), `IAM_PERMISSION_DENIED` naming `iam.serviceAccounts.getAccessToken` (step 4),
+   `CLIENT_REJECTED` (step 1's secret), `SERVICE_ACCOUNTS_DISABLED` (step 1's *Service accounts
+   roles*), `SUBJECT_TOKEN_EXPIRED` (the clocks).
 
 Rotation is Keycloak's: regenerate the client secret, store it, restart the gateway. Disabling the
 client, or removing the binding of step 4, ends the access within the hour a token lives.
@@ -1043,7 +1124,11 @@ federated token directly, for an installation that grants `roles/aiplatform.user
 principal itself.
 
 **On Google Cloud** — a VM, GKE with workload identity, Cloud Run — `AIRA_VERTEX_METADATA_SERVER=true`
-uses the machine's own service account. Nothing else.
+uses the machine's own service account. Nothing else — and where no credential is configured, not
+even that: with `AIRA_VERTEX_PROJECT` set and no key, no federation configuration and no API key,
+the gateway asks the metadata server at start, for at most a second, and uses the machine's account
+where it answers. A credential that is set and cannot be read stops the start instead; it never
+quietly becomes the machine's identity.
 
 The configuration is checked at start: an audience that is not a provider's full name, a
 `token_url` or impersonation address anywhere but `https://….googleapis.com` (the token sent there
@@ -1096,8 +1181,10 @@ in `AIRA_CURRENCY` — Google converts — and a contract price is used where yo
 A field the account has no SKU for keeps what was there, and the editor says which.
 
 **Where the account has no price**, the model reference's US-dollar list price is the fallback. It
-is filled only at a rate you set, `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` (euros per dollar, e.g.
-`0.92`, on Management), and says so under the field; without a rate it is shown and not filled.
+is filled at a rate you set, `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` on Management — units of
+`AIRA_CURRENCY` per US dollar, `0.92` for euros — and says so under the field; without a rate it is
+shown and not filled. An installation that counts in US dollars needs no rate: the list price is
+filled as it stands.
 
 The match from a SKU's name to a model is by name, word for word (*Gemini 2.5 Flash Input Text* is
 `gemini-2.5-flash`'s input, *Gemini 2.5 Flash Lite …* is not). Check the SKU named under each price
@@ -1116,21 +1203,26 @@ the invoice differ, the difference is in what is being compared. Look in this or
    list price in US dollars at the rate you set. The bill is in the account's currency at Google's
    price — a contract price where you have one, and about **10 % above the list price for Claude on
    a regional endpoint**. Fill Claude models from the billing account (E), and compare each field
-   with the SKU named under it, cache reads and cache writes included. Until this release the model
-   reference stated Claude Sonnet 5.5's cache reads at 0.10 US dollars per million tokens where
-   Anthropic lists 0.20: a model catalogued from it books every cache read at half its price, which
-   in an agentic session is about a fifth of the turn. Correct the field where it says 0.10.
+   with the SKU named under it, cache reads and cache writes included. The model reference corrects
+   the public list where the vendor bills otherwise, and says so beside the draft: Claude Sonnet
+   5.5's cache reads are 0.20 US dollars per million tokens, as Anthropic lists them, where the
+   public list says 0.10. An entry filled from a reference before v0.1.14 keeps its 0.10 — a saved
+   entry is never changed — and books every cache read at half its price, about a fifth of an
+   agentic turn: correct the field.
 2. **What else uses the project.** The bill covers every call in the Google Cloud project — another
    application, a local stack or a test run with a key of the project — and the gateway books only
    what passes through it. A project of its own per installation makes the two comparable.
 3. **The day boundary.** Google's reports count days in US Pacific time and arrive hours late; the
-   console counts on the installation's clock. Compare a whole month, or the same hours.
+   console counts on the installation's clock (`AIRA_TIME_ZONE`, UTC unless set). Compare a whole
+   month, or the same hours.
 4. **Which figure.** A budget's counters hold only what some budget binds. Compare the invoice with
    the console's *Reporting* page, which sums every row, the pipeline steps' model calls included,
    and says when a figure is a lower bound.
 5. **What the gateway cannot see.** A stream that broke off before the vendor's usage report is
-   booked at a lower bound — its prompt counted and priced as if read from the cache, its thinking
-   not at all — and the report marks such rows. An attempt the gateway stopped waiting for, which a
+   booked at a lower bound, and the report marks such rows: on Gemini the prompt and the answer
+   received, counted again at Google for nothing (`AIRA_COUNT_CANCELLED_STREAMS`) and a long prompt
+   priced as if read from the cache; on Claude the input it had reported; on any other model
+   nothing. Thinking is in none of them. An attempt the gateway stopped waiting for, which a
    fallback chain then gave to another model, is booked at nothing, while the vendor may bill it.
 6. **Prompts the vendor did not cache.** A cache hit is the vendor's to give, and the row books what
    it reported. An open model on the global endpoint hit its cache on one turn in six in the
@@ -1138,30 +1230,44 @@ the invoice differ, the difference is in what is being compared. Look in this or
 
 #### When the model check says no
 
-The console's **Check reachability** asks each region a question that costs nothing, and when the
-answer is no it says why: the cause Google stated, as one word from Google's own list, and what to
-change. Requests that fail the same way carry the word in their error message
+The console's **Check reachability** asks each region a question that costs nothing — `:countTokens`
+for a Gemini model, an empty conversation for an open model — and when the answer is no it says
+why: the cause Google stated, as one word from Google's own list, and what to change. A Claude
+model has no such question here: its check says it did not ask, and its first request is the
+check. Requests that fail the same way carry the word in their error message
 (`Google Vertex AI returned 403. Reason: SERVICE_DISABLED.`), so a developer can tell the fault is
 the installation's and say which; the explanation, with project numbers and permissions, is for
-whoever runs the installation — the check, `/readyz` and the gateway's log. Google's own message is
-never repeated: it can quote the address it was called at.
+whoever runs the installation — the check, `/readyz` and the gateway's log. Google's own message
+is repeated only after a `400` or a `413`, which name a fault in the request, cut at 300
+characters — never otherwise: it can quote the address it was called at.
 
 | Word | What it means | What to do |
 |---|---|---|
-| `SERVICE_DISABLED` | the Vertex AI API is not enabled in the project | enable `aiplatform.googleapis.com` (B, step 1), wait a minute |
-| `IAM_PERMISSION_DENIED` | the account lacks a permission — or the model does not exist in that region, which Google reports the same way | grant `roles/aiplatform.user` (B, step 3); check the model's region |
+| `SERVICE_DISABLED` | an API the call needs is not enabled in the project — Vertex AI; the Cloud Billing API for prices; the Discovery Engine API for ranking | enable it (`aiplatform.googleapis.com`: B, step 1; `cloudbilling.googleapis.com`: E, step 3), wait a minute |
+| `IAM_PERMISSION_DENIED` | the account lacks a permission — or the model does not exist in that region, which Google reports the same way | grant `roles/aiplatform.user` (B, step 3); check the model's region. Naming `iam.serviceAccounts.getAccessToken`, D, step 4; naming a `billing.` permission, E, step 2 |
 | `NOT_FOUND` | no such model at that address | the model id, its region (not every model is offered in every region), and for Claude: enabled in Model Garden |
-| `PERMISSION_DENIED`, `FAILED_PRECONDITION` | the call is refused for the project | for a partner model, accept its terms in Model Garden |
+| `PERMISSION_DENIED` | the credential was accepted and may not do this | grant `roles/aiplatform.user` (B, step 3); for a partner model, enable it in Model Garden |
+| `FAILED_PRECONDITION` | something has to be set up or allowed first | for a partner model, accept its terms in Model Garden; an organisation policy such as `constraints/vertexai.allowedPartnerModelFeatures` can forbid a feature the request used — structured output, strict tools; otherwise billing or the project's location |
+| `UNAUTHENTICATED` | the credential was not accepted: revoked, mistyped, or a token for another audience | the credential — for Claude on an API key, C, step 5 |
 | `CONSUMER_INVALID`, `USER_PROJECT_DENIED` | the project does not exist, or the account may not use it | `AIRA_VERTEX_PROJECT` is the project **id**; grant Service Usage Consumer |
 | `BILLING_DISABLED` | no billing on the project | link a billing account |
-| `API_KEY_INVALID`, `API_KEY_SERVICE_BLOCKED` | the API key is wrong, or restricted to other APIs | C, step 2 |
-| `RATE_LIMIT_EXCEEDED`, `RESOURCE_EXHAUSTED` | a quota or Google's capacity is spent | raise the quota, or add a region |
-| `KEY_NOT_ACCEPTED` | Google does not accept the service account's key: deleted, disabled, or another account's | a new key (B, step 4) |
+| `API_KEY_INVALID`, `API_KEY_SERVICE_BLOCKED`, `API_KEY_IP_ADDRESS_BLOCKED`, `API_KEY_HTTP_REFERRER_BLOCKED` | the API key is wrong, or restricted to other APIs, to addresses other than the gateway's, or to browsers | C, step 2 |
+| `RATE_LIMIT_EXCEEDED`, `RESOURCE_EXHAUSTED`, `RATE_LIMITED` | a quota or the provider's capacity is spent | raise the quota, or add a region |
+| `KEY_NOT_ACCEPTED` | Google does not accept the service account's key: deleted, disabled, or another account's | a new key (B, step 4), or no key (D) |
 | `ACCOUNT_NOT_FOUND` | the service account is deleted or disabled | — |
-| `CLOCK_SKEW` | the token request's time window was refused | synchronise this machine's clock |
-| `AUDIENCE_MISMATCH`, `ATTRIBUTE_CONDITION_REJECTED`, `ISSUER_UNREACHABLE`, `SIGNATURE_NOT_VERIFIED`, `CLIENT_REJECTED`, `SERVICE_ACCOUNTS_DISABLED` | federation (D) refused at one of its steps | D, step 7 names the step for each |
+| `CLOCK_SKEW`, `ACCESS_TOKEN_EXPIRED` | a token's time window was refused | synchronise this machine's clock |
+| `SCOPE_REFUSED`, `ACCESS_TOKEN_SCOPE_INSUFFICIENT` | the token was refused, or lacks, the `cloud-platform` scope the call needs | on a Google Cloud machine, its access scopes |
+| `AUDIENCE_MISMATCH`, `ATTRIBUTE_CONDITION_REJECTED`, `ISSUER_UNREACHABLE`, `SIGNATURE_NOT_VERIFIED`, `SUBJECT_TOKEN_EXPIRED`, `ORG_POLICY_VIOLATED`, `CLIENT_REJECTED`, `SERVICE_ACCOUNTS_DISABLED` | federation (D) refused at one of its steps | D, step 7 names the step for each |
 | `CERTIFICATE_NOT_TRUSTED` | a proxy that inspects TLS presented its own certificate | `SSL_CERT_FILE` ([a private certificate authority](#a-private-certificate-authority)) |
-| `NAME_NOT_RESOLVED`, `CONNECT_TIMEOUT`, `PROXY_REFUSED` | no way out to Google from here | DNS, the firewall, `HTTPS_PROXY` |
+| `NAME_NOT_RESOLVED`, `CONNECT_TIMEOUT`, `CONNECTION_FAILED`, `PROXY_REFUSED` | no way out to Google from here, or a connection refused or broken off | DNS, the firewall, `HTTPS_PROXY` ([what the firewall must let out](#what-the-firewall-must-let-out)) |
+| `READ_TIMEOUT` | Google accepted the connection and sent nothing for as long as the gateway waits | stream the request, or raise `AIRA_VERTEX_TIMEOUT_SECONDS` |
+| `POOL_EXHAUSTED` | every connection this instance keeps to the platform was busy for as long as it waits for one | add instances, or spread the load |
+
+Claude's refusals carry Anthropic's own error type instead (`overloaded_error`, `rate_limit_error`,
+`invalid_request_error`, …), Foundry and an OpenAI-compatible server their `error.code`
+(`DeploymentNotFound`, …), and an answer that names no cause is called by its status:
+`UNAUTHENTICATED`, `PERMISSION_DENIED`, `NOT_FOUND`, `REQUEST_TOO_LARGE`, `RATE_LIMITED`,
+`OVERLOADED`.
 
 ### Microsoft Foundry / Azure OpenAI
 
@@ -1222,27 +1328,44 @@ is a property of the platform, not a setting:
 | Google Vertex AI | no — it offers no list the credential may read | yes — under provider `vertex`, with its publisher and a region; `AIRA_VERTEX_MODELS` is optional |
 
 A platform that cannot be asked is not misconfigured. Its models are named in the gateway's
-configuration or typed into the catalog, and the editor's reachability check is what says whether
-anything serves them. Nothing a vendor lists is ever catalogued automatically: a listing is not an
-approval — only a model catalogued and approved here is served — a vendor's capability flag is a
-claim rather than evidence, and no listing publishes a price.
+configuration or typed into the catalog — for Vertex and AI Studio, filled from the model
+reference, a public list shipped with each release — and the editor's reachability check is what
+says whether anything serves them. Nothing a vendor lists is ever catalogued automatically: a
+listing is not an approval — only a model catalogued and approved here is served — a vendor's
+capability flag is a claim rather than evidence, and no listing publishes a price.
 
 ### What the firewall must let out
 
-Only the gateway calls a model platform; Management calls none. The gateway reaches, over HTTPS
-unless a self-hosted server's URL says otherwise:
+Only the gateway calls a model platform. Management calls none, and reaches out only where
+`AIRA_MODEL_REFERENCE_URL` names a live model list (`https://models.dev/api.json`, read at most once
+a day); empty, the default, it answers from the copy shipped with the release. The gateway
+reaches, over HTTPS unless a self-hosted server's URL says otherwise:
 
 | Platform | Hosts |
 |---|---|
 | Vertex | `<region>-aiplatform.googleapis.com` per region in use; `aiplatform.eu.rep.googleapis.com` for the region `eu`; `aiplatform.googleapis.com` only for a model at `global` |
 | Vertex, with a service account | `oauth2.googleapis.com` — the key's `token_uri` — for the short-lived token |
+| Vertex, without a key | the token endpoint of `AIRA_VERTEX_FEDERATION_TOKEN_URL` (your Keycloak); `sts.googleapis.com` and `iamcredentials.googleapis.com`, the configuration's `token_url` and impersonation address; on Google Cloud, `metadata.google.internal`, over plain HTTP on the machine itself |
+| Vertex, ranking | `discoveryengine.googleapis.com`, or `<location>-discoveryengine.googleapis.com` |
+| Vertex, prices from the billing account | `cloudbilling.googleapis.com` |
 | AI Studio | `generativelanguage.googleapis.com`, or `AIRA_GEMINI_BASE_URL` |
 | Foundry | the host of `AIRA_FOUNDRY_ENDPOINT` |
 | OpenAI-compatible | each server's URL, as configured |
 
+**Through an outbound proxy.** Both planes' HTTP calls — the hosts above, Vault, Keycloak, the
+collector — read the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` from the environment;
+AIRA has no proxy setting of its own. Name in `NO_PROXY` every host of your own the services call —
+Keycloak, Vault, the collector, a self-hosted model server, and on Google Cloud
+`metadata.google.internal` — or those calls go to the proxy as well. A proxy that inspects TLS
+presents its own certificate: its root belongs in `SSL_CERT_FILE`
+([a private certificate authority](#a-private-certificate-authority)), and until it is there the
+model check says `CERTIFICATE_NOT_TRUSTED`.
+
 > done credentials in Vault ([§4a](#4a-hashicorp-vault)) or the environment — an `AIRA_*` value
-> mounted as a file is read by nothing · regions on the allow-list · Claude only with a service
-> account · the egress above · every model that will be served declared in the catalog with a
+> mounted as a file is read by nothing, `AIRA_VERTEX_CREDENTIALS_FILE` apart · regions on the
+> allow-list, and `global` permitted by name for an open model or a ranker · Claude,
+> `gemini-embedding-2`, ranking and billing prices only with a Google identity · the egress above,
+> and `NO_PROXY` behind a proxy · every model that will be served declared in the catalog with a
 > **price** and its **capabilities**
 
 ---
@@ -1250,8 +1373,9 @@ unless a self-hosted server's URL says otherwise:
 ## 6. Observability
 
 OTLP over HTTP to any collector that accepts it without a credential: the applications' leg has one
-address, `AIRA_OTEL_ENDPOINT`, and nothing for a header or a CA. Each signal can be sent elsewhere
-on its own — `AIRA_OTEL_TRACES_ENDPOINT`, `AIRA_OTEL_METRICS_ENDPOINT`, `AIRA_OTEL_LOGS_ENDPOINT`,
+base address, `AIRA_OTEL_ENDPOINT`, and no setting of its own for a header or a CA. Each signal can
+be sent elsewhere on its own — `AIRA_OTEL_TRACES_ENDPOINT`, `AIRA_OTEL_METRICS_ENDPOINT`,
+`AIRA_OTEL_LOGS_ENDPOINT`,
 each a whole URL with its route, nothing appended — for a backend that takes one signal (Tempo,
 Mimir, Loki). One left empty goes under `AIRA_OTEL_ENDPOINT`; with that empty as well, the signal
 is not exported and the rest runs unchanged. Traces not exported means the delivery channel below
@@ -1274,15 +1398,17 @@ nothing else — not a pipeline, not a batch window, not a destination — so ea
 touching the other.
 
 **Both are downstream of one thing, and it is worth knowing which.** The applications export to
-`AIRA_OTEL_ENDPOINT`; everything below is what the collector does with what arrives. If that hop is
-wrong, *neither* channel receives anything, however well the second one is configured — the
-delivery endpoint can be correct and the page still show nothing. `make otel-status`
+`AIRA_OTEL_ENDPOINT`, or to a signal's own URL; everything below is what the collector does with
+what arrives. If that hop is wrong, *neither* channel receives anything, however well the second
+one is configured — the delivery endpoint can be correct and the page still show nothing. A signal
+whose own URL names a backend instead of the collector skips both channels: traces sent straight
+to Tempo leave the delivery channel nothing to deliver. `make otel-status`
 answers that hop in one line, and `AIRA_DEBUG_INTEGRATIONS=otel` makes each export say where it
 went and what answered.
 
 | | **observability** | **delivery** |
 |---|---|---|
-| what it carries | every span, metric and log | one record per gateway API access, and per call to a model — each of them at `AIRA_OTEL_SAMPLE_RATIO=1.0`, whatever sampled flag a caller sends — and every log record |
+| what it carries | every span, metric and log | one record per gateway API access, and per call to a model — each of them at `AIRA_OTEL_SAMPLE_RATIO=1.0`, whatever sampled flag a caller sends — and every metric and log record |
 | the question it answers | *was the gateway slow, or the model* | *who called what, and how did it end* |
 | volume, measured | 347 spans on a demo run | **20** of those |
 | filtered | no | traces, to requests and the calls made inside them; metrics and logs whole |
@@ -1373,6 +1499,11 @@ AIRA_OTEL_BACKEND_AUTH_CONFIG=/etc/otelcol-contrib/backend-auth-header.yaml
 AIRA_OTEL_BACKEND_AUTHORIZATION=Basic <base64 of 123456:token>
 ```
 
+**The collector reads no Vault.** A credential on either channel is a value in
+`deploy/compose/.env`, or in `deploy/compose/otel/custom/collector.env` for a recipe — both
+git-ignored — and reaches the collector as an environment variable, which `docker inspect` shows.
+Under another orchestrator, hand it over the way that platform gives a container its secrets.
+
 **Channel 2, to whoever consumes the access records** — the switch, then wherever it goes:
 
 ```bash
@@ -1391,8 +1522,9 @@ silently, with `otelcol validate` clean — and a recipe that brings an extensio
 `recipes/forward-oauth2.yaml`, restates the whole list, the base's entries included.
 
 **A credential fragment selected without its values does not stop the collector: it sends the name
-of the variable you forgot** — `AIRA_OTEL_BACKEND_AUTHORIZATION-is-not-set`, which
-`make otlp-inspector` shows and the far end quotes back in its rejection.
+of the variable you forgot** — `AIRA_OTEL_BACKEND_AUTHORIZATION-is-not-set`, which the far end
+quotes back in its rejection. `make otlp-inspector` shows a credential's scheme and length and
+never its value, so there it is an opaque credential of 42 characters where yours should be.
 
 ### The two legs, and which one you can change
 
@@ -1461,16 +1593,18 @@ the gateway's database ([§1](#1-postgresql)).
 of a log line, carries `p-` and a keyed hash of the name instead: the same person is always the same
 pseudonym, so a SIEM can still follow one caller, and nobody reads the name off it. The key is
 `AIRA_PSEUDONYM_SECRET`, from Vault and shared by both planes; without it each process draws its own
-and says so once, and a person's pseudonym then differs between processes. `aira.credential` (a key
-prefix) and `aira.source_ip` stay, because an incident needs them — so who may query the tracing
+— a gateway process says so once, Management's say nothing — and a person's pseudonym then differs
+between processes and across restarts. `aira.credential` (a key prefix, or the client a token was
+issued to) and `aira.source_ip` stay, because an incident needs them — so who may query the tracing
 backend and the SIEM is still that system's access control: grant it to IT Security. To learn who a
 pseudonym is, follow the span's trace id to the request's audit row, which the incident roles read.
 The shipped Grafana dashboard selects no caller, and an anonymous visitor there is a Viewer, who
 cannot query spans ad hoc.
 
-If a flat shape is what you need, the collector is where to produce it: this build ships the
-`file`, `kafka`, `elasticsearch`, `opensearch`, `splunk_hec` and `syslog` exporters alongside
-`otlphttp`, and those speak their destinations' own formats rather than OTLP.
+If a flat shape is what you need, the collector is where to produce it: this build ships, among
+others, the `elasticsearch`, `opensearch`, `splunk_hec` and `syslog` exporters, which speak their
+destinations' own formats rather than OTLP — Splunk is worked through below. Its `file` and
+`kafka` exporters write OTLP unless told otherwise, and are no flatter than this.
 
 ### Did it arrive? Three hops, three answers
 
@@ -1491,6 +1625,7 @@ telemetry that was discarded.
 $ make otel-status
 signal           accepted   refused  forwarded  undelivered
 log_records             …         0          …            0
+metric_points           …         0          …            0
 spans                   …         0          …            0
 ```
 
@@ -1590,9 +1725,11 @@ destination varies on seven axes, and each is a variable or a fragment:
 | **who we are** | `_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | mutual TLS |
 | **compression** | `AIRA_OTEL_FORWARD_COMPRESSION` | `gzip` · `none` · `zstd` · `snappy` |
 
-Full reference: [`CONFIGURATION.md` §5a](CONFIGURATION.md). Three worked shapes:
+Full reference:
+[`CONFIGURATION.md` §5a](CONFIGURATION.md#5a-the-collector-and-a-second-destination). Three
+worked shapes:
 
-**A plain OTLP receiver** — most of them. One variable:
+**A plain OTLP receiver** — most of them. The switch and the address:
 
 ```bash
 AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
@@ -1619,7 +1756,7 @@ AIRA_OTEL_FORWARD_AUTH_CONFIG=/etc/otelcol-contrib/recipes/forward-oauth2.yaml
 # in deploy/compose/otel/custom/collector.env:
 OAUTH_TOKEN_URL=https://kc.internal/realms/ops/protocol/openid-connect/token
 OAUTH_CLIENT_ID=aira-collector   # a confidential client of its own, not the console's
-OAUTH_CLIENT_SECRET=…            # → Vault
+OAUTH_CLIENT_SECRET=…            # a secret: this file, not Vault
 OAUTH_SCOPES=["telemetry.write"]
 ```
 
@@ -1636,8 +1773,9 @@ running.
 
 **A credential fragment selected with nothing in its variables is not one of them.** The collector
 starts and sends the **name of the variable you forgot**:
-`AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set`, which `make otlp-inspector` shows and the far end
-quotes back in its rejection.
+`AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set`, which the far end quotes back in its rejection;
+`make otlp-inspector`, which never shows a credential's value, shows an opaque one of 42
+characters.
 
 #### Splunk, over its HTTP Event Collector
 
@@ -1652,7 +1790,7 @@ AIRA_OTEL_FORWARD_CONFIG=/etc/otelcol-contrib/forward.yaml
 AIRA_OTEL_FORWARD_PROTOCOL_CONFIG=/etc/otelcol-contrib/recipes/forward-splunk-hec.yaml
 # in deploy/compose/otel/custom/collector.env:
 SPLUNK_HEC_ENDPOINT=https://splunk.internal:8088/services/collector
-SPLUNK_HEC_TOKEN=…                      # → Vault
+SPLUNK_HEC_TOKEN=…                      # a secret: this file, not Vault
 SPLUNK_HEC_INDEX=aira                   # the request records and logs
 SPLUNK_HEC_METRICS_INDEX=aira_metrics   # a metrics index
 ```
@@ -1701,7 +1839,8 @@ join the same pipelines, filters and destinations as AIRA's own.
 credential, and the delivery filter reads attributes, not senders: a span posted with
 `aira.use_case` or `aira.outcome` is forwarded as an access record like any other. Keep 4317 and
 4318 on a network only your producers reach. The Compose stack publishes them on loopback, and
-`AIRA_BIND_HOST=0.0.0.0` publishes them along with everything else.
+`AIRA_BIND_HOST=0.0.0.0` (with `AIRA_BIND_HOST6=::` for IPv6) publishes them along with everything
+else.
 
 #### A worked routed destination: Azure Monitor, and therefore Microsoft Sentinel
 
@@ -1827,16 +1966,19 @@ forgets what it held.
 
 **The comfortable way is already running.** `make up` starts Grafana with Tempo, Loki and
 Prometheus behind it, and the collector forwards everything it receives to them — browsable at
-<http://localhost:3000> → *Explore* → *Tempo*, with all its attributes. What it receives depends on
-one switch: the applications export only with `AIRA_OTEL_ENABLED=true`, which is off by default —
-set it in `deploy/compose/.env` for the containers; `make run-gateway` and `make run-backend` set it
-for a process run from source.
+<http://localhost:3000> → *Explore* → *Tempo*, with all its attributes, once signed in as Grafana's
+own `admin`: an anonymous visitor is a Viewer, who sees the provisioned dashboards and cannot open
+*Explore*. What it receives depends on one switch: the applications export only with
+`AIRA_OTEL_ENABLED=true`, which is off by default — set it in `deploy/compose/.env` for the
+containers; `make run-gateway` and `make run-backend` set it for a process run from source.
 
 The fastest route to one request: every gateway response carries an `x-trace-id` header while
 tracing is on, failures included, and pasting it into Tempo's *TraceID* search resolves at once (a
-tag search takes about a minute to index). What you get is the request span with its `aira.*`
-attributes — subject, credential, use case, model, outcome, status, tokens, cost — and everything
-underneath it: the model call, the SQL statements, the pool connections.
+tag search takes about a minute to index). The console's details of a request show the same id,
+and link it to the trace where `AIRA_TRACE_URL` names your viewer
+([§7](#7-the-spa-is-configured-at-deployment-time)). What you get is the request span with its
+`aira.*` attributes — subject, credential, use case, model, outcome, status, tokens, cost — and
+everything underneath it: the model call, the SQL statements, the pool connections.
 
 ```
 POST /v1beta/models/{resource}
@@ -1846,6 +1988,9 @@ POST /v1beta/models/{resource}
   aira.credential = dd533902    aira.cost_nanos   = 15800
   aira.source_ip = 172.19.0.1   aira.api.surface  = gemini
 ```
+
+These examples were taken with strict data mode off. As the stack ships it is on, and
+`aira.subject` is then a pseudonym — `p-` and sixteen hexadecimal digits — here and below.
 
 **No prompt and no response** — those never reach a span; they are stored on the audit
 row and read through the console, where every read is recorded. The `trace_id` is the same in both,
@@ -1875,19 +2020,22 @@ record is one HTTP call: a fallback chain marks **each attempt**, so a chain tha
 leaves three records naming three models, and a regional failover inside one attempt leaves one per
 region it tried.
 
-Three calls are not what that suggests:
+Some calls are not what that suggests:
 
-- With a Vertex service account, the token exchange with `oauth2.googleapis.com` — about once an
-  hour — can happen inside a model call, and is then stamped as that model access.
-- An operator's reachability check (`:check`) and the count after a stream the caller left
+- The exchange that renews the gateway's Google token — with `oauth2.googleapis.com` for a
+  service-account key; with your Keycloak, `sts.googleapis.com` and `iamcredentials.googleapis.com`
+  without a key; with the metadata server on Google Cloud — runs inside whichever model call finds
+  the token due, about every 48 minutes, and is then stamped as that model access.
+- An operator's reachability check (`:check`), the model list and the billing account's prices a
+  catalogue editor asks for, and the count of a stream whose vendor never reported its usage
   (`:countTokens`, `AIRA_COUNT_CANCELLED_STREAMS`, on by default) carry no `aira.*` attributes, and
-  still pass the filter as calls made inside a request. The second sends the prompt and the answer
+  still pass the filter as calls made inside a request. The count sends the prompt and the answer
   to the vendor a second time.
 
 Outgoing calls the gateway makes for its own reasons carry **none** of these attributes,
 deliberately — they are not model accesses and a consumer must not count them as such: the
-reachability prober's calls are roots, which the filter drops, and a JWKS refresh or a Vault read
-leaves no span at all.
+reachability prober's calls and the mail round's address lookups in Keycloak are roots, which the
+filter drops, and a JWKS refresh, a Vault read or a mail handed to the relay leaves no span at all.
 
 The two ways below are for when you need the bytes rather than a view of them — a receiver that
 will not parse something, or a question about the wire itself.
@@ -1998,9 +2146,9 @@ POST /v1beta/models/{resource}   traceId=4a57ae30937c9637d39df1d79b5b4b56
   aira.upstream.provider  = local             aira.upstream.region = 
 ```
 
-**No prompt and no response** — those never reach a span. `aira.subject`,
-`aira.credential` and `aira.source_ip` do, which is worth knowing before you forward this
-anywhere.
+**No prompt and no response** — those never reach a span. `aira.subject` — a pseudonym under
+strict data mode, the name with it off — `aira.credential` and `aira.source_ip` do, which is worth
+knowing before you forward this anywhere.
 
 ### Not the same switch
 
@@ -2009,9 +2157,10 @@ human-readable text. It does not touch OTLP. `AIRA_LOG_JSON=false` is for readin
 development; leave it `true` anywhere something collects container output.
 
 > done an OTLP endpoint that takes the applications' export without a credential ·
-> `AIRA_OTEL_ENABLED=true` · a sample ratio you can afford — `1.0` where the delivery channel is the
-> access record · the receiver's ports reachable by your producers only · the encoding decided on
-> the collector, not in AIRA
+> `AIRA_OTEL_ENABLED=true` · traces through the collector wherever a SIEM reads the delivery
+> channel · a sample ratio you can afford — `1.0` where the delivery channel is the access record ·
+> the receiver's ports reachable by your producers only · the encoding decided on the collector,
+> not in AIRA
 
 ---
 
@@ -2022,10 +2171,11 @@ from the environment, and the bundle loads it before the app — so pointing the
 Keycloak is two variables and never a rebuild:
 
 ```js
-// written at start from AIRA_OIDC_ISSUER and AIRA_OIDC_CLIENT_ID
+// written at start from AIRA_OIDC_ISSUER, AIRA_OIDC_CLIENT_ID and AIRA_TRACE_URL
 window.__AIRA_CONFIG__ = {
   issuer: 'https://sso.example.com/realms/aira',
   clientId: 'aira-gateway',
+  traceUrl: '',
 };
 ```
 
@@ -2041,6 +2191,7 @@ At run time the image reads:
 |---|---|
 | `AIRA_OIDC_ISSUER` | your realm's issuer, as browsers reach it — the same value Management checks tokens against |
 | `AIRA_OIDC_CLIENT_ID` | the console's public client; `aira-gateway` when unset |
+| `AIRA_TRACE_URL` | where an opened request's trace is linked to, `{trace_id}` in place of the id — a Grafana Explore or Tempo address, `http(s)` only; when unset, the id is shown and copied, not linked |
 | `AIRA_MANAGEMENT_UPSTREAM` | where `/api` goes; `http://management:8002` when unset |
 | `AIRA_GATEWAY_UPSTREAM` | where `/gw` goes; `http://gateway:8001` when unset |
 | `AIRA_CSP_CONNECT_SRC` | where the console may connect; when unset, `'self'` and the issuer's origin |
@@ -2074,7 +2225,7 @@ demands HTTPS everywhere else.
 
 ## 8. Reverse proxy and TLS
 
-Terminate TLS in front of both APIs. Four things AIRA needs from the proxy:
+Terminate TLS in front of both APIs. Five things AIRA needs from the proxy:
 
 - **`X-Forwarded-For`**, appended, and a hop count on both planes that matches it — see below.
   Without them every audit row names your proxy, and every caller shares one failed-attempt limit.
@@ -2086,6 +2237,12 @@ Terminate TLS in front of both APIs. Four things AIRA needs from the proxy:
   that buffers them turns a stream into a single late response. In nginx that is
   `proxy_buffering off` — the shipped SPA proxy sets it on `/gw`, and it is the default that bites,
   not an exotic setting.
+- **A request body as large as the gateway accepts.** The gateway refuses a body over
+  `AIRA_MAX_REQUEST_BYTES` (8 MiB) itself, with `413` in its own error envelope and an audit row; a
+  proxy with a lower limit refuses first, with a page of its own and no row. nginx and the
+  Kubernetes ingress stop at 1 MiB unless told otherwise (`client_max_body_size`), which a coding
+  session reaches at about 300 000 tokens, since it resends the whole conversation at every step.
+  The shipped SPA proxy sets no limit on `/gw` and passes the body through unbuffered.
 - **Keep the query string out of your access log**, or turn the log off for the gateway. Every
   Gemini client may authenticate with `?key=<api key>`: that is the wire protocol, not a choice
   AIRA makes. The gateway redacts it from its own logs and from exported spans, and sends
@@ -2095,7 +2252,10 @@ Terminate TLS in front of both APIs. Four things AIRA needs from the proxy:
 Timeouts should exceed your slowest model. A self-deployed model cold-starting can take minutes,
 which is why its own timeout defaults to 300 seconds (`AIRA_OLLAMA_TIMEOUT_SECONDS`, for every
 OpenAI-compatible server); Vertex and Foundry wait 120 (`AIRA_VERTEX_TIMEOUT_SECONDS`,
-`AIRA_FOUNDRY_TIMEOUT_SECONDS`). The shipped console proxy allows 310 seconds on `/gw`.
+`AIRA_FOUNDRY_TIMEOUT_SECONDS`), AI Studio 120 with no setting. Each is how long the gateway waits
+for the next byte — for an answer that is not streamed, the whole answer; every Claude request goes
+as a stream — and opening a connection is given up after 10 seconds. The shipped console proxy
+allows 310 seconds on `/gw`.
 
 **A stream needs no longer read timeout than its keepalive.** A model reading a large context or
 thinking says nothing for minutes; a streamed answer therefore sends its status within
@@ -2139,20 +2299,21 @@ Each outgoing connection trusts what its library trusts, and they do not share o
 
 | Connection | Trusts by default | To trust your CA |
 |---|---|---|
-| Vault, the directory, every model platform (`httpx`) | the `certifi` bundle installed with the application, **not** the system store | `SSL_CERT_FILE` (a bundle) or `SSL_CERT_DIR` |
+| Vault, the directory, every model platform and Google's token, ranking and billing services (`httpx`) | the `certifi` bundle installed with the application, **not** the system store | `SSL_CERT_FILE` (a bundle) or `SSL_CERT_DIR` |
 | The JWKS fetch (`PyJWT`, through Python's `urllib`) | the system store | the system store, or `SSL_CERT_FILE` / `SSL_CERT_DIR` |
 | Kafka | the system store | `AIRA_KAFKA_SSL_CAFILE` — and then that file only |
-| The applications' OTLP export to the collector (`requests`) | the `certifi` bundle | the OpenTelemetry SDK's own `OTEL_EXPORTER_OTLP_CERTIFICATE`, or `REQUESTS_CA_BUNDLE`; `SSL_CERT_FILE` does not reach it, and AIRA sets neither |
-| The collector to your destinations | the collector image's store | `AIRA_OTEL_BACKEND_CA_FILE`, `AIRA_OTEL_FORWARD_CA_FILE` ([§6](#6-observability)) |
+| The mail relay (`smtplib`, STARTTLS or TLS) | the system store | the system store, or `SSL_CERT_FILE` / `SSL_CERT_DIR` |
+| The applications' OTLP export, to the collector or a signal's own URL (`requests`) | the `certifi` bundle | the OpenTelemetry SDK's own `OTEL_EXPORTER_OTLP_CERTIFICATE` (or its per-signal `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` and siblings), or `REQUESTS_CA_BUNDLE`; `SSL_CERT_FILE` does not reach it, and AIRA sets none of them |
+| The collector to your destinations | the collector image's store | `AIRA_OTEL_BACKEND_CA_FILE`, `AIRA_OTEL_FORWARD_CA_FILE` — and then that file only, on that channel; `OAUTH_CA_FILE` for the OAuth2 recipe's token endpoint ([§6](#6-observability)) |
 
-So a CA added only to the operating system's store makes the JWKS fetch work and leaves Vault, the
-directory and the model platforms refusing the certificate. `SSL_CERT_FILE` **replaces** the
-bundle rather than adding to it: point it at a file that holds your CA *and* the public roots, or
-the public model platforms stop verifying instead.
+So a CA added only to the operating system's store makes the JWKS fetch, Kafka and the mail relay
+work and leaves Vault, the directory and the model platforms refusing the certificate.
+`SSL_CERT_FILE` **replaces** the bundle rather than adding to it: point it at a file that holds
+your CA *and* the public roots, or the public model platforms stop verifying instead.
 
 > done TLS · HSTS at the proxy · `X-Forwarded-For` appended, and the hop count set on **both**
-> planes · SSE unbuffered · generous timeouts · a private CA in `SSL_CERT_FILE` on both planes, not
-> only in the system store
+> planes · SSE unbuffered · a body limit no lower than `AIRA_MAX_REQUEST_BYTES` · generous
+> timeouts · a private CA in `SSL_CERT_FILE` on both planes, not only in the system store
 
 ---
 

@@ -439,12 +439,12 @@ showcase: env ## Start the full demo: stack, local model, seeded roles/budgets, 
 	@echo "    3. add its people or a Keycloak group   POST …/members/  ·  POST …/groups/"
 	@echo "    4. issue an API key           POST …/api-keys/   (shown once, bound to that use case)"
 	@echo ""
-	@echo "  A key belongs to one use case, so a client normally sends nothing else. A caller in"
-	@echo "  several names one with the 'X-AIRA-Use-Case: <slug>' header — which chooses among what"
-	@echo "  they already have and never grants anything."
+	@echo "  Every model call names its use case, a key's as much as a sign-in's: in the base URL"
+	@echo "  as /uc/<slug>, or with the 'X-AIRA-Use-Case: <slug>' header. Naming one chooses among"
+	@echo "  what the caller already has and never grants anything."
 	@echo ""
-	@echo "    KIRA client   $(GATEWAY_URL)/kira/api/external   docs/MIGRATION-KIRA.md"
-	@echo "    Gemini client $(GATEWAY_URL)/v1beta              docs/MIGRATION-GEMINI.md"
+	@echo "    KIRA client   $(GATEWAY_URL)/uc/<slug>/kira/api/external   docs/MIGRATION-KIRA.md"
+	@echo "    Gemini client $(GATEWAY_URL)/uc/<slug>/v1beta              docs/MIGRATION-GEMINI.md"
 	@echo ""
 	@# And one that runs *now*. The four steps above are what a reader needs to migrate; they are
 	@# not what a reader needs to **try**, because the demo has already done all four for its own

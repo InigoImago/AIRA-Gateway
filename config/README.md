@@ -9,7 +9,7 @@ cp config/integrated.example.yaml config/my-installation.yaml     # or the examp
 $EDITOR config/my-installation.yaml
 make config-check CONFIG=config/my-installation.yaml               # would both planes start?
 uv run python tools/config_render.py config/my-installation.yaml -o deploy/compose/.env
-make config-verify                                                 # does the stack run it?
+make config-verify                                                 # would the stack run on it?
 ```
 
 ## Three examples, one per shape
@@ -60,9 +60,11 @@ Three sections are special:
 - **`secrets:`** — prose. A list of what the file deliberately does not hold, ignored by the
   renderer.
 
-Not every key is a setting of either plane: the console's `oidc.client_id`, `csp`, `management`,
-`gateway` and `dns` sections are read by the console's container, and `otel`'s `backend_*` and
-`forward_*` keys by the collector.
+Not every key is a setting of either plane. `oidc.client_id`, `trace.url`, `csp.connect_src`,
+`management.upstream`, `gateway.upstream` and `dns.resolver` are read by the console's container;
+`otel`'s `debug_verbosity`, `arrived_file`, `backend_*` and `forward_*` keys by the collector. The
+other keys of `management` and `gateway` are that plane's own database user and Kafka identity
+(`management.postgres_user` is `AIRA_MANAGEMENT_POSTGRES_USER`), read by that plane alone.
 
 ## Before it is deployed: would it start?
 
@@ -104,10 +106,19 @@ make config-verify        # or: uv run python tools/config_render.py --verify de
 ```
 
 It reports, and exits non-zero on, each of: a source that changed since the render, a rendered file
-edited by hand, a variable the file sets that no service receives, and a variable where a compose
-default would take over. Every `make up*` target runs it before starting — **and starts anyway**,
-because a stack somebody configured by hand has no file to check against. The message is the point,
-not the exit code: read it.
+edited by hand (a value changed, a line removed or added), a key set twice, a variable the file sets
+that no service receives, and a variable where a compose default would take over. `make up`,
+`make up-apps`, `make up-full` and `make up-integrated` run it before starting — **and start
+anyway**, because a stack somebody configured by hand has no file to check against. The message is
+the point, not the exit code: read it.
+
+What it compares against is `docker compose config` over the bundled stack's files —
+infrastructure, applications, showcase — with `deploy/compose/.env`: what the containers *would*
+receive, not what a running container holds. For `make up-integrated` that is not the composition
+that runs, which has the applications and the external overlay and neither of the other two: an
+empty `AIRA_REDIS_URL` reads as the bundled `redis://redis:6379/0` taking over, which the external
+overlay does not do, and the collector's variables count as received although that composition
+starts no collector.
 
 Rendering also drops `deploy/compose/.aira-config-source` — one path, never a secret, ignored by
 git. It answers the question the stamp cannot, because the stamp leaves with the file that carried
@@ -128,8 +139,8 @@ Management's second database on the same server has no setting of its own to nam
 `tools/tests/test_the_config_examples_are_real.py` checks the examples against the settings classes
 themselves, in both directions and at four levels:
 
-1. every key an example renders is a field the product declares — a misspelling is a setting
-   somebody believes they configured;
+1. every key an example renders is a field the product declares, or a variable the console's
+   container or the collector reads — a misspelling is a setting somebody believes they configured;
 2. every field the product declares is named by an example, or listed as deliberately absent with
    the reason, in that file's `NOT_IN_A_CONFIG_FILE` — this is the one that notices a **new
    external system**;

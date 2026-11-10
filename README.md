@@ -77,8 +77,10 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
   `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents`, and `GET /v1beta/models`) and
   the predecessor KIRA contract (`/kira/api/external`), both served by the same provider-agnostic
   pipeline. Neither is a copy of the other: a test compares the audit rows the two produce.
+  **Reranking** is on both — the KIRA surface's `/rerank`, and Google's ranking API
+  (`/v1/projects/…/rankingConfigs/…:rank`) — for a model the catalogue declares to rank.
 - **Four upstream families, one namespace.** Google Vertex AI — Gemini and Claude in EU regions,
-  and the managed open models GLM and DeepSeek, which answer only at `global`; Google AI Studio;
+  and the managed open models such as GLM-5.2, which answer only at `global`; Google AI Studio;
   Microsoft Foundry, for GPT and others; and any OpenAI-compatible server you run yourself. A model
   served in several regions is tried in them in order.
 - **Streaming**, as SSE for the Google SDK and as a JSON array by default.
@@ -141,8 +143,8 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
 - **Residency enforced, not intended.** One list of permitted regions, EU by default
   (`AIRA_ALLOWED_REGIONS`). A model configured outside it stops the gateway at startup; a catalogued
   one is refused in the console as its region is typed, and skipped at request time. A region may
-  be permitted for named models alone (`AIRA_ALLOWED_MODEL_REGIONS`), which is how GLM
-  and DeepSeek are used without permitting `global` for everything. Provider, publisher and region
+  be permitted for named models alone (`AIRA_ALLOWED_MODEL_REGIONS`, e.g. `global=glm-5.2-maas`),
+  which is how an open model is used without permitting `global` for everything. Provider, publisher and region
   are on every audit row.
 - **Secrets from Vault.** AppRole and KV-v2, ranked above the environment, failing closed: a
   configured Vault that cannot be reached stops the process rather than running on a stale value.
@@ -183,8 +185,9 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
   a reason; it is read at the one pre-dispatch gate and kept after being lifted.
 - **Per-use-case retention** for stored prompts, seven days by default, with payload storage
   switchable per use case and a kill switch above it.
-- **Pipeline tests.** A standing catalogue of 100 questions, kept by Global Administrators and IT
-  Security and put to **a use case's own pipeline** by whoever administers it — so the answers say
+- **Pipeline tests.** A standing catalogue of questions, kept by Global Administrators and IT
+  Security — the demo seeds 100; an installation writes its own — and put to **a use case's own
+  pipeline** by whoever administers it — so the answers say
   whether the filter, the router and the redactor somebody configured hold up, and a blocked
   question is a result rather than a broken run. Answers are judged by a person whose name the
   verdict carries, and a use case's standing is its **latest** run, not an average an old,
@@ -261,9 +264,12 @@ make ci     # the hermetic gates: lint, types, unit tests with coverage
 make help   # every target
 ```
 
-`make ci` is the half of CI that needs no stack. CI also starts the full stack twice — once for the
-integration suite, once for the browser suites — which `make test-integration` and `make test-e2e`
-run locally.
+`make ci` is the half of CI that needs no stack. CI also starts the full stack four times — for the
+integration suite and for the browser suites, each in both data modes — which `make test-integration`
+and `make test-e2e` run locally, and drives real clients (every AI SDK major, `google-genai`,
+OpenCode 1 and 2) against a gateway of its own, which `make test-clients` runs. Only the integration
+suite can spend money: with Vertex credentials in the stack it asks a paid speech model; see
+[Testing](docs/TESTING.md).
 
 Four test layers, each for what the one below cannot see:
 
@@ -312,7 +318,14 @@ Details: [**Testing**](docs/TESTING.md).
   use case set, and a use case's administrators about its shared budget and its
   anomaly findings — through a relay the installation names. No webhook, no chat.
 - **No Kubernetes or Helm charts.**
-- **Microsoft Foundry is untested against a real Azure subscription.**
+- **Built, and never run against the real platform.** Microsoft Foundry has never been called with
+  a real Azure subscription. No test has called a Claude model: Vertex takes no API key for them,
+  and the development environment has no service account, so the Anthropic request shapes follow
+  Anthropic's documentation and are held to it by stand-ins. Reaching Google without a key, and
+  prices read from a billing account, have not met Google either.
+- **A published image does not say which build it is.** `/healthz` reports a commit and build number
+  only from settings the release images do not carry, so a pulled release answers nulls and only
+  the image tag says what runs.
 
 The full list with consequences: [**Gap analysis**](docs/GAP-ANALYSIS.md).
 

@@ -58,19 +58,30 @@ they can do there depends on which groups they are in:
   are kept.
 - **IT Security** writes the rules that watch the traffic, reads what those rules found, and can
   stop a use case or a single person immediately.
-- **Governance** reads what was spent, by which use case and which person, and changes nothing.
+- **Governance** reads what was spent, by which use case and which model — by which person only
+  where strict data mode is off (below) — and changes nothing.
 - A **global administrator** maintains the list of models everybody may choose from, and their
   prices.
-- A **member** of a use case sees that use case's own traffic — and, where permitted, the prompts
-  themselves. Every such read is itself recorded.
+- A **member** of a use case sees that use case's own traffic and what it costs. Opening a request,
+  and reading what it said, is itself recorded.
+
+**Who sees a person is one switch for the whole installation**: strict data mode, on by default.
+While it is on, what a person asked and was answered is read by the Global Administrator and IT
+Security alone; their name and key on a request, their figures, and a finding or a stop about them
+are seen by those two roles and by the person themselves. Everybody else sees the requests and the
+figures without other people's names, no stored role can be given the two permissions that would
+show them, and traces and logs carry a pseudonym where a name would stand. Switched off, each use
+case decides who inside it reads its stored prompts, and its figures by person follow that choice.
 
 **The console never talks to a model.** Three of its buttons make the *gateway* place a call.
 Trying a pipeline out before saving it, and putting the question catalogue to a use case, travel
 the ordinary path inside that use case, with the signed-in person's own identity on them. The
 model editor's check of a model's thinking words sends one-token generations: billed, recorded as
 `diagnostic` rows that belong to no use case and count against no budget, and open only to holders
-of `operations.diagnose`. Two more buttons make the gateway ask a platform about itself without
-generating anything: whether a model is reachable, and which models a provider offers for import.
+of `operations.diagnose`. Three more make the gateway ask a platform about itself without
+generating anything: whether a model is reachable (each region asked leaves a `diagnostic` row as
+well, at no cost), which models a provider offers for import, and what a model costs this
+installation according to its Google billing account.
 
 #### The gateway — where programs work
 
@@ -122,8 +133,9 @@ Being allowed to administer *a* use case must never mean administering *every* u
 why the two layers are separate mechanisms rather than one list of roles. The one permission that
 administers every use case, `usecase.manage_all`, belongs to the console: it lets its holder act in
 Management as any use case's administrator, and by itself opens nothing in the gateway — calling a
-use case still takes a grant reaching it, just as seeing a use case never implies the right to act
-inside it.
+use case, or trying a pipeline on it, still takes a grant reaching it, just as seeing a use case
+never implies the right to act inside it. Where such a grant exists, the dry run lets its holder try
+an unsaved pipeline there, as the use case's administrators may.
 
 Every model request belongs to **exactly one use case, and names it** — with `/uc/<use-case>` in
 front of the path, or the `X-AIRA-Use-Case` header — whatever the credential: a person's login, and
@@ -204,9 +216,12 @@ is written to it directly (§1a).
 AIRA Gateway puts **one governed API** in front of several LLM platforms. A use case calls it
 instead of calling Google, Microsoft or a self-hosted model directly; in exchange the organisation
 gets attribution, budgets, rate limits, a configurable pre-dispatch pipeline, an audit trail of
-every request it attributes, spend reporting, anomaly detection and an incident kill switch. The
-scope is deliberately narrow: **auditable model access, not agents** — no retrieval, no
-conversation state, no tool execution, no workflow orchestration.
+every request it attributes, spend reporting, anomaly detection, mail when a budget runs low or a
+rule finds something, and an incident kill switch. Three kinds of model request pass through it:
+text generation — streamed or not, and spoken where a model speaks — embeddings, one text or a
+batch, and the ranking of a caller's records against a query. The scope is deliberately narrow:
+**auditable model access, not agents** — no retrieval, no conversation state, no tool execution, no
+workflow orchestration.
 
 ---
 
@@ -223,15 +238,15 @@ Read this table first: almost every sentence afterwards is about one of these.
 
 | Object | What it is | Who owns it |
 |---|---|---|
-| **Use case** | One governed purpose for using AI — a chatbot, a coding assistant. Nearly everything the gateway does is attributed to exactly one. It carries its own members, released models, budgets, limits, pipeline, retention period and storage switches. | Management |
+| **Use case** | One governed purpose for using AI — a chatbot, a coding assistant. Nearly everything the gateway does is attributed to exactly one. It carries its own members, released models, budgets, limits, pipeline, retention period, and its switches for storage, tool calling, reasoning, prompt caching and mail. | Management |
 | **Grant** | Who may use or administer a use case — a Keycloak **group** path, or one person. Two routes to the same answer; the stronger role wins. | Management |
 | **API key** | `aira_<prefix>_<secret>`, issued for **one** use case, hashed at rest, so an application can call without a person present. | Management issues, gateway verifies |
 | **Model catalogue entry** | One model a caller may name: who serves it, how it is addressed, what it can do, what it costs. **Undeclared means unsupported.** | Management authors, gateway decides with |
 | **Release** | Which catalogue entries *this* use case may call. A model can be approved installation-wide and still unavailable here. | Management |
-| **Pipeline** | Ordered steps that run *before* dispatch for a use case: injection filter, model routing, PII redaction. Config, not code. | Management authors, gateway runs |
-| **Budget** · **Rate limit** | How much may be spent and how fast requests may arrive, per use case and per person — and the installation's own budget for spend no use case owns. A budget may also be set for one named person, and then takes the place of the per-person one for them; the use case's budget still bounds everybody. Counted in Redis so the figure is shared across instances. | Management authors, gateway enforces |
-| **Audit row** | One row per model request once it is attributed — served, refused, or abandoned mid-answer — plus one per model call a pipeline step makes (`pipeline:<step>`) and per model check an administrator presses (`diagnostic`). A request refused before attribution has none; its trace is its record. The system of record for what happened. | Gateway |
-| **Anomaly rule** · **Suspension** | A rule evaluated against the audit rows; a suspension is the resulting stop, applied on the next request. | Management authors the rule, gateway detects and enforces |
+| **Pipeline** | Ordered steps that run *before* dispatch for a use case: injection filter, model routing, PII redaction — and the use case's fallback chains, one per kind of request (text, embedding, ranking), each empty until somebody fills it. Config, not code. | Management authors, gateway runs |
+| **Budget** · **Rate limit** | How much may be spent and how fast requests may arrive, per use case and per person — and the installation's own budget for spend no use case owns. A budget may also be set for one named person, and then takes the place of the per-person one for them; the use case's budget still bounds everybody. Its days and months begin at midnight on the installation's clock (`AIRA_TIME_ZONE`, the same on both planes). Counted in Redis so the figure is shared across instances. Where the installation sends mail, crossing a share the use case names — used up, unless it names others — mails the person or, for the use case's own budget, its administrators. | Management authors, gateway enforces |
+| **Audit row** | One row per model request once it is attributed — served, refused, or abandoned mid-answer — plus one per model call a pipeline step makes (`pipeline:<step>`) and per model check an administrator presses (`diagnostic`). A request refused before attribution has none — except one refused for its size, recorded without an identity — and its trace is its record. A request's own row carries its technical record: milestones in milliseconds, what reached the caller, what the provider and the connection said, in codes and numbers only. The system of record for what happened. | Gateway |
+| **Anomaly rule** · **Suspension** | A rule evaluated against the audit rows; a suspension is the resulting stop, applied on the next request. Where the installation sends mail, a finding is mailed to its use case's administrators unless they switched that off — naming no person, key or address. | Management authors the rule, gateway detects, enforces and mails |
 | **Role** | A set of installation-wide permissions, held through one Keycloak group. Global Administrator and IT Security are fixed in code; IT Steuerung and any role an installation adds are stored. | Management authors, both planes resolve |
 
 ### Loop 1 — serving a request
@@ -287,17 +302,24 @@ In words, and the order is the point:
 6. **The call goes out, through a chain.** The catalogue says who hosts each candidate and what it
    can do. A candidate that cannot honour the request — not released to the use case, unpriced where
    spend is capped, no tools, no document reading, wrong region — is skipped **by name**, never sent
-   a silently reduced request. A use case may name further models to try, and that chain applies to
-   a streamed answer as well, for as long as nothing has reached the caller; each pipeline step has
-   its own chain for the model it asks. The candidate is addressed in its vendor's own wire format,
-   which only `upstreams/` knows.
+   a silently reduced request. A use case may name further models to try — one chain per kind of
+   request, text, embedding or ranking, kept in its pipeline; the installation keeps none of its
+   own — and the text chain applies to a streamed answer as well, for as long as nothing has reached
+   the caller; each pipeline step has its own chain for the model it asks. The candidate is
+   addressed in its vendor's own wire format, which only `upstreams/` knows. A stream's status waits
+   for its first chunk no longer than `AIRA_STREAM_KEEPALIVE_SECONDS` (15 s): then the response
+   begins while the chain goes on looking, and a stream that is quiet sends something its clients
+   skip, so no proxy in between closes the connection for silence.
 7. **The reservation is settled** against what was actually used, or released if nothing ran.
 8. **One audit row is written** — for every request that was attributed, including the ones refused
    after that point and the ones whose caller hung up mid-answer; each model call a pipeline step
    made has a row of its own. The one exception is a defect before dispatch: a `500`, logged as
    `unhandled_error`. Rows go through a bounded queue to a background writer, so persistence stays
    off the request path until the queue is full — then the row is written inline, by the request
-   that produced it, rather than dropped.
+   that produced it, rather than dropped. The row keeps the message a caller who was not served
+   was given, and the request's technical record — when each step was reached, what reached the
+   caller, and the codes the provider and the connection gave — which is where a technician looks
+   first.
 9. **The answer is rendered** in whichever dialect the caller used.
 
 Typical cost of all of this, measured: **48 ms of gateway CPU** for a chat request, **93 ms** for
@@ -353,6 +375,9 @@ control that depends on the event bus fails exactly when the bus is the problem.
 Auditable model access, **not agents**: no retrieval, no conversation state, no tool *execution* —
 tool calls are carried between client and model, never run here — and no workflow orchestration.
 Each of those would put the gateway in the position of deciding something it could not then audit.
+What a vendor needs to continue a turn — Claude's thinking around a function call — travels sealed
+inside the caller's own history, in the call's signature, so the gateway keeps no state between two
+requests even then.
 
 ---
 
@@ -385,6 +410,7 @@ graph TB
         vault["HashiCorp Vault<br/><i>secrets, optional</i>"]
         traces["Trace backend<br/><i>Grafana otel-lgtm by default</i>"]
         siem["SIEM<br/><i>optional</i>"]
+        smtp["Mail relay<br/><i>SMTP, optional</i>"]
     end
 
     dev -->|"REST: Gemini or KIRA dialect<br/>API key or OIDC bearer"| aira
@@ -393,7 +419,7 @@ graph TB
     itgov --> aira
     admin --> aira
 
-    aira -->|"HTTPS, credential read at start-up,<br/>token cached and refreshed"| vertex
+    aira -->|"HTTPS: a key, a federated identity<br/>or the machine's own, token cached"| vertex
     aira --> studio
     aira --> foundry
     aira --> selfhost
@@ -402,12 +428,13 @@ graph TB
     aira -->|"AppRole + KV-v2, at start-up"| vault
     aira -->|"OTLP, through its collector"| traces
     aira -->|"delivery channel: one record<br/>per API and model access"| siem
+    aira -->|"budget and anomaly mail"| smtp
 
     style aira fill:#4f46e5,color:#fff,stroke:#4338ca
 ```
 
 **Four platform families**, each one transport in `upstreams/` (§4): Google's Agent Platform —
-Gemini, Claude, and managed open models such as GLM and DeepSeek; Google AI Studio, whose endpoint
+Gemini, Claude, and managed open models such as GLM-5.2; Google AI Studio, whose endpoint
 names no region and so counts as `global`; Microsoft Foundry; and any server that speaks the OpenAI
 format. Where a request may be processed is one installation-wide list, `AIRA_ALLOWED_REGIONS` — EU
 regions unless configured otherwise — checked at start-up against every region the configuration
@@ -422,8 +449,16 @@ for each destination. It feeds two channels — the trace backend, and an option
 channel** that forwards a filtered record of every API access and every model access to a SIEM.
 That record includes the refusals the audit trail does not hold (§8.8). Which traces are kept is
 decided by the installation's sampling ratio, never by the caller: a ratio below 1 thins the
-delivery channel too, because its records are spans.
-[`INTEGRATIONS.md`](INTEGRATIONS.md) §6 has both channels.
+delivery channel too, because its records are spans. The applications send every signal to
+`AIRA_OTEL_ENDPOINT`; traces, metrics and logs can each be sent to an address of their own instead,
+for a backend that takes one signal — and traces sent past the collector leave the delivery channel
+nothing to forward. [`INTEGRATIONS.md`](INTEGRATIONS.md) §6 has both channels.
+
+**Mail goes through the installation's own relay**, and only where one is named (`AIRA_SMTP_HOST`
+with `AIRA_MAIL_FROM`): the gateway mails a person when their allowance in a use case crosses a
+share the use case names, and the use case's administrators when its shared budget does or one of
+its anomaly rules finds something. It reads each address from the directory when the mail is sent,
+and keeps none. Without a relay nothing is checked, sent or stored about mail.
 
 **The three organisation-wide roles** are conferred by **group membership** and by nothing else;
 both planes resolve the same `groups` claim through `AIRA_ROLE_GROUPS`, and a realm role assigned
@@ -442,7 +477,8 @@ kill switch would let IT Steuerung — which by default sees every use case and 
 changes nothing — stop traffic. Guarded by *may see every figure*, the use-case list would be empty
 for a role that may see every use case but not every figure. `usecase.manage_all` is a
 control-plane permission: by itself it opens nothing in the gateway, where calling a use case or
-reading its requests still takes a grant on it, or a permission of its own.
+reading its requests still takes a grant on it, or a permission of its own; where a grant reaches
+the use case, it lets its holder try an unsaved pipeline there, as an administrator may.
 
 ---
 
@@ -477,8 +513,9 @@ graph TB
     models["Model platforms"]
     traces["Trace backend"]
     siem["SIEM"]
+    smtp["Mail relay<br/><i>optional</i>"]
 
-    client -->|"/v1beta · /kira/api/external"| gw
+    client -->|"/v1beta · /v1/…:rank · /kira/api/external"| gw
     browser --> spa
     spa -->|"/api → :8002"| mgmt
     spa -->|"/gw → :8001"| gw
@@ -487,9 +524,10 @@ graph TB
     gw --> pgw
     gw --> redis
     gw --> models
-    gw -->|"JWKS"| idp
+    gw -->|"JWKS · a mail's address"| idp
+    gw -.->|"budget and anomaly mail"| smtp
     mgmt --> pgm
-    mgmt -->|"JWKS"| idp
+    mgmt -->|"JWKS · directory search"| idp
     gw -.->|"secrets, at start-up"| vault
     mgmt -.->|"secrets, at start-up"| vault
 
@@ -529,9 +567,13 @@ a `schema-registry` container that no AIRA code uses.
 **The bus is a trust boundary**: the gateway builds who may do what — keys, grants, roles — from
 whatever arrives on it. So outside `local` both planes refuse to start while the broker is reached
 over `PLAINTEXT` (the gateway waives this in a declared demo), and authenticate to it with SASL, TLS
-or both. Where several stages share one cluster, every topic and the gateway's consumer group carry
-the stage's name (`aira.<stage>.usecases`, `AIRA_KAFKA_STAGE`), so a stage's credentials can be
-limited to its own topics.
+or both. Each plane can be given a broker identity of its own, and a database user of its own —
+`AIRA_GATEWAY_KAFKA_SASL_USERNAME`, `AIRA_GATEWAY_POSTGRES_USER` and their passwords, and the same
+under `AIRA_MANAGEMENT_`, each replacing the shared name where it is set — so that one Vault path
+can serve both planes without either holding the other's rights: Management publishing, the
+gateway's consumer reading. Where several stages share one cluster, every topic and the
+gateway's consumer group carry the stage's name (`aira.<stage>.usecases`, `AIRA_KAFKA_STAGE`), so a
+stage's credentials can be limited to its own topics.
 
 **One exception, deliberate**: the incident kill switch is written straight to the gateway. A
 control that depends on the event bus fails exactly when the bus is the problem.
@@ -540,7 +582,7 @@ control that depends on the event bus fails exactly when the bus is the problem.
 
 | Container | Image / entry point | Port (container) | What it is |
 |---|---|---|---|
-| `gateway` | `aira-gateway` · `uvicorn` | 8001 | The API clients call, and the anomaly evaluator |
+| `gateway` | `aira-gateway` · `uvicorn` | 8001 | The API clients call, the anomaly evaluator, and — where a relay is named — the mail notifier |
 | `gateway-consumer` | same image · `python -m aira_gateway.consumer.worker` | — | Applies config events to the read-model |
 | `gateway-retention` | same image · `python -m aira_gateway.retention` | — | Clears expired stored content; one pass, then exits |
 | `management` | `aira-management` · Django | 8002 | Control-plane REST API |
@@ -568,8 +610,8 @@ so that a reader can start at a concern and arrive at a file.
 | `gateway/` | `gateway`, `gateway-consumer`, `gateway-retention` | The **data plane**: the API clients call, plus its two workers. **One image**, five entry points — the HTTP service, the config consumer, the retention pruner, the operator CLI (`python -m aira_gateway.cli`) and `alembic upgrade head`. |
 | `management/backend/` | `management`, `management-relay` | The **control plane**: the REST API the console talks to, and the process that publishes its outbox. Same image runs `manage.py migrate` and the demo seed. |
 | `management/frontend/` | `frontend` | The Angular console, served by nginx, which also proxies `/api` to Management and `/gw` to the gateway. |
-| `libs/` | imported by both | `aira_common` — what both planes must agree about: the money type, the API-key format, the access rules and the permission catalogue, the capability vocabulary, OIDC verification, the directory, Vault and Redis clients, telemetry, and the Kafka topic names, `event_type` header, size bound and encoder. Not the event payloads: those are built in Management and read by the gateway's consumer, kept in step by tests (§3). **A rule that exists in both planes lives here or it drifts.** |
-| `deploy/compose/` | — | **Three files that combine** into the stack — infrastructure, the applications, the demo provisioning (with a Samba AD domain controller for the Windows sign-on demo, profile `windows-sso`) — and three overlays layered on with an extra `-f`: `release` takes the published images instead of building them, `external` runs the applications against infrastructure you provide, and `loadtest` adds the load harness's model double. Which composition is which: `tools/compose_files.py`. See [`deployment/`](deployment/README.md). |
+| `libs/` | imported by both | `aira_common` — what both planes must agree about: the money type, the API-key format, the access rules and the permission catalogue, the capability vocabulary and the kinds of request a fallback chain is kept for, the installation's clock, the mail thresholds, the pseudonyms strict data mode writes, OIDC verification, the directory, Vault and Redis clients, telemetry, and the Kafka topic names, `event_type` header, size bound and encoder. Not the event payloads: those are built in Management and read by the gateway's consumer, kept in step by tests (§3). **A rule that exists in both planes lives here or it drifts.** |
+| `deploy/compose/` | — | **Three files that combine** into the stack — infrastructure, the applications, the demo provisioning (with a mail catcher a demo's mail can go to, and a Samba AD domain controller for the Windows sign-on demo, profile `windows-sso`) — and three overlays layered on with an extra `-f`: `release` takes the published images instead of building them, `external` runs the applications against infrastructure you provide, and `loadtest` adds the load harness's model double. Which composition is which: `tools/compose_files.py`. See [`deployment/`](deployment/README.md). |
 | `tools/` | developer commands | Seeding, diagnostics, the mutation harness, the load harness, the repository's own guard tests (`tools/tests/`), and the OpenCode plugin the console hands to developers (`tools/opencode/`). |
 | `tests/integration/`, `e2e/` | opt-in test tiers | Against a live stack, and against a real browser. See [`TESTING.md`](TESTING.md). |
 | `docs/` | — | This document and the other reader documents (§9), and the development record behind them, which [`CONTRIBUTING.md`](../CONTRIBUTING.md) lists. |
@@ -581,21 +623,21 @@ Read it in the order a request travels.
 | Path | What it is for |
 |---|---|
 | `main.py`, `app.py`, `state.py`, `config.py` | Wiring and settings: build the application, start the background work, hand the components to the request path. `config.py` holds `GatewaySettings`, one field per `AIRA_*` variable, the ones both planes share inherited from `aira_common.config`. |
-| `middleware.py`, `cors.py`, `exception_handlers.py`, `security.py` | What runs outside any route: trace id, security headers, the body-size ceiling, the use-case path, and the startup refusal when a production deployment is configured like a laptop. |
+| `middleware.py`, `explaining.py`, `cors.py`, `exception_handlers.py`, `security.py` | What runs outside any route: the request's id and the headers that say what happened to it (`X-AIRA-Request-Id`, `X-AIRA-Model`, `X-AIRA-Pipeline`, `X-AIRA-Reason`), trace id, security headers, the body-size ceiling, the use-case path, and the startup refusal when a production deployment is configured like a laptop. |
 | `auth/` | Turning a credential into an attribution: API keys, OIDC, group grants, roles, and the failed-attempt bound. |
-| `api/gemini/`, `api/kira/` | The two **surfaces**. They parse a wire format and render an answer, and do nothing else. KIRA is the transitional one: every answer carries `Deprecation: true`, and `AIRA_KIRA_SUNSET` sets a `Sunset` date. |
-| `api/serving/` | **The order.** `prepare.py` owns the pre-dispatch sequence, `accounting.py` owns every exit — served, refused, or abandoned. A surface calls these; it never assembles the steps itself. |
-| `api/usage.py`, `api/pipeline.py`, `api/providers.py` | Around the surfaces: a use case's consumption for the console, and **the caller's own allowance** (`GET /v1beta/me/budget`) — what the OpenCode plugin the console hands out shows inside a developer's editor; trying a pipeline (`pipeline:dryRun`); what each platform offers for import. |
-| `pipeline/` | The per-use-case steps and the chains: `engine/` runs the configured steps (each with its own chain of models to ask), `classifiers/` are the steps themselves (injection, routing, redaction), `dispatch.py` picks a model that can actually serve the request — a finished answer or a stream, through one candidate walk. |
+| `api/gemini/`, `api/ranking/`, `api/kira/` | The two **surfaces**: Google's — its `/v1beta` models and, apart from them, its ranking path — and KIRA's. They parse a wire format and render an answer, and do nothing else. KIRA is the transitional one: every answer carries `Deprecation: true`, and `AIRA_KIRA_SUNSET` sets a `Sunset` date. |
+| `api/serving/` | **The order.** `prepare.py` owns the pre-dispatch sequence, `accounting.py` owns every exit — served, refused, or abandoned — and `streaming.py` with `keepalive.py` the same for a stream: how long its status waits, what it sends while quiet, and a caller who leaves; `fallbacks.py` holds which chain a request of each kind falls back along. A surface calls these; it never assembles the steps itself. |
+| `api/usage.py`, `api/pipeline.py`, `api/providers.py` | Around the surfaces: a use case's consumption for the console, and **the caller's own allowance** (`GET /v1beta/me/budget`) — what the OpenCode plugin the console hands out shows inside a developer's editor; trying a pipeline (`pipeline:dryRun`); what each platform offers for import, and what a Google billing account says a model costs. |
+| `pipeline/` | The per-use-case steps and the chains: `config.py` reads a use case's steps and its fallback chain for each kind of request, `engine/` runs the configured steps (each with its own chain of models to ask), `classifiers/` are the steps themselves (injection, routing, redaction), `dispatch.py` walks a chain for a model that can actually serve the request — a finished answer, a stream, vectors or a ranking, through one candidate walk. |
 | `catalog.py`, `requirements.py`, `residency.py`, `thinking.py`, `embedding.py`, `attachments.py` | What a model may be asked for, and what it must be able to do to be asked. One question per module. |
 | `ratelimit/`, `budgets/`, `scopes.py`, `pricing.py` | How fast and how much. `scopes.py` holds the scoping rule once — and the order the scopes apply in: the use case's pot over everybody, a person's own budget in place of the one for everybody — because budgets and limits scope identically. |
-| `upstreams/` | **Where the vendors live.** One package or module per platform — `vertex/` (Gemini, Claude and the open models), `gemini.py` (AI Studio), `foundry/`, `openai/` — each split into a transport (how to reach it) and a dialect (what the wire looks like); `mock.py` is the offline double. An architecture test fails when one of the platform-specific names it lists — `anthropic`, `claude`, `azure`, the open models' publishers and endpoints, among others — appears in code outside `upstreams/vertex/`, `upstreams/foundry/` and the region list in `residency.py`. |
+| `upstreams/` | **Where the vendors live.** One package or module per platform — `vertex/` (Gemini, Claude and the open models, reached with a key, a federated identity or the machine's own, and the billing account's prices), `gemini.py` (AI Studio), `foundry/`, `openai/` — each split into a transport (how to reach it) and a dialect (what the wire looks like); `mock.py` is the offline double. `exchange.py` judges an answer the same way on every platform and says in its first words who stopped; `carried.py` seals what a vendor needs to continue a turn into the caller's own history. An architecture test fails when one of the platform-specific names it lists — `anthropic`, `claude`, `azure`, the open models' publishers and endpoints, among others — appears in code outside `upstreams/vertex/`, `upstreams/foundry/` and the region list in `residency.py`. |
 | `core/canonical.py`, `core/schema.py` | The provider-agnostic request and answer everything above `upstreams/` speaks. |
-| `persistence/` | The audit trail: `writer.py` (a bounded queue off the request path; a full queue writes inline rather than drop a row), `redaction.py` (credential shapes in stored content), `sanitize.py`. |
-| `audit.py`, `audio.py`, `payloads.py`, `shielding.py` | What is recorded — spoken audio as a description, never the audio — who may read stored content, every read being recorded in turn, and the exit work a dropped connection must not cancel. |
+| `persistence/` | The audit trail: `recorder.py` (what only the live request can tell), `writer.py` (a bounded queue off the request path; a full queue writes inline rather than drop a row), `redaction.py` (credential shapes in stored content), `model_state.py` (a model's signatures kept out of what is stored), `sanitize.py`. |
+| `audit.py`, `technical.py`, `audio.py`, `payloads.py`, `shielding.py` | What is recorded — the request's technical record, in codes and numbers; spoken audio as a description, never the audio — who may read stored content and who may see a person, every read being recorded in turn, and the exit work a dropped connection must not cancel. |
 | `anomalies/` | Detection over the audit rows, and the suspensions it produces. |
-| `mail/` | Mail when a budget crosses its use case's thresholds and when its anomaly rules find something: a round a minute beside the detection (`notifier.py`), the text (`messages.py`), the address from the directory (`recipients.py`) and the relay (`transport.py`). Off without a relay. |
-| `reporting/`, `api/reporting/` | Spend and usage, the series behind the usage chart, the register of processing activities (`register.py`), their CSV export, the request list and the findings. |
+| `mail/` | Mail when a budget crosses its use case's thresholds and when its anomaly rules find something: a round a minute beside the detection, one instance a round fleet-wide, each mail owed a row in `mail_notices` (`notifier.py`), the text (`messages.py`), the address from the directory (`recipients.py`) and the relay (`transport.py`). Off without a relay. |
+| `reporting/`, `api/reporting/` | Spend and usage, the series behind the usage chart, the register of processing activities (`register.py`), their CSV export, the request list — opening a request's details is recorded as reading its content is — and the findings. |
 | `api/incidents/` | The kill switch (suspensions), the two model checks (`:check`, `:checkThinking`) and the log of who read stored content. |
 | `consumer/` | The second process (`worker.py`): applies configuration events into the read-model (`apply.py`). |
 | `retention.py` | The third process: clears stored content past each use case's period, deletes whole rows past `AIRA_LOG_RETENTION_DAYS` (off by default, so rows are kept), and records each pass in `retention_runs`. |
@@ -608,10 +650,10 @@ Read it in the order a request travels.
 | Path | What it is for |
 |---|---|
 | `apps/usecases/` | The centre of the control plane. `access.py` holds `may_admin`, `may_manage`, `is_member` — **one** definition, enforced by the viewsets *and* reported to the console so it cannot offer what the server refuses. |
-| `apps/apikeys/`, `apps/pipelines/`, `apps/budgets/`, `apps/ratelimits/`, `apps/anomalies/`, `apps/catalog/` | One app per configurable object, each mirroring a section of §1a's table. |
+| `apps/apikeys/`, `apps/pipelines/`, `apps/budgets/`, `apps/ratelimits/`, `apps/anomalies/`, `apps/catalog/` | One app per configurable object, each mirroring a section of §1a's table. `apps/catalog/reference/` drafts a catalogue entry from a public model list — the copy shipped with the release, or the live list where `AIRA_MODEL_REFERENCE_URL` names one — and decides nothing. |
 | `apps/roles/` | The roles an installation stores — IT Steuerung's permission set and any role it adds, each held through one Keycloak group — with their change log (`RoleChange`, before and after) and the check that a group exists before a role is bound to it. |
 | `apps/outbox/` | The transactional outbox and the relay that publishes it. |
-| `apps/directory/` | The only thing AIRA asks Keycloak beyond signing keys: looking up people and groups so an administrator can pick them. |
+| `apps/directory/` | The only thing Management asks Keycloak beyond signing keys: looking up people and groups so an administrator can pick them. The gateway's mail asks the same read-only account where a mail goes (§8.7). |
 | `apps/privacy/` | The generated privacy notice, and the register of every stored column that the test suite checks the schema against. |
 | `apps/api/` | Authentication, error envelopes, routing — the plumbing every app shares. |
 | `apps/seed/`, `apps/smoketests/`, `apps/health/` | Demo data, the question catalogue put to a use case (the *Pipeline tests* screen), readiness. |
@@ -625,7 +667,7 @@ Read it in the order a request travels.
 | `features/pipelines/`, `features/models/`, `features/governance/`, `features/reporting/`, `features/security/`, `features/requests/`, `features/privacy/`, `features/platform/`, `features/smoketests/` | One folder per screen, each reading whichever plane owns its data. |
 | `core/api/` | Typed clients for both planes, and `error-message.ts` — every load and mutation reports its outcome through it, so there are no silent failures. |
 | `core/auth/` | The OIDC code flow with PKCE; the console holds no long-lived credential. |
-| `core/ui/` | The primitives shared rather than rewritten per page — each because the second copy went wrong: `live.ts` (polling that stops, is visible and never stacks), `info-hint` (the explanation beside a figure), and `table-view`/`table-pager` with their server- and cursor-paged siblings. |
+| `core/ui/` | The primitives shared rather than rewritten per page — each because the second copy went wrong: `live.ts` (polling that stops, is visible and never stacks), `info-hint` (the explanation beside a figure), and `table-view`/`table-pager` with their server- and cursor-paged siblings. `clock.ts` puts every time shown on the installation's clock, never the browser's. |
 
 ### Where to start reading
 
@@ -644,7 +686,7 @@ Read it in the order a request travels.
 ```mermaid
 graph TB
     subgraph surfaces["Surfaces — parse and render only"]
-        gemini["Gemini surface<br/><i>/v1beta/models/…</i>"]
+        gemini["Gemini surface<br/><i>/v1beta/models/… and Google's<br/>ranking path /v1/…:rank</i>"]
         kira["KIRA surface<br/><i>/kira/api/external, transitional</i>"]
         ops["Around them<br/><i>allowance · usage · reporting · incidents<br/>dry run · providers · model checks</i>"]
     end
@@ -653,6 +695,7 @@ graph TB
 
     subgraph shared["api/serving/ — the shared sequence"]
         prep["<b>prepare_for_dispatch</b><br/>owns the ORDER of the pre-dispatch steps"]
+        stream["<b>streaming</b><br/>a stream's status deadline, its keepalives,<br/>a caller who leaves"]
         acct["<b>accounting</b><br/>owns every exit: served, refused, cancelled"]
     end
 
@@ -669,7 +712,7 @@ graph TB
 
     subgraph core["Provider-agnostic core"]
         canon["CanonicalRequest / Response<br/><i>ordered parts, thinking, schema</i>"]
-        chain["Dispatch chain<br/><i>conditions per candidate, skip-with-reason</i>"]
+        chain["Dispatch chain<br/><i>the use case's chain for this kind of request,<br/>conditions per candidate, skip-with-reason</i>"]
     end
 
     subgraph up["upstreams/ — where the vendors live"]
@@ -685,6 +728,8 @@ graph TB
     audit["Audit writer<br/><i>bounded queue, inline when full</i>"]
     logs[("request_logs")]
     anom["Anomaly service<br/><i>one evaluator per tick, fleet-wide</i>"]
+    mail["Mail notifier<br/><i>a round a minute, fleet-wide,<br/>only with a relay</i>"]
+    smtp["Mail relay"]
 
     gemini --> authn
     kira --> authn
@@ -698,12 +743,18 @@ graph TB
     st --> gd
     ft --> od
     ot --> od
+    gemini --> stream
+    kira --> stream
+    stream --> acct
     gemini --> acct
     kira --> acct
     acct --> audit
     audit --> logs
     logs -.->|"which scopes saw traffic"| anom
     anom -.->|"writes a suspension"| susp
+    anom -.->|"its findings"| mail
+    reserve -.->|"budget counters"| mail
+    mail -.->|"SMTP"| smtp
 
     style prep fill:#4f46e5,color:#fff
     style acct fill:#4f46e5,color:#fff
@@ -736,7 +787,7 @@ graph LR
     subgraph api["REST API — /api/v1"]
         me["/me"]
         uc["/use-cases/…<br/><i>members, groups, keys, pipeline,<br/>budgets, limits, rules</i>"]
-        cat["/models"]
+        cat["/models · /model-reference/"]
         anom["/anomaly-rules"]
         inst["/installation-budgets"]
         roles["/roles"]
@@ -795,10 +846,14 @@ role wins; both rules live once, in `aira_common.access`.
 
 - the use-case list and each use case's page (management), whose tabs are *Overview*, *Members*,
   *API keys*, *Budgets* and *Rate limits* (consumption from the gateway), *Rules*, and the
-  gateway's *Warnings* and *Requests*;
-- the pipeline builder (management; its dry run is the gateway's);
-- models and prices (management), beside what the gateway serves, what each platform offers for
-  import, and the two model checks (gateway);
+  gateway's *Warnings* and *Requests* — the mail a budget or a finding sends is set beside the
+  budgets and the warnings, and a request's details say where it ended and show its technical
+  record;
+- the pipeline builder (management; its dry run is the gateway's), with the use case's fallback
+  chain for each kind of request;
+- models and prices (management) — with drafts from a public model list — beside what the gateway
+  serves, what each platform offers for import, what a Google billing account says a model costs,
+  and the two model checks (gateway);
 - reporting and its CSV export (gateway), with the **installation's own budget** on that same
   screen, because the figure it bounds is already there as the `(none)` row of *By use case*;
 - the installation-wide *Requests* list and the *Register* of processing activities (gateway);
@@ -827,8 +882,8 @@ response).
 | Store | Holds | Why this one |
 |---|---|---|
 | `aira_mgmt` (Postgres) | use cases, memberships and group grants, keys (hashed), pipelines, budgets, limits, rules, catalog, stored roles and their change log, privacy-notice acknowledgements, the identities of people who signed in or were invited, the question catalogue's runs and the models' answers to it, outbox | System of record for **configuration** |
-| `aira_gateway` (Postgres) | read-model of the configuration (use cases, members, group grants, keys, pipelines, budgets, limits, rules, catalog, roles), plus `request_logs`, `payload_access` (every read of stored content), `anomaly_events`, `access_suspensions`, `budget_usage`, `retention_runs`, and keys minted on its command line | System of record for **what happened**; the gateway cannot serve without it |
-| Redis | rate-limit buckets, budget reservations | Shared counters across replicas; written on **every** request. Reached directly, or through Redis Sentinel so the leader can move |
+| `aira_gateway` (Postgres) | read-model of the configuration (use cases, members, group grants, keys, pipelines with their fallback chains, budgets, limits, rules, catalog, roles), plus `request_logs`, `payload_access` (every read of stored content, and every opening of a request's details), `anomaly_events`, `access_suspensions`, `budget_usage`, `retention_runs`, `mail_notices` (each mail owed, sent or given up, kept for 30 days after it lapses), and keys minted on its command line | System of record for **what happened**; the gateway cannot serve without it |
+| Redis | rate-limit buckets (the bound on refused authentications among them), budget counters with the reservations in flight | Shared counters across replicas; written on **every** request. A cache over `budget_usage`, never the record: a counter is rebuilt from Postgres when it lapses. Reached directly, or through Redis Sentinel so the leader can move |
 | Kafka | nine compacted config topics | Ordered, replayable configuration distribution |
 | Vault | credentials, when configured | Read once at start-up as a **settings source**, never injected into `os.environ`; without `VAULT_ADDR` every secret comes from the environment |
 
@@ -892,9 +947,11 @@ no API key that reaches the control plane.
 Keycloak issues every token, and AIRA verifies each one itself against the realm's public signing
 keys. **No request is answered by asking Keycloak whether a caller is valid**; the keys are cached
 for minutes at a time and fetched again when that cache lapses, or when a token names a signing key
-AIRA has not seen yet — which is what makes a key rotation heal itself. The only
-other calls to Keycloak are Management's read-only directory lookups, used while somebody is
-granting access in the console.
+AIRA has not seen yet — which is what makes a key rotation heal itself. The only other calls to
+Keycloak are read-only directory lookups — Management's while somebody is granting access in the
+console, the gateway's for the address of a mail it is sending — and, where the gateway reaches
+Google through workload identity federation with a Keycloak identity, the token of its own it
+exchanges there.
 
 ```mermaid
 flowchart LR
@@ -1139,27 +1196,31 @@ was never attributed; its span is the record (§8.8):
 | `400` | A use case named in a form that is not a valid identifier, or — on the Gemini surface — none named. |
 | `429` | Too many **refused** authentication attempts from one source address (default 60 a minute, on both planes). Successful requests never touch that counter, so an ordinary integration cannot trip it, however busy. `Retry-After` says when to come back. |
 
-### 8.7 Directory lookups — the one thing AIRA asks Keycloak
+### 8.7 Directory lookups — what AIRA asks Keycloak about people and groups
 
 When somebody grants access in the console, they need to find a colleague or a group that may never
-have signed in to AIRA. That is the only case in which AIRA queries Keycloak's admin API, with a
-dedicated read-only service account:
+have signed in to AIRA. That, and finding where a mail goes, are the only cases in which AIRA
+queries Keycloak's admin API, with a dedicated read-only service account:
 
 ```mermaid
 sequenceDiagram
     participant M as Management API
+    participant G as Gateway (mail notifier)
     participant K as Keycloak
     M->>K: token with client_credentials (client aira-directory)
     K-->>M: short-lived token, realm-management roles view-users and query-groups
     M->>K: GET users, groups and group-by-path, searches only
     K-->>M: matching users and groups
     Note over M,K: while access is granted in the console, never on the request path
+    G->>K: the same account, one user by exact username, the members of a group
+    K-->>G: the address a mail goes to
+    Note over G,K: only where the installation sends mail, when the mail is sent
 ```
 
 The account can read users and groups and nothing else — it cannot create, change or delete
 anything in the realm. Without it the console still works: it then searches only the people AIRA
-already knows and says so. Binding a role to a group is refused while the directory cannot be asked,
-because a group nobody could verify is not one to grant access from.
+already knows and says so, and no mail finds an address. Binding a role to a group is refused while
+the directory cannot be asked, because a group nobody could verify is not one to grant access from.
 
 ### 8.8 The guard rails around all of this
 
@@ -1167,12 +1228,14 @@ because a group nobody could verify is not one to grant access from.
   client secrets and platform credentials are read once at start-up — from Vault where `VAULT_ADDR`
   is set, from the environment otherwise. Neither plane insists on Vault; what each refuses outside
   local development is a published development value (the gateway's sample database password,
-  Management's development signing key).
+  Management's development signing key). Each plane can be given a database user and a broker
+  identity of its own (§3).
 - **The links between the services are checked at start-up.** Outside local development, Kafka
   over `PLAINTEXT` and an identity provider or Vault reached over plain HTTP stop the start
   (loopback excepted), because each is a link AIRA would otherwise trust completely. Redis and
-  Sentinel take a password, and the delivery channel a credential of its own; those are configured,
-  not enforced.
+  Sentinel take a password, the delivery channel a credential of its own, and the mail relay is
+  spoken to over STARTTLS — a relay that cannot upgrade is refused — unless `AIRA_SMTP_SECURITY`
+  says otherwise; those are configured, not enforced.
 - **Both planes bound refused authentications** per source address, because every other limit in the
   system is keyed to a verified identity and therefore bounds nobody who has none.
 - **The console holds no long-lived credential.** No offline token, no cookie of its own, nothing
@@ -1189,12 +1252,14 @@ because a group nobody could verify is not one to grant access from.
   may name one on a call, and a call that names none is the one exemption from
   `AIRA_REQUIRE_USE_CASE`, booked against the installation's own budget.
 - **Every refusal is evidence too.** A request refused before it is attributed writes no audit row;
-  its span is its record. A `401` is marked `aira.outcome = unauthenticated`, and a `403` for a use
-  case the credential may not use `forbidden`, with the status, the subject where known, the source
-  address and the use case asked for (`aira.use_case.requested`) — which is what the delivery
-  channel forwards to a SIEM. Whether a span is kept is decided by the installation's sampling
-  ratio (`AIRA_OTEL_SAMPLE_RATIO`), never by the caller's `traceparent` flag, so a caller can
-  neither switch its own attempt off nor force one on. A ratio below 1 thins this record too.
+  its span is its record. A `401` is marked `aira.outcome = unauthenticated`, a `403` for a use
+  case the credential may not use `forbidden`, and a known caller's model call that names no use
+  case, or a malformed one, `unattributed` — each with the status, the subject where known (a
+  pseudonym under strict data mode), the source address and the use case asked for
+  (`aira.use_case.requested`), which is what the delivery channel forwards to a SIEM. Whether a span
+  is kept is decided by the installation's sampling ratio (`AIRA_OTEL_SAMPLE_RATIO`), never by the
+  caller's `traceparent` flag, so a caller can neither switch its own attempt off nor force one on.
+  A ratio below 1 thins this record too.
 
 What the realm has to provide, setting by setting — clients, group paths, the audience mapper and
 the directory account — is [`INTEGRATIONS.md`](INTEGRATIONS.md) §2; the variables that configure it

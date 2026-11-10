@@ -44,7 +44,7 @@ cp config/integrated.example.yaml config/my-installation.yaml
 $EDITOR config/my-installation.yaml
 ```
 
-> Everything in `config/` except the three examples is invisible to git, on purpose: an
+> Everything in `config/` except the three examples and its README is invisible to git, on purpose: an
 > installation's hostnames, project ids and account names are not secrets in the sense Vault means,
 > and are exactly what should not reach a public repository by being dropped in a folder.
 
@@ -86,7 +86,8 @@ setting there is.
 
 Names and the split are in [§3.1](#31-postgresql). AIRA never shares a table between the planes, so
 two databases on one server is the normal arrangement. Under the shipped Compose files both planes
-connect as **one role** (§3.1), so give it rights on both.
+connect as **one role** unless you give each plane a role of its own (§3.1); a shared role needs
+rights on both.
 
 ```sql
 CREATE DATABASE aira_gateway;
@@ -139,8 +140,9 @@ each one present, under the stage prefix if you set `AIRA_KAFKA_STAGE`, with
 ### Step 4 — one model platform
 
 Whichever you have ([`INTEGRATIONS.md` §5](INTEGRATIONS.md)). One is enough to start; the catalogue
-is filled in Step 7. Every model's region is checked against `AIRA_ALLOWED_REGIONS` at start-up;
-Google AI Studio is `global` and needs that region named.
+is filled in Step 7. Every model the configuration names is checked against `AIRA_ALLOWED_REGIONS`
+at start-up, and every model, catalogued ones included, again on every request; Google AI Studio is
+`global` and needs that region named.
 
 ### Step 5 — Vault, and the secrets, before anything is deployed
 
@@ -150,7 +152,8 @@ process rather than falling back to the environment. So the secrets go in before
 The config file withholds every credential: `AIRA_SECRET_KEY` and `AIRA_POSTGRES_PASSWORD` always,
 and whichever of the others your installation uses — the Kafka SASL password, each plane's own
 database and Kafka passwords where it has them, the directory client's secret, the model platforms'
-keys, a Redis password (the example's `secrets.in_vault`). Vault ranks
+keys, a Redis password, the mail relay's login, the key telemetry pseudonymises names with (the
+example's `secrets.in_vault`). Vault ranks
 **above** the environment on purpose, so a value written there wins over anything a `.env` holds.
 [`deployment/integrated.md` §4](deployment/integrated.md) has the procedure, including how the
 AppRole's secret-id reaches the containers — which Compose does not do for you.
@@ -172,10 +175,11 @@ requires rather than defaults.
 
 **Not `make up-apps`.** That target starts the applications together with this repository's
 infrastructure file, whose Keycloak imports the development realm — six accounts with published
-passwords, a global administrator among them — and whose Vault runs in `-dev` mode with the root
-token `root`. It is the product on development infrastructure, for a machine nobody else can reach.
-`docker-compose.apps.yml` itself carries nothing for the demo; the infrastructure file beside it
-does.
+passwords, a global administrator among them, and five confidential clients whose secrets are in
+the same file, one of them a global administrator's service account — and whose Vault runs in
+`-dev` mode with the root token `root`. It is the product on development infrastructure, for a
+machine nobody else can reach. `docker-compose.apps.yml` itself carries nothing for the demo; the
+infrastructure file beside it does.
 
 **Check**, and this is the one that matters:
 
@@ -240,7 +244,12 @@ Infrastructure:
 | Redis                               | recommended; needed for exact limits with more than one gateway process | shared rate-limit buckets and budget reservations; without it limits hold per process and budgets use a racy path |
 | HashiCorp Vault                     | when `VAULT_ADDR` and a role id (or a token) are set | every credential, read once at start-up and ranked above the environment                     |
 | OpenTelemetry collector             | optional                                         | traces, metrics and logs (`AIRA_OTEL_ENABLED`), and the delivery channel to a SIEM             |
+| Mail relay (SMTP)                   | optional                                         | the mail a budget threshold or an anomaly finding sends, from the gateway (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`), to an address read from Keycloak through the directory account (§5.6). A mail the relay does not take is tried five times, a minute apart, then given up |
 | Schema Registry                     | no                                               | runs in the bundled stack; **no code uses it** — events are plain JSON with an `event_type` header |
+
+Only PostgreSQL takes an instance out of rotation. What each other outage does — Kafka, Redis,
+Vault, an upstream, a missing topic — is in [`CONFIGURATION.md` §6](CONFIGURATION.md); Redis's is
+also in §4 below.
 
 All six run from **three images**, built from this repository:
 
@@ -255,9 +264,12 @@ non-root user (uid 10001) and carry a `HEALTHCHECK`. The worker containers switc
 because they serve no HTTP, and in Compose their loops carry on after a failed run (`|| true`) —
 their logs are where a failure shows.
 
-Two pieces of background work run **inside every gateway process**, not in a container of their
-own: the anomaly evaluator (one evaluator per tick across all of them, claimed by a PostgreSQL
-advisory lock) and the probe of every configured upstream that `/readyz` reports.
+Background work also runs **inside every gateway process**, not in a container of its own: the
+audit writer, which takes each request's row off the request path (§1a); the probe of every
+configured upstream that `/readyz` reports; the anomaly evaluator; and, once a mail relay and a
+sender are configured, the mail round. The last two wake once a minute (the evaluator's interval is
+`AIRA_ANOMALY_INTERVAL_SECONDS`) and run once per tick across all processes, each claimed by a
+PostgreSQL advisory lock of its own.
 
 ### How the two planes talk
 
@@ -285,9 +297,10 @@ gateway needs `AIRA_OIDC_ENABLED`: without it those views are refused.
 Measured against a free upstream double, so the figures are the **gateway's own** cost with the
 model's latency subtracted. The runs were taken on one eight-core machine that also ran the rest of
 the stack, the double and the load driver, so an absolute throughput figure is about that machine;
-the figures that carry over to yours are per request and per core. The raw runs and their reports
-are in [`docs/measurements/`](measurements/), and `make loadtest` takes a fresh set
-([`TESTING.md`](TESTING.md)).
+the figures that carry over to yours are per request and per core. The two capacity runs — one
+worker and four — are in [`docs/measurements/`](measurements/) with their reports; the figures
+below that neither shows come from the other load scenarios of the same day, whose output was not
+kept. `make loadtest` takes a fresh set ([`TESTING.md`](TESTING.md)).
 
 **One uvicorn worker is one core, and the image starts one.** `uvicorn aira_gateway.main:app` with
 no `--workers` is a single process and a single event loop; throughput scales linearly with worker
@@ -326,11 +339,11 @@ second, a chat seat 0.044.
 
 **Then size for about half that per worker, not all of it.** A single event loop degrades well
 before its core is full — at 66% utilisation the chat workload's median overhead went from 74 ms to
-763 ms and its 99th percentile to 16.5 s — because each request's work arrives in one
+763 ms and its 99th-percentile latency to 16.5 s — because each request's work arrives in one
 unpreemptible burst and time to first token is what waits.
 
 Worked, for 300 agentic and 300 chat seats at once: 1.83 + 0.64 = **2.5 cores of request work**, so
-**six gateway cores** — two instances of four workers, or four of two, once several instances are
+**six gateway cores** — two instances of three workers, or three of two, once several instances are
 possible (above). Four workers were measured carrying 300 agentic seats at 2.72 cores and already
 lengthening.
 
@@ -355,7 +368,8 @@ audit queue saturating — `request_log_queue_full` in the gateway's log, after 
 written on the request path as designed backpressure. That log line is currently
 the **only** exposure of it; there is no metric.
 
-Memory is not a constraint: 300 concurrent streamed answers held one instance at 152 MB.
+Memory is not a constraint: 300 concurrent streamed answers held a one-worker instance at 152 MB,
+and the same load on four workers at 536 MB.
 
 ### The audit trail is what fills the disk
 
@@ -450,13 +464,16 @@ dependencies, before any image is built.
 ### What a release does
 
 Pushing the tag runs the whole workflow. The three images are published only if the Python job
-(lint, types, unit tests), the console job (format, build, unit tests), the integration job, the
-browser job (with the Windows sign-on) *and* the description check all pass on the tagged commit —
-the job that pushes the images declares `needs` on all five, and every later release job waits for
-it, so a green release is a green commit by construction. A **GitHub Release** is created last,
-carrying your words, then the commits since the previous release, then the image references, then
-the files attached to it: the OpenCode budget plugin as an archive, and the software bills of
-materials below — each beside its `.sha256`, and each, like every image, **signed** (below).
+(lint, types, unit tests), the console job (format, build, unit tests), the clients job (every
+major of the AI SDK's Google provider, `google-genai`, and OpenCode 1 and 2 with the budget plugin,
+against the gateway), the integration job, the browser job (with the Windows sign-on) — those two
+once with strict data mode on and once off — *and* the description check all pass on the tagged
+commit — the job that pushes the images declares `needs` on all six, and every later release job
+waits for it, so a green release is a green commit by construction. A **GitHub Release** is created
+last, carrying your words, then the commits since the previous release, then the image references,
+then the files attached to it: the OpenCode budget plugin as an archive (below), and the software
+bills of materials below — each beside its `.sha256`, and each, like every image, **signed**
+(below).
 
 The release is four jobs, cut by what each may write: one checks the description and writes
 nothing; one pushes the images and can write packages, running Docker's build actions and nothing
@@ -468,7 +485,7 @@ Each image lands under three tags:
 
 | Tag | For |
 | --- | --- |
-| `vX.Y.Z` | what a deployment pins. Never moves; a version already released is refused |
+| `vX.Y.Z` | what a deployment pins. Never moves once its GitHub Release exists: a version that has one is refused |
 | `sha-<commit>` | *"is this instance running what I think it is?"*, without trusting that a version tag was never moved. The reference a rolling update advances to |
 | `latest` | a reader trying AIRA out |
 
@@ -511,6 +528,24 @@ what a finding means for an installation is the reader's step:
 grype sbom:aira-gateway-vX.Y.Z.cdx.json
 ```
 
+### The OpenCode budget plugin, attached
+
+Every Release from `v0.1.7` on carries `opencode-aira-budget-vX.Y.Z.tar.gz` and its `.sha256`: the
+budget plugin for OpenCode, at an address that does not move and, for a public repository, needs no
+credentials — what a rollout to workstations wants. The archive holds one file, laid out relative
+to OpenCode's configuration directory, so unpacking it there is the installation:
+
+```bash
+tar -xzf opencode-aira-budget-vX.Y.Z.tar.gz -C ~/.config/opencode   # → plugins/aira-budget/tui.tsx
+```
+
+It carries no `tui.json`, because that file is the developer's own: OpenCode 1 also needs
+`"./plugins/aira-budget/tui.tsx"` in the `plugin` list of `~/.config/opencode/tui.json`, merged in
+by the rollout rather than written over. Two builds of one version are the same bytes, so
+`make opencode-plugin-archive VERSION=vX.Y.Z` rebuilds the published file and its checksum from a
+checkout, into `dist/`. What the plugin shows, and how it finds the gateway, is in
+[`tools/opencode/README.md`](../tools/opencode/README.md).
+
 ### Checking where a file or an image came from
 
 A `.sha256` proves that a download is the file that was uploaded — not who uploaded it. Every
@@ -551,7 +586,9 @@ that does not was not, whatever its checksum says. Releases up to `v0.1.7` are n
   the words over (`git tag -l --format='%(contents)' vX.Y.Z` prints them), which leaves a gap in the
   series; or delete the tag locally and on the remote and tag the fixed commit under the same
   number, which moves a ref somebody may already have fetched. `v0.1.2` was released the second
-  way.
+  way. A failure after the images were pushed — in the job that describes them or the one that
+  writes the Release — has already put them in the registry under that version and `latest`;
+  tagging the same number again pushes them anew.
 - **The images are a rebuild of the tested commit, not the tested bytes.** The release builds
   them again, from nothing — no cache an earlier run left feeds it — so they are that commit's and
   nobody else's, and still not the bytes the test jobs ran. It is a known limit. Closing it means
@@ -579,14 +616,15 @@ make up-integrated RELEASE=vX.Y.Z    # on infrastructure you provide — §3 and
 
 `RELEASE=` is one switch for two things: it layers the overlay on **and** drops the `--build` that
 the `up*` targets pass by default. Either half alone is a contradiction. It applies to every target
-that starts the applications in containers — `up-apps`, `up-full`, `showcase`, `up-integrated`;
-`make up` and `make up-core` start infrastructure only, and the load-test targets run the image
-built from this checkout.
+that starts the applications in containers — `up-apps`, `up-full`, `showcase`, `up-integrated`, and
+the showcase's `showcase-strict-on` and `showcase-strict-off`; `make up` and `make up-core` start
+infrastructure only, and the load-test targets run the image built from this checkout. The images
+come from `ghcr.io/inigoimago` unless `AIRA_IMAGE_REGISTRY` names a mirror or a fork's namespace.
 
 `AIRA_VERSION` has no default, so no composition can quietly run `latest` — which moves under a
 restart, and a stack that cannot say which version it is running is the state these version numbers
 exist to end. To check: `docker inspect --format '{{.Name}} {{.Config.Image}}' $(docker ps -q)`, and
-every AIRA container must name the same reference.
+every AIRA container must name the same version.
 
 **`GET /version-info`** on the gateway (unauthenticated, like its KIRA twin) answers the service
 name and environment, and build metadata only when `AIRA_BUILD_NUMBER`, `AIRA_BUILD_TIME`,
@@ -611,7 +649,8 @@ What matters operationally about those stacks:
 
 - **They are development-grade.** The infrastructure file's Keycloak imports the development realm
   with published passwords, its Vault runs in `-dev` mode and keeps nothing, and the applications
-  run with `AIRA_ENVIRONMENT=local`, which switches every start-up check off.
+  run with `AIRA_ENVIRONMENT=local`, which switches the hardening checks off; a value that cannot
+  be read, or a model outside the permitted regions, still stops a start.
 - **The relay and the retention pruner run as loops** — the relay every `AIRA_RELAY_INTERVAL`
   seconds (default 10), the pruner every `AIRA_RETENTION_INTERVAL` seconds (default 3600) — so
   configuration propagates and payloads expire on their own. Outside Compose they are scheduled
@@ -661,13 +700,16 @@ each plane has a role of its own, each its own user and password:
 **One role by default, a role per plane if you set one.** `docker-compose.apps.yml` gives both
 planes the same `AIRA_POSTGRES_USER` and fills both planes' `AIRA_POSTGRES_PASSWORD` from
 `POSTGRES_PASSWORD` (default `aira-local`), and points both at one Vault path — so with the shared
-names alone, a password in Vault is one password, and that role needs `CREATE` on both databases.
-For a role per database, set `AIRA_GATEWAY_POSTGRES_USER` and `AIRA_MANAGEMENT_POSTGRES_USER`
-(configuration) and write `AIRA_GATEWAY_POSTGRES_PASSWORD` and `AIRA_MANAGEMENT_POSTGRES_PASSWORD`
-into the same Vault path: a plane's own name replaces the shared one wherever either was read from,
-and a plane never reads the other's. Each role then needs `CREATE` on its own database only. On one
-path each plane's AppRole can still read the other's password; a path and an AppRole per plane
-(`VAULT_PATH`, `VAULT_ROLE_ID`, set per service) is the stronger separation.
+names alone, a password in Vault is one password, and that role must be able to create tables in
+both databases. For a role per database, set `AIRA_GATEWAY_POSTGRES_USER` and
+`AIRA_MANAGEMENT_POSTGRES_USER` (configuration) and write `AIRA_GATEWAY_POSTGRES_PASSWORD` and
+`AIRA_MANAGEMENT_POSTGRES_PASSWORD` into the same Vault path: a plane's own name replaces the shared
+one wherever either was read from, and a plane never reads the other's. Each role then needs that
+on its own database only. The migrations create their tables in the schema `public`, so the role
+owns the database or holds `CREATE` and `USAGE` on its `public` — from PostgreSQL 15 on, `CREATE`
+on the database allows new schemas and nothing in `public`. On one path each plane's AppRole can
+still read the other's password; a path and an AppRole per plane (`VAULT_PATH`, `VAULT_ROLE_ID`,
+set per service) is the stronger separation.
 
 Schema management differs per service — run both on every deployment, before the new code starts:
 
@@ -789,7 +831,13 @@ Cost budgets are calculated from prices maintained under **Models & prices** (`/
 whoever holds `catalog.write` — a Global Administrator, unless a role you define holds it too: per
 model, the price of 1,000,000 input and 1,000,000 output tokens, in `AIRA_CURRENCY`. Input and
 output must both be set — a one-sided price would produce a cost figure that looks complete and
-silently omits half the spend.
+silently omits half the spend. Beside them, optionally, a rate for cached input and one for cache
+writes — absent, a cache read is charged at the input rate and a write at 1.25 times it — and a
+second set of rates for a prompt longer than a stated length, where the vendor bills one. The model
+editor proposes prices to start from: the list prices of the model reference each release ships —
+in US dollars, filled in only where that is the installation's currency or
+`AIRA_MODEL_REFERENCE_EXCHANGE_RATE` converts them — and, over those, a Vertex model's from your
+billing account where the gateway is given one (`AIRA_VERTEX_BILLING_ACCOUNT`).
 
 **A model with no price is refused wherever a cost limit binds the request** — a cost budget on its
 use case or on the person within it, or, for a request that names no use case, on the installation
@@ -835,8 +883,8 @@ If you serve the SPA yourself instead, route:
 | `/api/…` | Management API                   |
 | `/gw/…`  | Gateway (strip the `/gw` prefix) |
 
-The gateway's own API (`/v1beta/…`) is normally published separately for API clients — it is the
-data plane and does not need to sit behind the SPA's origin.
+The gateway's own API (`/v1beta/…`, and the KIRA surface under `/kira/…`) is normally published
+separately for API clients — it is the data plane and does not need to sit behind the SPA's origin.
 
 **How large a request may be is the gateway's decision.** It refuses a body over
 `AIRA_MAX_REQUEST_BYTES` (8 MiB) itself: `413` in its own envelope, saying the limit, with an audit
@@ -867,14 +915,18 @@ is believed for HSTS. Add one hop for each proxy of yours that appends in front 
 ### 3.8 The SPA is configured at deployment time
 
 `runtime-config.js` ships beside the bundle and is loaded before the app, so one image serves any
-realm. **The `aira-frontend` image writes it on every start** from two variables, and derives its
+realm. **The `aira-frontend` image writes it on every start** from three variables, and derives its
 content policy from the first:
 
 ```bash
 AIRA_OIDC_ISSUER=https://sso.example.com/realms/aira   # the issuer as the browser reaches it
 AIRA_OIDC_CLIENT_ID=aira-gateway                       # the console's client in that realm
+# AIRA_TRACE_URL=https://grafana.example.com/…{trace_id}…   optional: where a request's trace opens
 # AIRA_CSP_CONNECT_SRC=…   only for what the derivation cannot guess: a second origin, a websocket host
 ```
+
+`AIRA_TRACE_URL` is an `http(s)` address with `{trace_id}` in place of the id — a Grafana Explore or
+Tempo link. Left empty, the console shows a request's trace id and copies it, without a link.
 
 Left empty, `AIRA_CSP_CONNECT_SRC` is `'self'` plus the issuer's origin — the only thing the console
 calls cross-origin. Set explicitly, it replaces that derivation and no longer follows the issuer.
@@ -887,7 +939,8 @@ apart — ends, after one attempt to sign in again, in *"We could not sign you i
 service that refused, with a button that ends the session at Keycloak as well.
 
 Serving the bundle from a web server of your own, you write `runtime-config.js` yourself
-(`window.__AIRA_CONFIG__ = { issuer: …, clientId: … }`) and send a content policy whose
+(`window.__AIRA_CONFIG__ = { issuer: …, clientId: …, traceUrl: … }`, the last optional) and send a
+content policy whose
 `connect-src` names the issuer's origin: the token request goes to Keycloak cross-origin, so an
 issuer the policy does not name produces a login that fails in the browser and nowhere else.
 
@@ -924,6 +977,9 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_OIDC_JWKS_URI`                                           | `''`                                                       | Override; derived from the issuer when empty                                                                                                               |
 | `AIRA_ROLE_GROUPS`                                             | `''`                                                       | Which Keycloak group confers each built-in role, `role=/path;…`. Empty grants nobody a role; outside `local` Management refuses a mapping with no `global-admin` group |
 | `AIRA_TRUSTED_PROXY_HOPS`                                      | `1`                                                        | How many proxies append to `X-Forwarded-For` in front of the service (§3.7)                                                                                |
+| `AIRA_STRICT_DATA_MODE`                                        | `true`                                                     | Stored content is readable by Global Administrator and IT Security only, and a person — their figures, their name and key on a request, a finding about them — reaches only those two and the person concerned. Off, each use case's own setting decides. The same value on both services. Telemetry and logs then carry a pseudonym for a name, keyed with `AIRA_PSEUDONYM_SECRET` (from Vault, the same on both); without it each process draws its own key and says so at start |
+| `AIRA_DIRECTORY_CLIENT_ID` / `_SECRET` / `_URL`                | `''`                                                       | The read-only directory client (§5.6). Management searches people and groups with it — without it no role can be bound to a group and nobody who has not signed in can be granted; the gateway reads with it the address a mail goes to |
+| `AIRA_SMTP_HOST` / `AIRA_MAIL_FROM`                            | `''`                                                       | The mail relay and the sender. With both, the gateway mails when a budget crosses a threshold of its use case and when an anomaly rule finds something; Management reads them to say, in the console and the privacy notice, whether anything is mailed. Port, TLS and login are the gateway's alone — `AIRA_SMTP_PORT` (587), `AIRA_SMTP_SECURITY` (`starttls`), [`CONFIGURATION.md`](CONFIGURATION.md) |
 | `AIRA_TEST_DATABASE`                                           | `false`                                                    | In-memory SQLite. Test harness only; both planes refuse it outside `local`.                                                                                |
 
 ### Gateway only
@@ -947,6 +1003,10 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_GOOGLE_API_KEY`                | `''`                                | Registers Google AI Studio when set — and stops the gateway at start-up unless `AIRA_ALLOWED_REGIONS` names `global`                                                                                                                                                                                                       |
 | `AIRA_GEMINI_MODELS`                 | empty                               | Models offered by name; empty, the catalog's discovery asks the key, and a model catalogued under `generative-language` is served all the same                                                                                                                                                                              |
 | `AIRA_GEMINI_BASE_URL`               | Google's v1beta endpoint            | Upstream base URL                                                                                                                                                                                                                                                                                                           |
+
+`AIRA_STORE_PAYLOADS`, `AIRA_DEFAULT_RETENTION_DAYS` and `AIRA_LOG_RETENTION_DAYS` are the
+gateway's to obey and Management's to state: the privacy notice prints them, so both planes are
+given the same values.
 
 #### The SPA's reverse proxy must re-resolve its upstreams
 
@@ -1002,10 +1062,12 @@ and the defaults only need to be generous enough for real schemas.
 
 **The batch bound interacts with your rate limits, and they have to be chosen together.** A batch
 of _n_ texts weighs _n_ against a use case's bucket — otherwise a limit of 10 requests per minute
-would allow 5 000 texts per minute, intact on paper and gone in practice. So a batch larger than a
-bucket's capacity can never be admitted, however long the caller waits: it is refused immediately
-with a message naming which of the two said no. If you set `AIRA_MAX_EMBEDDING_BATCH` above your
-smallest configured per-minute limit, large batches will fail permanently by design.
+would allow 2 560 texts per minute, ten batches of the 256 a call may carry, intact on paper and
+gone in practice. So a batch larger than a bucket's capacity can never be admitted, however long
+the caller waits: it is refused immediately with a message naming which of the two said no. A
+bucket's capacity is its limit's burst, or its per-minute rate where no burst is set; if
+`AIRA_MAX_EMBEDDING_BATCH` is above your smallest bucket, batches that large fail permanently by
+design.
 
 ### Management only
 
@@ -1015,21 +1077,25 @@ smallest configured per-minute limit, large batches will fail permanently by des
 | `AIRA_DEBUG`              | `true`    | Honoured only in `local`; anywhere else `true` stops Management at start-up     |
 | `AIRA_ALLOWED_HOSTS`      | `*`       | Comma-separated hostnames                                                       |
 | `AIRA_PRIVACY_CONTROLLER` | `''`      | The controller the privacy notice names; required outside `local`               |
-| `AIRA_DIRECTORY_CLIENT_ID` / `_SECRET` / `_URL` | `''` | The read-only directory client (§5.6); without it no role can be bound to a group and nobody who has not signed in can be granted |
 
 **Outside `AIRA_ENVIRONMENT=local` Management refuses to start** while `AIRA_SECRET_KEY` is the
 development default, `AIRA_ALLOWED_HOSTS` contains `*`, `AIRA_DEBUG` is on, no issuer or no audience
 is set, `AIRA_ROLE_GROUPS` names no `global-admin` group, `AIRA_PRIVACY_CONTROLLER` is empty, Kafka is
 `PLAINTEXT`, the issuer, JWKS or Vault address is plain HTTP to anything but loopback, or
 `AIRA_TEST_DATABASE` is on. Unlike the gateway it has no demo waiver. That is deliberate: a silent
-start with a well-known signing key is worse than a failed one. The full list for both planes is
-[`CONFIGURATION.md` §8](CONFIGURATION.md).
+start with a well-known signing key is worse than a failed one. In every environment, `local`
+included, it also refuses a value it cannot read — a malformed `AIRA_ROLE_GROUPS`, a throttle rate
+it cannot parse, key lifetimes out of bounds, a negative proxy count. The full list for both planes
+is [`CONFIGURATION.md` §8](CONFIGURATION.md).
 
 ### Minimal production environment
 
-Both planes start on these, and refuse on anything less: each was checked against the gateway's
-application factory and Management's settings module, with nothing else in the environment. The
-credentials are not written here — they come from Vault, at the path the `VAULT_*` lines name.
+Both planes start on these: each was checked against the gateway's application factory and
+Management's settings module, with nothing else in the environment. Not every line is a start-up
+condition — what a check asks for is the environment, the Kafka protocol, the issuer and audience
+(on Management also `AIRA_DEBUG`, `AIRA_ALLOWED_HOSTS`, the role groups and the privacy controller)
+and the passwords from Vault; the rest is what the deployment needs to work rather than to start.
+The credentials are not written here — they come from Vault, at the path the `VAULT_*` lines name.
 
 Gateway:
 
@@ -1056,9 +1122,10 @@ VAULT_ADDR=https://vault.internal:8200
 VAULT_ROLE_ID=<the AppRole's role id>
 VAULT_SECRET_ID_FILE=/run/secrets/vault-secret-id
 # in Vault: AIRA_POSTGRES_PASSWORD, AIRA_KAFKA_SASL_PASSWORD, AIRA_VERTEX_API_KEY
-#           (or AIRA_VERTEX_CREDENTIALS), and AIRA_REDIS_URL, since it carries a password —
-#           on a path Management reads too, the two passwords as AIRA_GATEWAY_POSTGRES_PASSWORD
-#           and AIRA_GATEWAY_KAFKA_SASL_PASSWORD, and the user names as AIRA_GATEWAY_*
+#           (or AIRA_VERTEX_CREDENTIALS), AIRA_PSEUDONYM_SECRET, and AIRA_REDIS_URL, since it
+#           carries a password — on a path Management reads too, the two passwords as
+#           AIRA_GATEWAY_POSTGRES_PASSWORD and AIRA_GATEWAY_KAFKA_SASL_PASSWORD, and the user
+#           names as AIRA_GATEWAY_*
 ```
 
 Management (same database server, different database):
@@ -1085,8 +1152,9 @@ VAULT_ADDR=https://vault.internal:8200
 VAULT_ROLE_ID=<the AppRole's role id>
 VAULT_SECRET_ID_FILE=/run/secrets/vault-secret-id
 # in Vault: AIRA_SECRET_KEY, AIRA_POSTGRES_PASSWORD, AIRA_KAFKA_SASL_PASSWORD,
-#           AIRA_DIRECTORY_CLIENT_SECRET — on a path the gateway reads too, the two passwords
-#           as AIRA_MANAGEMENT_POSTGRES_PASSWORD and AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD
+#           AIRA_DIRECTORY_CLIENT_SECRET, AIRA_PSEUDONYM_SECRET (the gateway's value) — on a
+#           path the gateway reads too, the two passwords as AIRA_MANAGEMENT_POSTGRES_PASSWORD
+#           and AIRA_MANAGEMENT_KAFKA_SASL_PASSWORD
 ```
 
 The audience is the same on both: the console's token goes to both planes. The consumer and the
@@ -1104,12 +1172,20 @@ where one is required.
 ```bash
 AIRA_VERTEX_PROJECT=my-gcp-project
 AIRA_VERTEX_CREDENTIALS='{"client_email":"…","private_key":"…"}'   # the service account's JSON — from Vault
+# AIRA_VERTEX_CREDENTIALS_FILE=/run/secrets/vertex.json           # or the same JSON as a file, re-read when it changes
 # AIRA_VERTEX_API_KEY=…                                            # or an API key; the service account wins if both
 AIRA_ALLOWED_REGIONS=eu,europe-west1               # empty → the EU regions of every cloud
 AIRA_VERTEX_MODELS=eu/google/gemini-2.5-pro,eu/anthropic/claude-sonnet-4-5@20250929
 ```
 
 Each model is `region/publisher/model` — the three things the URL and the dialect choice need.
+Naming models here is optional: a model catalogued under **Models & prices** for Vertex, with its
+publisher and a region, is served without it. Two more identities need no Google key at all —
+workload identity federation through your own Keycloak, and on Google Cloud the machine's own
+service account, which the gateway takes by itself when a project is set and no credential is; the
+variables are in [`CONFIGURATION.md` §3](CONFIGURATION.md). Claude refuses an API key — Vertex
+answers `401`, the caller receives `502`, and nothing refuses it at start-up — so serving
+Anthropic's models needs one of the identities.
 
 **Five things fail at startup rather than at dispatch**, on purpose. A gateway that starts and then
 fails every request looks like an upstream outage; one that starts and quietly serves a non-EU
@@ -1117,8 +1193,8 @@ region is worse than one that will not start at all.
 
 | Refused at boot                                       | Because                                                                       |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------- |
-| A model in a region outside `AIRA_ALLOWED_REGIONS`    | residency is a configuration claim, and this is what makes it hold            |
-| Credentials that are not a usable service-account key | a credential problem must not present as an upstream problem                  |
+| A model in a region outside `AIRA_ALLOWED_REGIONS`, not permitted there by name | residency is a configuration claim, and this is what makes it hold |
+| Credentials that are not a usable service-account key or federation configuration | a credential problem must not present as an upstream problem |
 | A model spec that is not `region/publisher/model`     | a typo here would otherwise become a 404 per request                          |
 | A publisher no Vertex adapter here speaks             | the request would be sent in a dialect the model does not understand          |
 | The same model name on two adapters                   | otherwise the region and credential that served a request are a silent choice |
@@ -1177,7 +1253,7 @@ a realm role assigned to a person directly is not a second one.
 
 Keycloak is the **source of truth**: on every authenticated request the roles the token's
 **groups** confer are synced onto the user's Django groups, and a role that exists only in Django
-is removed at the next login.
+is removed on that user's next request.
 
 ### 5.3 A groups mapper
 
@@ -1195,9 +1271,9 @@ The gateway derives use-case membership and roles from group paths, so the token
 Keycloak puts no audience a client of yours can name into a public client's token by itself. Add an
 **Audience** mapper to the console's client: *Included Client Audience* the value of
 `AIRA_OIDC_AUDIENCE` (`aira-gateway` in the reference realm), *Add to access token* on. Without it
-both planes refuse every token outside `local` (§3.2), and the console says so after a few
-attempts (§0 Step 2). A machine client of your own that calls the gateway with its own token needs
-the same two mappers.
+both planes refuse every token outside `local` (§3.2), and the console says so after one attempt
+to sign in again (§0 Step 2). A machine client of your own that calls the gateway with its own
+token needs the same two mappers.
 
 ### 5.5 Groups per use case
 
@@ -1222,7 +1298,8 @@ realm, and nothing else (`aira-directory` in the reference realm), given to Mana
 Keycloak at another address than the issuer's, `AIRA_DIRECTORY_URL`. Management uses it to search
 people and groups when access is granted, to invite somebody who has not signed in yet, and to
 check that a group exists before a role is bound to it — which it refuses while the directory
-cannot be asked.
+cannot be asked. The gateway reads with the same client the address each mail goes to, so where
+mail is on it needs the client too; the address is read when a mail is sent and kept nowhere.
 
 ---
 
@@ -1248,9 +1325,10 @@ Security:
       proxies you run, the hop count equal to the proxies that append (§3.7)
 - [ ] TLS terminated in front of both services; the SPA served over HTTPS (the client refuses the
       code flow against a remote issuer over plain HTTP)
-- [ ] Database credentials, `AIRA_SECRET_KEY`, the Kafka SASL password, the directory secret and
-      the provider keys in Vault, not baked into images, `.env` files or commits — and
-      `/readyz` (asked as an operator) reporting `"source": "vault"`
+- [ ] Database credentials, `AIRA_SECRET_KEY`, the Kafka SASL password, the directory secret, the
+      provider keys and the pseudonym key (`AIRA_PSEUDONYM_SECRET`, one value for both planes) in
+      Vault, not baked into images, `.env` files or commits — and `/readyz` (asked as an operator)
+      reporting `"source": "vault"`
 
 Operations:
 
@@ -1273,6 +1351,10 @@ Operations:
       pending, so one missing topic holds back every change (§3.3). An event the broker will never
       take (too large) is **parked** with its reason, said on every run, and never sent. Delivered
       and parked rows are deleted after 30 days.
+- [ ] Mail, if it is wanted: a relay and a sender (`AIRA_SMTP_HOST`, `AIRA_MAIL_FROM`) on both
+      planes, a route to the relay from the **gateway** — it sends, not Management — and the
+      directory client on the gateway as well, since every address is read from Keycloak when a
+      mail goes out. Without a relay nothing is mailed and nothing refuses to start
 - [ ] Prices on file for every model in use — check the unpriced warning on **Models & prices**.
       Under a cost budget an unpriced model is refused (§3.5); elsewhere its traffic is excluded
       from every spend figure
@@ -1295,9 +1377,10 @@ Operations:
       most — so the vendor's own figure is booked; the answer is then billed whole, and the stream
       holds its upstream connection until the vendor finishes. `0` closes it with the caller
 - [ ] `AIRA_COUNT_CANCELLED_STREAMS` reviewed: on by default, a stream the caller left before the
-      vendor reported its usage is counted at the vendor's own free endpoint — the request and the
-      part of the answer received are sent to it a second time (Vertex Gemini).
-      Off, nothing is sent again and such a stream's usage stays unknown
+      vendor reported its usage — or one that broke off because the gateway stopped waiting or the
+      connection was lost while the vendor answered on — is counted at the vendor's own free
+      endpoint: the request and the part of the answer received are sent to it a second time
+      (Vertex Gemini). Off, nothing is sent again and such a stream's usage stays unknown
 - [ ] `AIRA_REDACT_PATTERNS` set if your organisation has its own token or identifier format —
       added to the built-ins, never replacing them
 - [ ] Retention periods reviewed with whoever is accountable for each use case, and payload
@@ -1305,8 +1388,9 @@ Operations:
 - [ ] `/healthz` (liveness) and `/readyz` (readiness) wired into your orchestrator on both services.
       **Postgres alone decides readiness** (`200` ready, `503` not ready). Kafka is reported and
       never makes an instance not ready: while no broker answers, `degraded` is `true` and the
-      services keep serving on what they hold — changes wait in the outbox. Redis, a fallback in
-      use or an unreachable or stale upstream probe set `degraded` too. Alert on `degraded`; take an
+      services keep serving on what they hold — changes wait in the outbox. Redis, a rate limit or
+      budget running on its fallback path, or an unreachable or stale upstream probe set
+      `degraded` too — a use case's model fallback does not. Alert on `degraded`; take an
       instance out of rotation only on `not_ready`. `/readyz` is unauthenticated by design — a probe
       carries no credential — and outside `local` and demo mode the gateway answers probes with the
       **verdict and `degraded` only**; the body naming the upstreams, the fallbacks in force and the
@@ -1336,7 +1420,19 @@ that renames or drops, check that it held (`\dt`) before assuming it did.
 
 **Two versions serving at once** — the state a rolling update passes through — need one rule of
 every migration: a column is dropped one release after the code stopped reading it, and a rename
-is two releases. It is stated, not enforced.
+is two releases. It is stated, not enforced. `v0.1.14` keeps to it on the gateway: it keeps the
+`fallback_chains` table and `pipeline_configs.fallback_mode`, which `v0.1.13` reads and it does
+not, and the release after it removes them — so a rolling update reaches that release through
+`v0.1.14`, not past it.
+
+**Management is not held to that rule**, because it runs as one instance: its migration drops what
+its release stopped reading (`v0.1.14` drops a pipeline's `fallback_mode` and the installation's
+fallback chains there). From that migration until the new Management replaces it, the old one fails
+wherever it reads what was dropped — replace it straight after the migration, as `up -d` does.
+
+A Management migration that rewrites configuration also announces it: it writes each use case,
+pipeline or model it changed to the outbox, in full, so the gateway holds the new state once the
+relay and the consumer have run after the upgrade, and the old one until then.
 
 A new topic in a release is created before the release's code runs (§3.3); the topic step is
 idempotent, and it creates every topic that release's code uses.
@@ -1355,11 +1451,11 @@ What an installation keeps, and where:
 
 | Where | Holds | Back it up |
 | --- | --- | --- |
-| PostgreSQL `aira_gateway` | **the audit trail** — a row for every request past authentication and attribution, served or refused, with its stored prompt and answer — budget usage, findings, suspensions, the record of who read stored content, retention runs, break-glass keys; and the read-model of Management's configuration | **yes**: everything but the read-model exists nowhere else |
+| PostgreSQL `aira_gateway` | **the audit trail** — a row for every request past authentication and attribution, served or refused, with its stored prompt and answer — budget usage, findings, suspensions, the record of who read stored content, retention runs, break-glass keys, the record of each mail owed and sent; and the read-model of Management's configuration | **yes**: everything but the read-model exists nowhere else |
 | PostgreSQL `aira_mgmt` | **the configuration** — use cases, members and group grants, API keys (as hashes), budgets, rate limits, pipelines, anomaly rules, the model catalogue and its prices, roles and their change log — the outbox, the console's accounts, privacy acknowledgements, the question catalogue and its results | **yes**: it is the source every configuration event comes from |
 | the Kafka topics | the current configuration, compacted, which a gateway's read-model is built from; and the consumer group's committed offsets | **yes** — see below |
 | Redis | rate-limit buckets and budget reservations in flight | no: deliberately not persisted (`--save "" --appendonly no` in the bundled stack). Budgets are booked in Postgres; buckets refill |
-| Vault | every credential | with your Vault. The bundled `-dev` Vault keeps nothing across a restart; `vault-init` refills it from `deploy/compose/.env` on every start when `VAULT_ADDR` is set |
+| Vault | every credential | with your Vault. The bundled `-dev` Vault keeps nothing across a restart; `vault-init`, a one-shot of the showcase file (`make up-full`, `make showcase`), refills it from `deploy/compose/.env` on every start when `VAULT_ADDR` is set and the environment is `local` or `demo` |
 
 In the bundled stack the three databases — the two above and Keycloak's `keycloak` — live in one
 volume, `aira_pgdata`, and the topics in `aira_kafka-data` (prefixed with `AIRA_STACK`, `aira` by

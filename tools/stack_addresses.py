@@ -99,8 +99,8 @@ def _resolution_chain() -> dict[str, tuple[list[str], str]]:
 
     **The chain, not just the outermost name.** Compose writes
     ``${AIRA_PUBLISH_GATEWAY_PORT:-${AIRA_GATEWAY_PORT:-8001}}`` for the three application services
-    — the inner name is the one that existed before the `AIRA_PUBLISH_` family and is still what
-    `docs/SETUP.md` tells a reader to set. Reading only the outer name made this module disagree
+    — the inner name is the one that existed before the `AIRA_PUBLISH_` family, and what a reader
+    who still sets it gets. Reading only the outer name made this module disagree
     with Compose for exactly those three: the stack published on the port the reader chose and
     every tool went on asking for 8001, which is the defect this file exists to prevent, committed
     by the file itself.

@@ -29,12 +29,18 @@ recipe's own fallback applies.
 
 Use it as a starting point:
 1. Copy it to `../custom/` and edit it.
-2. Select it as `/etc/otelcol-contrib/custom/<file>.yaml`.
+2. Select it as `/etc/otelcol-contrib/custom/<file>.yaml`, in the slot of the channel it is for.
 
-For the observability channel, change two things in the copy:
-- Rename the exporters from `…/forward` to `…/backend`.
+For the observability channel, change three things in the copy:
+- Rename what it defines from `…/forward` to `…/backend`: the exporters, and an extension it
+  brings, in the restated extension list as well.
 - Name the base pipelines `traces`, `metrics` and `logs`, and keep `debug` and `file/arrived` in
   each exporter list.
+- Read `AIRA_OTEL_BACKEND_*` wherever it reads `AIRA_OTEL_FORWARD_*` — the TLS, queue and retry
+  values — or the copy follows the delivery channel's settings.
+
+A copy used beside its original reads the same names from `collector.env`; where the two
+destinations differ, give the copy's values names of their own.
 
 ## Rules every recipe keeps
 
@@ -43,10 +49,12 @@ They hold for a fragment of your own in `../custom/` too:
 - **Only its own pipelines.** A recipe names only its own channel's pipelines, with complete exporter
   lists, because a merged list replaces.
 - **The whole extension list.** A recipe that brings an extension restates the whole
-  `service::extensions` list, including the base's entries. Two such recipes on one collector
-  become one file.
-- **A fallback for every value.** Every value a recipe reads has a fallback that lets the collector
-  start: an address that never resolves, or a secret that names its variable.
+  `service::extensions` list, including the base's entries. Of two such recipes on one collector
+  only the later list survives, so two whose extensions must both run become one file. Azure
+  Monitor followed by OAuth2 is meant that way: the second's identity replaces the first's.
+- **A fallback for every value.** Every value a recipe reads is a core variable, which Compose
+  always passes, or has a fallback that lets the collector start: an address that never resolves,
+  a secret that names its variable, or an empty value that leaves the default in place.
 
 ## Checking a combination before you use it
 

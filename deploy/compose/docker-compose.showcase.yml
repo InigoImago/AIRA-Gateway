@@ -219,12 +219,6 @@ services:
     networks: [aira]
     restart: "no"
 
-  # ---- a Windows domain, for proving the Windows sign-on (`FRD-140`) -------------------------
-  #
-  # Samba as an Active Directory domain controller: the directory Keycloak reads over LDAP, and
-  # the KDC whose tickets a Windows sign-on presents. It stands in for an installation's own AD,
-  # so it is behind a profile of its own — `make windows-sso-up` starts it and gives the realm
-  # its half, `make test-windows-sso` proves both halves and takes the realm's half away again.
   # A mail catcher, readable at http://localhost:8025: the relay a showcase can point the gateway at
   # (in `.env`: `AIRA_SMTP_HOST=mailpit`, `AIRA_SMTP_PORT=1025`, `AIRA_SMTP_SECURITY=none`,
   # `AIRA_MAIL_FROM=aira@demo.aira`), so a budget used up or a use case's anomaly finding lands
@@ -239,6 +233,12 @@ services:
     networks: [aira]
     restart: unless-stopped
 
+  # ---- a Windows domain, for proving the Windows sign-on (`FRD-140`) -------------------------
+  #
+  # Samba as an Active Directory domain controller: the directory Keycloak reads over LDAP, and
+  # the KDC whose tickets a Windows sign-on presents. It stands in for an installation's own AD,
+  # so it is behind a profile of its own — `make windows-sso-up` starts it and gives the realm
+  # its half, `make test-windows-sso` proves both halves and takes the realm's half away again.
   ad:
     build:
       context: ../..

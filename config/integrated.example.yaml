@@ -141,8 +141,8 @@ oidc:
   # client's `aud` is `["account"]` until an Audience mapper or a client scope says otherwise.
   audience: aira-gateway
   # **The console's own client**, and not a setting of either plane: the console's entrypoint
-  # writes it into `runtime-config.js` at container start (as it reads `csp`, `management`,
-  # `gateway` and `dns` below). One image, any realm.
+  # writes it into `runtime-config.js` at container start (as it reads `trace.url`, `csp`, the two
+  # `upstream`s and `dns` below). One image, any realm.
   client_id: aira-gateway
   # Where the containers fetch the realm's signing keys. The issuer is what the *browser* got the
   # token from and must match `iss` exactly; the key set is fetched by the services, from an
@@ -172,9 +172,10 @@ privacy:
 # A read-only Keycloak service account, so the console can *search* your groups and people when
 # granting access (`view-users`, `query-groups`, nothing else), and so a group is checked before a
 # role is bound to it (`FRD-614`). Without it the console offers only what it already knows — and
-# no custom role can be bound. `url` is where Management reaches Keycloak's admin API. Name it:
-# the settings read an empty value as the issuer's server, but Compose replaces an empty one with
-# its development default `http://keycloak:8080`, which an integrated deployment does not have.
+# no custom role can be bound. `url` is where Management, and the gateway for a mail's address,
+# reach Keycloak's admin API. Name it: the settings read an empty value as the issuer's server, but
+# Compose replaces an empty one with its development default `http://keycloak:8080`, which an
+# integrated deployment does not have.
 directory:
   client_id: aira-directory
   url: https://sso.example.com
@@ -213,15 +214,17 @@ model:
 
 # ---------------------------------------------------------------------------------------------
 # The console, a static bundle behind nginx, configured when its **container starts**
-# (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane: the entrypoint writes
-# `runtime-config.js` from `oidc.issuer` and `oidc.client_id`, and templates the proxy from these.
+# (`docs/INTEGRATIONS.md` §7). None of these is a setting of either plane — except each plane's
+# own database user and Kafka identity, which share the `management:` and `gateway:` sections: the
+# entrypoint writes `runtime-config.js` from `oidc.issuer`, `oidc.client_id` and `trace.url`, and
+# templates the proxy from the rest.
 # ---------------------------------------------------------------------------------------------
 
-# What the console's content policy lets it call. Left empty it is derived from the issuer's
-# origin, which is the only thing the console calls cross-origin — set it only for something the
-# derivation cannot guess, a second origin or a websocket host, and then name the issuer's origin
-# too: a value replaces the derivation. Getting it wrong produces a login that fails **in the
-# browser and nowhere else**.
+# What the console's content policy lets it call. Left empty it is `'self'` and the issuer's
+# origin, the only thing the console calls cross-origin — set it only for something the
+# derivation cannot guess, a second origin or a websocket host, and then name `'self'` and the
+# issuer's origin too: a value replaces the derivation. Getting it wrong produces a login that
+# fails **in the browser and nowhere else**.
 csp:
   connect_src: ''
 
@@ -346,8 +349,8 @@ foundry:
 allowed:
   regions: europe-west1,europe-west4
   # A region permitted for named models alone: `region=model,model;region=model`. Agent Platform's
-  # open models (GLM, DeepSeek) answer only at `global` (`FRD-115` FR-2a); permitting it for them
-  # by name leaves it refused for every other model.
+  # open models (GLM-5.2 among them) answer only at `global`; permitting it for them by name leaves
+  # it refused for every other model.
   model_regions: ''
   hosts: aira.example.com
 
@@ -362,6 +365,11 @@ otel:
   #   delivery       one record per API access and per model access — `forward_*` below
   #
   # Neither is a branch of the other, and neither can retune the other.
+  #
+  # **That collector is this repository's** (`deploy/compose/docker-compose.yml`, profile
+  # `observability`), and `make up-integrated` starts none: from `debug_verbosity` on, the keys
+  # below configure it and do nothing where a collector of your own receives instead. Up to
+  # `sample_ratio` they are the applications' own.
   enabled: true
   endpoint: http://otel-collector.internal:4318
   # One signal somewhere else, as a whole URL with its route — nothing is appended. Each is
@@ -515,6 +523,9 @@ log:
 # Bounds. Every one of these refuses something, so every one of them is a decision.
 # ---------------------------------------------------------------------------------------------
 max:
+  # The largest request body. 1 MiB refuses a coding assistant's session from about 300 000
+  # tokens of conversation; the gateway's own default, when this line is absent, is 8 MiB, and
+  # every proxy in front must let through at least what is set here.
   request_bytes: 1048576
   auth_failures_per_minute: 60
   embedding_batch: 64

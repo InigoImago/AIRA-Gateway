@@ -7,7 +7,20 @@ not settings — Vault's own connection variables, and what Compose, the console
 collector read — say so where they appear. The defaults below are the ones in the code, so they are
 the values a process uses when nothing sets them. Both services also read the same variable names
 from **Vault** when one is configured, and Vault **wins** over the environment
-([§7](#7-secrets-from-vault)).
+([§7](#7-secrets-from-vault)). Below the environment, each process also reads a `.env` file in its
+working directory, which is how a service run from source picks one up.
+
+**The Compose stack passes defaults of its own** where the code's suits only a process run from
+source on the host, and where the development realm needs one: `AIRA_POSTGRES_HOST=postgres`,
+`AIRA_KAFKA_BOOTSTRAP_SERVERS=kafka:9092`, `AIRA_REDIS_URL=redis://redis:6379/0`,
+`AIRA_OTEL_ENDPOINT=http://otel-collector:4318`, the issuer at `http://localhost:8080/realms/aira`
+(the port follows `AIRA_PUBLISH_KEYCLOAK_PORT`) with the in-network JWKS URI beside it,
+`AIRA_OIDC_ENABLED=true`, the development realm's three role groups in `AIRA_ROLE_GROUPS`, and its
+read-only directory account (`aira-directory`, `http://keycloak:8080`). Both planes' shared
+database password there is `POSTGRES_PASSWORD`, the one the bundled Postgres was created with, and
+Management's database is fixed at `aira_mgmt` — so `AIRA_POSTGRES_PASSWORD` written into
+`deploy/compose/.env` reaches the applications only through Vault, and `AIRA_POSTGRES_DB` moves the
+gateway's database alone.
 
 [pydantic-settings]: https://docs.pydantic.dev/latest/concepts/pydantic_settings/
 
@@ -42,9 +55,10 @@ from **Vault** when one is configured, and Vault **wins** over the environment
 | `AIRA_OTEL_TRACES_ENDPOINT`                                    | _(empty)_                                                  | Where **traces** go instead of `AIRA_OTEL_ENDPOINT`, as a whole URL — nothing is appended, so it names its route (`http://tempo:4318/v1/traces`). Empty sends traces under `AIRA_OTEL_ENDPOINT`. With that empty too, traces are not exported and everything else runs as before: requests are answered, metrics and logs still go out, and a response carries no `X-Trace-Id`. Without traces the **delivery channel to a SIEM receives nothing**, because its records are spans. |
 | `AIRA_OTEL_METRICS_ENDPOINT`                                   | _(empty)_                                                  | The same for **metrics** (`http://mimir:9009/otlp/v1/metrics`). Empty sends them under `AIRA_OTEL_ENDPOINT`, or nowhere if that is empty too. |
 | `AIRA_OTEL_LOGS_ENDPOINT`                                      | _(empty)_                                                  | The same for **logs** (`http://loki:3100/otlp/v1/logs`). Empty sends them under `AIRA_OTEL_ENDPOINT`, or nowhere if that is empty too. Each of the three can be set alone; one left empty never stops a process. |
-| `AIRA_OTEL_SAMPLE_RATIO`                                       | `1.0`                                                      | 1.0 = every trace. Decided by trace id in each process, never by a caller's `traceparent` flag. **Below 1 it thins the delivery channel too**: an access record is a span, and a span not kept is a record a SIEM never receives. Outside 0–1 the process stops at start while export is on. |
+| `AIRA_OTEL_SAMPLE_RATIO`                                       | `1.0`                                                      | 1.0 = every trace. Decided by trace id in each process, never by a caller's `traceparent` flag. **Below 1 it thins the delivery channel too**: an access record is a span, and a span not kept is a record a SIEM never receives. Outside 0–1 the process stops at start while traces are exported; while none are, it is not read. |
 | _(no setting)_                                                 | `application/x-protobuf`                                   | **The OTLP encoding is not a setting.** The applications always send protobuf; JSON is a choice on the collector's own exporter (`encoding: json`) — see [`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability). |
 | _(no setting)_                                                 | `traceparent`, `tracestate`                                | **Which trace headers a request has read is not a setting of ours.** Both applications read a caller's W3C trace context and nothing else: a `tracestate` over 8192 characters is dropped unread, and `baggage` is not read or passed on. The OpenTelemetry SDK's own `OTEL_PROPAGATORS` replaces that choice when set. |
+| _(no setting)_                                                 | `/healthz`, `/readyz`                                      | **The health probes leave no span.** While telemetry is exported, both applications keep them out of the traces through the OpenTelemetry instrumentation's own `OTEL_PYTHON_EXCLUDED_URLS`; a value an installation sets there replaces that list. |
 | `AIRA_DEBUG_INTEGRATIONS`                                      | _(empty)_                                                  | One log line per call to another system, while you are wiring one up. See [§1a](#1a-watching-a-call-to-another-system) — empty is off, and off is what a working installation runs. |
 | `AIRA_DEBUG_OTEL_PAYLOAD`                                      | `0`                                                        | Print this many items of each OTLP batch as OTLP/JSON on stdout. 0 is off. Expensive and loud; see [`INTEGRATIONS.md` §6](INTEGRATIONS.md#6-observability).                       |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / _(differs)_ / `aira` / `aira-local` | **Two different databases** — see the note below.                                                                                                                                 |
@@ -73,7 +87,7 @@ AIRA_DEBUG_INTEGRATIONS=all         # every one of them
 | `auth` | The JWKS fetch against the identity provider — its duration, and the reason when it fails. |
 | `vault` | The AppRole login and the KV read: the status Vault gave, the path, and where the secret-id came from. Never a value. |
 | `redis` | Each counter script: the duration, and the reason when the store is not usable. |
-| `postgres` | A new physical connection, and a failure to establish one. **Not** a line per statement — those are in the trace. |
+| `postgres` | A new physical connection, and on the gateway a failure to establish one; Management's failure reaches its ordinary error log instead. **Not** a line per statement — those are in the trace. |
 
 There is no second switch. The lines are `INFO` (`WARNING` when the call failed), so
 `AIRA_DEBUG_INTEGRATIONS` alone is enough; you do not also need `AIRA_LOG_LEVEL=DEBUG`.
@@ -112,7 +126,7 @@ audit row. That is why the check is a startup refusal rather than a warning.
 | `AIRA_KAFKA_SASL_MECHANISM`    | —           | e.g. `SCRAM-SHA-512`, `PLAIN`. Read by the two `SASL_*` protocols; empty means `SCRAM-SHA-512`.           |
 | `AIRA_KAFKA_SASL_USERNAME`     | —           | SASL user. Identifies rather than authorises, so it is configuration — a config file may carry it (`config/integrated.example.yaml` does), and Vault may hold it too. |
 | `AIRA_KAFKA_SASL_PASSWORD`     | —           | SASL password. **A secret** — Vault (§7).                                                                 |
-| `AIRA_KAFKA_SSL_CAFILE`        | —           | Path to the CA bundle that signs the broker's certificate, for `SSL` and `SASL_SSL`.                       |
+| `AIRA_KAFKA_SSL_CAFILE`        | —           | Path to the CA bundle that signs the broker's certificate, for `SSL` and `SASL_SSL`. Empty uses the system trust store. |
 
 > **The two services use two databases.** The gateway defaults to `aira_gateway`, Management to
 > `aira_mgmt`. They are not interchangeable: one holds configuration and the other holds the
@@ -139,9 +153,9 @@ audit row. That is why the check is a startup refusal rather than a warning.
 | `AIRA_AUTH_REQUIRED`                | `true`      | `false` opens every route — a `local`-only switch: refused anywhere else, `AIRA_DEMO_MODE` included. With it off there is no identity, so role checks are skipped rather than guessed.                                                                                     |
 | `AIRA_OIDC_ENABLED`                 | `false`     | Accept OIDC bearer tokens in addition to API keys. **Required** for every console screen that asks the gateway — dry runs, budget consumption, reports, incidents, the catalogue's discovery and model checks, smoke tests. Gateway only: Management always requires OIDC. |
 | `AIRA_OIDC_ISSUER`                  | —           | e.g. `https://sso.example.com/realms/aira`. Compared literally with each token's `iss`, so it is the address the **browser** got the token from. Read by both planes, and by the console's container ([§5](#5-frontend)).                                                    |
-| `AIRA_STACK`                        | `aira`      | Namespaces a whole stack: the Compose project, the network, and every container name. Docker refuses a duplicate container name and a *fixed* network name is shared by every project on the machine — so without all three, a second stack either cannot start or silently joins the first one's bridge, where `postgres` answers for two containers. Read by Compose only. |
+| `AIRA_STACK`                        | `aira`      | Namespaces a whole stack: the Compose project — and so its volumes, which Compose names after the project — the network, and every container name. Docker refuses a duplicate container name and a *fixed* network name is shared by every project on the machine — so without all three, a second stack either cannot start or silently joins the first one's bridge, where `postgres` answers for two containers. `COMPOSE_PROJECT_NAME`, when set, overrides the project name; leave it unset. Not a setting: read by Compose, and by the Makefile targets and tools that find the stack's containers. |
 | `AIRA_PUBLISH_*_PORT`               | _(today's)_ | Which **host** port each service is published on — `AIRA_PUBLISH_POSTGRES_PORT`, `…_KEYCLOAK_PORT`, `…_KEYCLOAK_HEALTH_PORT`, `…_KAFKA_PORT`, `…_REDIS_PORT`, `…_GRAFANA_PORT`, `…_VAULT_PORT`, `…_SCHEMA_REGISTRY_PORT`, `…_OTLP_GRPC_PORT`, `…_OTLP_HTTP_PORT`, `…_OLLAMA_PORT`, `…_GATEWAY_PORT`, `…_MANAGEMENT_PORT`, `…_FRONTEND_PORT`, `…_MAILPIT_PORT` — the showcase's mail catcher, which shows what the gateway mailed — and `…_KDC_PORT` — the KDC of the showcase's stand-in Windows domain (profile `windows-sso`); the collector's two are in [§5a](#5a-the-collector-and-a-second-destination). Read by Compose only. **Its own prefix on purpose**: `AIRA_POSTGRES_PORT` is a *setting* — the port the gateway connects to — and one name for both meanings would make moving the published port silently redirect the in-network connection. |
-| `AIRA_OIDC_ISSUERS`                 | —           | **Several Keycloak realms at once**, for one organisation whose people live in more than one — a migration, a second instance, a merger. `issuer\|audience\|jwks_uri` per entry, `;`-separated, the JWKS URI optional. Empty means the single pair below, which is what most deployments keep. A token is routed by its own `iss` and then verified against that realm properly; **every** entry needs an audience outside `local` or the gateway refuses to start, and an entry with no issuer refuses to start (with OIDC on, and anywhere outside `local`). The realms are trusted equally — the same group path from either grants the same access, which holds because they describe one population. **Gateway only**: Management and the console read the single `AIRA_OIDC_ISSUER`, so a person from a second realm can call the gateway and cannot sign in to the console. |
+| `AIRA_OIDC_ISSUERS`                 | —           | **Several Keycloak realms at once**, for one organisation whose people live in more than one — a migration, a second instance, a merger. `issuer\|audience\|jwks_uri` per entry, `;`-separated, the JWKS URI optional. Empty means the single pair below, which is what most deployments keep. A token is routed by its own `iss` and then verified against that realm properly; with OIDC on, **every** entry needs an audience outside `local` or the gateway refuses to start (`AIRA_DEMO_MODE` waives it, as it waives the single audience), and an entry with no issuer refuses to start (with OIDC on, and anywhere outside `local`). The realms are trusted equally — the same group path from either grants the same access, which holds because they describe one population. **Gateway only**: Management and the console read the single `AIRA_OIDC_ISSUER`, so a person from a second realm can call the gateway and cannot sign in to the console. |
 | `AIRA_OIDC_AUDIENCE`                | —           | The audience this service answers to. Enforced when set — and **required outside `AIRA_ENVIRONMENT=local`**: without it, any token the issuer minted is accepted, including one issued to a different client. Both planes refuse to start without it — the gateway while `AIRA_OIDC_ENABLED` is on (`AIRA_DEMO_MODE` waives it there), Management whenever an issuer is set. |
 | `AIRA_OIDC_CLOCK_SKEW_SECONDS`      | `60`        | How far the **issuer's** clock may run ahead of this host's, for `iat` and `nbf`. Costs nothing — a token that is "too new" was still genuinely minted — and at `0` a service one second behind its issuer refuses **every** freshly minted token as `401`, which reads exactly like a wrong secret. Read by both planes; outside 0–300 s refuses to start. |
 | `AIRA_OIDC_EXPIRY_LEEWAY_SECONDS`   | `0`         | How long past `exp` a token is still accepted. **This is the half with a cost**: it extends a credential's life beyond what the issuer granted, so it is off. The predecessor grants 60 s here; a client that needs it has a broken refresh strategy, and an installation may still choose to absorb it. Read by both planes; outside 0–300 s refuses to start. |
@@ -152,7 +166,7 @@ audit row. That is why the check is a startup refusal rather than a warning.
 | `AIRA_MAX_AUTH_FAILURES_PER_MINUTE` | `60`        | Failed authentications one source address may make before it is answered 429 with `Retry-After`. Counts **refusals only**, so a working credential never touches it however busy the caller is. `0` disables it (an installation whose WAF already does this).              |
 | `AIRA_REDACT_PATTERNS`              | —           | Extra regexes (`;`- or newline-separated) redacted from stored payloads, **added to** the built-in credential shapes, never replacing them. An invalid pattern, one that backtracks catastrophically, or one that refers back to what a group matched (`\1`, `(?P=name)`, `(?(1)…)`) stops the gateway rather than silently matching nothing. |
 | `AIRA_TRUST_FORWARDED_FOR`          | `false`     | Read the client IP from `X-Forwarded-For`, `AIRA_TRUSTED_PROXY_HOPS` entries from the right. Only enable behind a proxy you control — otherwise any caller can write any address into your audit trail. Gateway only: Management has no such switch.                     |
-| `AIRA_DIRECTORY_CLIENT_ID`          | —           | Both services. A **read-only** Keycloak service account (`view-users`, `query-groups`). Management searches your groups and people with it when access is granted; without it the console offers what it already knows and says so, and **no role can be bound to a group**: a group nobody could check is refused. The gateway reads with it the address a mail goes to (§2, *Mail*); without it no mail finds anybody, and the gateway says so at start. |
+| `AIRA_DIRECTORY_CLIENT_ID`          | —           | Both services. A **read-only** Keycloak service account (`view-users`, `query-groups`). Management searches your groups and people with it when access is granted; without it the console offers what it already knows and says so, and **no role can be bound to a group**: a group nobody could check is refused. The gateway reads with it the address a mail goes to (§2, *Mail*); without it — or without its secret — no mail finds anybody, and a gateway that has mail switched on says so at start. |
 | `AIRA_DIRECTORY_CLIENT_SECRET`      | —           | Its secret. From Vault in any real deployment.                                                                                                                                                                                                                              |
 | `AIRA_DIRECTORY_URL`                | —           | Both services. Where the directory account reaches Keycloak's admin API, when that is not the server in `AIRA_OIDC_ISSUER` — the issuer is the address a browser uses, and inside a container it rarely is Keycloak. Defaults to the issuer's server; the compose stack sets `http://keycloak:8080`. |
 | `AIRA_MODEL_REFERENCE_URL`          | —           | Management only. Where the **model reference** is read live — `https://models.dev/api.json`, or a mirror. Empty answers from the copy this release ships, so an upgrade makes no new outbound call; set, Management asks at most once a day, waits five minutes after a failure before asking again, and answers from the shipped copy, saying why, whenever the list cannot be had. |
@@ -165,16 +179,17 @@ audit row. That is why the check is a startup refusal rather than a warning.
 
 ### Storage and retention
 
-Management reads the first four as well: the privacy notice states them
-([§4](#the-privacy-notice)).
+Management reads all but the last as well: the privacy notice states the content setting, the data
+mode and both retention periods ([§4](#the-privacy-notice)), and Management pseudonymises its own
+log lines with the same key.
 
 | Variable                      | Default | What it does                                                                                                                                                     |
 | ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AIRA_STORE_PAYLOADS`         | `true`  | Operator **kill switch** above the per-use-case setting: a use-case admin may decline storage but cannot re-enable it where the operator forbade it.             |
 | `AIRA_STRICT_DATA_MODE`       | `true`  | **Strict data mode**, read by both planes. On, nobody but Global Administrator and IT Security sees a person: stored content is readable by those two roles only, whatever a use case chose; figures per person, the name and API key on a request, and the person or key a finding or block names reach only them and the person concerned; latency per person is computed for nobody; and no other role can be given `payload.read_any` or `incident.investigate`. Applied when read, so turning it off restores every use case's own content setting and every stored grant. The privacy notice states which mode runs. |
-| `AIRA_PSEUDONYM_SECRET` | — | The key a person's name is **pseudonymised** with in spans, the SIEM feed and log lines while strict data mode is on — the same person always the same pseudonym, so one caller can still be followed, and nobody reads the name off it. A keyed hash, because usernames are guessable and an unkeyed one is reversed by hashing the directory. Shared by both planes, and a credential: from Vault. Unset, each process draws its own key and says so once at start-up; nothing leaks, but pseudonyms differ between processes and restarts. Re-identifying a caller is the audit trail's job, not this key's: a span carries its trace id, and the request's row names the caller to Global Administrator and IT Security. |
+| `AIRA_PSEUDONYM_SECRET` | — | The key a person's name is **pseudonymised** with in spans, the SIEM feed and log lines while strict data mode is on — the same person always the same pseudonym, so one caller can still be followed, and nobody reads the name off it. A keyed hash, because usernames are guessable and an unkeyed one is reversed by hashing the directory. Shared by both planes, and a credential: from Vault. Unset, each process draws its own key — a gateway process says so once at start-up, Management says nothing — so nothing leaks, but pseudonyms differ between processes and restarts. Re-identifying a caller is the audit trail's job, not this key's: a span carries its trace id, and the request's row names the caller to Global Administrator and IT Security. |
 | `AIRA_DEFAULT_RETENTION_DAYS` | `7`     | For traffic that carries no use case, and for rows whose use case the read-model does not know. Use-case traffic follows its own period. **1 to 3650**, the bounds a use case's own period has; anything else refuses to start on both planes, because the retention sweep and the privacy notice — which prints this value — would read it differently. |
-| `AIRA_LOG_RETENTION_DAYS`     | `0`     | Whole-row deletion. **0 = never**, deliberately: payload retention and record retention are separate clocks, and deleting rows would truncate the spend history. |
+| `AIRA_LOG_RETENTION_DAYS`     | `0`     | Whole-row deletion. **0 = never**, deliberately: payload retention and record retention are separate clocks, and deleting rows would truncate the spend history. A negative value is read as 0 by the sweep and printed as no limit by the notice. |
 | `AIRA_LOG_QUEUE_SIZE`         | `512`   | Audit-write queue. `0` writes on the request path — supported, and the cost is the latency the queue exists to remove.                                           |
 
 ### Controls
@@ -212,7 +227,7 @@ without them nothing is checked or stored, and nothing refuses to start.
 | --------------------- | ----------- | ------------ |
 | `AIRA_SMTP_HOST`      | _(empty)_   | Both services. The mail relay, by host name. Management reads it to tell the console, and the privacy notice, whether anything is mailed at all. |
 | `AIRA_MAIL_FROM`      | _(empty)_   | Both services. The sender of every mail, such as `AIRA <aira-noreply@example.com>`. A relay without a sender sends nothing, and the gateway says so once at start. |
-| `AIRA_SMTP_PORT`      | `587`       | The relay's port: 587 for mail submission, 465 for TLS from the first byte, 25 for a relay that takes mail from inside the network. |
+| `AIRA_SMTP_PORT`      | `587`       | The relay's port: 587 for mail submission, 465 for TLS from the first byte, 25 for a relay that takes mail from inside the network. Outside 1–65535 refuses to start. |
 | `AIRA_SMTP_SECURITY`  | `starttls`  | `starttls` upgrades the connection and refuses a relay that cannot; `tls` speaks TLS from the first byte; `none` neither, for a relay inside the network that offers no TLS. Anything else refuses to start. |
 | `AIRA_SMTP_USERNAME`  | _(empty)_   | A login, where the relay asks for one. Empty sends without. |
 | `AIRA_SMTP_PASSWORD`  | _(empty)_   | Its password. **A secret** — Vault. |
@@ -242,8 +257,8 @@ Every bound here must be above zero: `0`, or `-1` written to mean "unlimited", r
 
 | Variable                      | Default                                 | What it does                                                                                                                                                                                                                                                                                                                                                             |
 | ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AIRA_ALLOWED_REGIONS`        | _(EU regions of every supported cloud)_ | **One policy for every cloud** — Google's `europe-west1` and Azure's `westeurope` in one list. A model configured outside them **refuses to start**: residency is enforced, not intended. Google AI Studio (`AIRA_GOOGLE_API_KEY`) is the region `global`, because that endpoint names none and guarantees none — using it means adding `global` to this list, out loud. |
-| `AIRA_ALLOWED_MODEL_REGIONS`  | —                                       | A region permitted for **named models alone**, beyond the list: `region=model,model;region=model`, e.g. `global=glm-5.2-maas`. For a model served only where the list does not reach — Agent Platform's open models answer at `global` and nowhere else — without permitting that region for every model. A whole endpoint (an OpenAI server, Foundry, AI Studio) is never opened by a model's name. A malformed entry stops the gateway starting. |
+| `AIRA_ALLOWED_REGIONS`        | _(ten EU regions)_ | **One policy for every cloud** — Google's `europe-west1` and Azure's `westeurope` in one list, comma-separated. Empty is Google's `eu`, `europe-west1`, `europe-west3`, `europe-west4` and `europe-north1` and Azure's `westeurope`, `northeurope`, `germanywestcentral`, `swedencentral` and `francecentral`; a list **replaces** that default rather than adding to it, so it names every region in use. A model configured outside it **refuses to start**, and one the console's catalogue places outside it is refused when it is called: residency is enforced, not intended. Google AI Studio (`AIRA_GOOGLE_API_KEY`) is the region `global`, because that endpoint names none and guarantees none — using it means adding `global` to this list, out loud. |
+| `AIRA_ALLOWED_MODEL_REGIONS`  | —                                       | A region permitted for **named models alone**, beyond the list: `region=model,model;region=model`, e.g. `global=glm-5.2-maas`. Empty permits nothing by name. For a model served only where the list does not reach — Agent Platform's open models answer at `global` and nowhere else — without permitting that region for every model. A whole endpoint (an OpenAI server, Foundry, AI Studio) is never opened by a model's name. A malformed entry stops the gateway starting. |
 | `AIRA_CORS_ORIGINS`           | —                                       | Comma-separated allow-list.                                                                                                                                                                                                                                                                                                                                              |
 | `AIRA_CORS_ALLOW_CREDENTIALS` | `false`                                 | `*` **plus** credentials is refused at startup rather than silently ignored.                                                                                                                                                                                                                                                                                             |
 
@@ -270,7 +285,7 @@ that cannot be used, a region outside `AIRA_ALLOWED_REGIONS` ([§8](#8-what-refu
 
 | Variable                         | Default | What it does                                                                      |
 | -------------------------------- | ------- | --------------------------------------------------------------------------------- |
-| `AIRA_VERTEX_PROJECT`            | —       | GCP project id. The adapter is registered when this and a credential (any of the next three) are set; without a credential the model list below is not read. |
+| `AIRA_VERTEX_PROJECT`            | —       | GCP project id. The adapter is registered when this and a credential are set — `AIRA_VERTEX_CREDENTIALS`, `_CREDENTIALS_FILE`, `AIRA_VERTEX_METADATA_SERVER` or `AIRA_VERTEX_API_KEY`, or on Google Cloud the machine's own account found at start; without one the model list below is not read. |
 | `AIRA_VERTEX_CREDENTIALS`        | —       | The service account's key **as JSON** — the file's content, one value, not a path to it: a path is refused at start as not valid JSON (a path goes in `AIRA_VERTEX_CREDENTIALS_FILE`), and so is a key that cannot sign. From Vault in any real deployment. |
 | `AIRA_VERTEX_CREDENTIALS_FILE`   | —       | The path of a file holding that same JSON — a Docker or Kubernetes secret, a file a Vault agent renders. Read at start, and **read again** whenever it changes, so a key written over it signs the next token without a restart. A missing or unusable file stops the start; one changed into something unusable keeps the last key that worked. A path, not a credential. Exclusive with `AIRA_VERTEX_CREDENTIALS`: both set stops the start. |
 | `AIRA_VERTEX_FEDERATION_TOKEN_URL` | — | **No Google key: workload identity federation.** The token endpoint of your OIDC provider — Keycloak's `…/realms/<realm>/protocol/openid-connect/token`. The gateway fetches its identity there with a client-credentials grant and exchanges it at Google's Security Token Service; `AIRA_VERTEX_CREDENTIALS` or `_FILE` then holds Google's `external_account` configuration (no secret in it), which may also name its own source — a token file or a local URL — instead. |
@@ -281,7 +296,7 @@ that cannot be used, a region outside `AIRA_ALLOWED_REGIONS` ([§8](#8-what-refu
 | `AIRA_VERTEX_API_KEY`               | —           | The **other** credential the same adapter takes: an Agent Platform API key, sent as `x-goog-api-key`, for accounts that never create a service account. **Same regional hosts, same residency check**: this does not use Google's global express endpoint, which processes data anywhere. Claude on Vertex refuses it (`401`, passed on as `502`), so serving Anthropic's models needs the service account. Set both and the service account wins. From the environment or Vault. |
 | `AIRA_VERTEX_MODELS`             | —       | `region/publisher/model`, comma-separated — e.g. `europe-west1/google/gemini-2.5-flash`. The publisher decides the wire: `google` (Gemini), `anthropic` (Claude), and Agent Platform's managed open models `zai-org` (GLM) and `deepseek-ai` (DeepSeek), which speak the OpenAI dialect at one endpoint. Any other publisher stops the start. Optional: a model the console's catalogue lists under `vertex` and its publisher, with a region, is served without being named here. The open models answer only at `global`, so each needs `AIRA_ALLOWED_MODEL_REGIONS`. |
 | `AIRA_VERTEX_TIMEOUT_SECONDS`    | `120`   | The longest the gateway waits for Vertex to send anything — between two chunks of a stream, or for a whole answer that is not streamed. Claude is always asked as a stream, so for it this is the longest silence, however long the answer; a Gemini answer the caller did not stream must come whole within it. Running out is answered `504` and said as *AIRA stopped waiting*. |
-| `AIRA_VERTEX_DEFAULT_MAX_TOKENS` | `4096`  | Anthropic requires `max_tokens`; this is what is sent when the caller names none. |
+| `AIRA_VERTEX_DEFAULT_MAX_TOKENS` | `4096`  | Anthropic requires `max_tokens`; this is what is sent when neither the caller nor the model's catalogue entry names one. |
 | `AIRA_VERTEX_PARTNER_STRICT_TOOLS` | `false` | Send Claude's tools **strict** where the declaration allows it without changing it (every object closed and saying what it requires), so the provider guarantees the arguments match. Off by default: on Vertex a strict tool is the partner-model feature `structured_outputs`, which the organisation policy `constraints/vertexai.allowedPartnerModelFeatures` forbids unless allowed — and then every request carrying a tool is refused. A tool declared in JSON Schema is never sent strict. |
 
 ### Microsoft Foundry — Azure OpenAI and Microsoft's own models
@@ -337,10 +352,12 @@ answer 120 s and has no setting of its own.
 ### The privacy notice
 
 Every console user is shown the privacy notice as a window they acknowledge before working, and can
-open it at any time from the console's footer. What it states about retention and content storage
-is read from `AIRA_STORE_PAYLOADS`, `AIRA_DEFAULT_RETENTION_DAYS` and `AIRA_LOG_RETENTION_DAYS` —
-**pass Management the same values as the gateway**, or the notice describes a different
-installation. Changing any value the notice prints, or a role's access to other people's data, is a
+open it at any time from the console's footer. What it states about content storage, retention,
+the data mode, key lifetimes and mail is read from `AIRA_STORE_PAYLOADS`,
+`AIRA_DEFAULT_RETENTION_DAYS`, `AIRA_LOG_RETENTION_DAYS`, `AIRA_STRICT_DATA_MODE`,
+`AIRA_API_KEY_DEFAULT_DAYS`, `AIRA_API_KEY_MAX_DAYS`, and whether `AIRA_SMTP_HOST` and
+`AIRA_MAIL_FROM` are both set — **pass Management the same values as the gateway**, or the notice
+describes a different installation. Changing any value the notice prints, or a role's access to other people's data, is a
 new version of the notice, and everybody is asked to read it again.
 
 | Variable                        | Default   | What it does |
@@ -359,9 +376,9 @@ control plane somebody opens.
 ## 5. Frontend
 
 The console is one image for any realm: a static bundle behind nginx, configured **when its
-container starts**. On every start the entrypoint writes `runtime-config.js` — the OIDC issuer and
-client id the bundle reads — from the first two variables below, and derives the content policy's
-`connect-src` from the issuer's origin, so moving Keycloak is one variable
+container starts**. On every start the entrypoint writes `runtime-config.js` — the OIDC issuer,
+client id and trace link the bundle reads — from the first three variables below, and derives the
+content policy's `connect-src` from the issuer's origin, so moving Keycloak is one variable
 ([`INTEGRATIONS.md` §7](INTEGRATIONS.md#7-the-spa-is-configured-at-deployment-time)). Under
 `ng serve` the bundle reads `public/runtime-config.js` as it is. None of these is a setting of
 either plane, except the issuer, which both planes read as well.
@@ -370,15 +387,15 @@ either plane, except the issuer, which both planes read as well.
 | --------------------------- | ------------------------------ | ------------------------------------------------------------------------------- |
 | `AIRA_OIDC_ISSUER`          | `http://localhost:8080/realms/aira` | The realm the console signs people in at, as a **browser** reaches it — the value both planes compare `iss` with. |
 | `AIRA_OIDC_CLIENT_ID`       | `aira-gateway`                 | The console's public OIDC client.                                               |
-| `AIRA_TRACE_URL`            | _(empty)_                      | Where an opened request's trace is linked to, with `{trace_id}` in place of the id — a Grafana Explore or Tempo address, `http` or `https`. Empty, the console shows the trace id and copies it without a link. |
+| `AIRA_TRACE_URL`            | _(empty)_                      | Where an opened request's trace is linked to, with `{trace_id}` in place of the id — a Grafana Explore or Tempo address, `http` or `https`. Empty, the console shows the trace id and copies it without a link — and so it does for a value that names no `{trace_id}` or is not an `http(s)://` address. |
 | `AIRA_CSP_CONNECT_SRC`      | _(derived)_                    | What the console's content policy lets it call. Unset, it is `'self'` and the issuer's origin — leave it so: the token request goes to Keycloak cross-origin, and the derivation names exactly that origin. Set it only for an origin the derivation cannot guess — a second one, a websocket host — and name the issuer's origin in it too: a value replaces the derivation and does not follow a moved issuer, and a policy that misses it produces a login that fails in the browser and nowhere else. |
 | `AIRA_MANAGEMENT_UPSTREAM`  | `http://management:8002`       | Where nginx sends `/api` — an address the **console's container** can reach; `127.0.0.1` there is that container itself. |
 | `AIRA_GATEWAY_UPSTREAM`     | `http://gateway:8001`          | Where it sends `/gw`, the same way.                                             |
 
-nginx resolves the upstreams on every request, through the resolver named in `AIRA_DNS_RESOLVER`
-(default `127.0.0.11`, Docker's embedded DNS — name the platform's own anywhere else): a name
-resolved once would leave a container restart behind a changed IP as a 502 that outlives the
-restart. And `/gw` must not buffer: two verbs are SSE, and nginx buffers by default — the shipped
+nginx resolves the upstreams while it runs, keeping an answer ten seconds, through the resolver
+named in `AIRA_DNS_RESOLVER` (default `127.0.0.11`, Docker's embedded DNS — name the platform's own
+anywhere else): a name resolved once would leave a container restart behind a changed IP as a 502
+that outlives the restart. And `/gw` must not buffer: two verbs are SSE, and nginx buffers by default — the shipped
 configuration sets `proxy_buffering off` and a read timeout above the gateway's own.
 
 The local Compose stack publishes every port on `AIRA_BIND_HOST` (default `127.0.0.1`) and on its
@@ -447,8 +464,9 @@ rather than an OTLP product. `proto` is what a conformant receiver may insist on
 specification makes protobuf required and JSON optional, and several managed endpoints do.
 
 **A credential fragment selected without its values does not fail silently or loudly.** It sends the
-**name of the variable you forgot** — `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set` — which
-`make otlp-inspector` shows and the destination's own rejection quotes.
+**name of the variable you forgot** — `AIRA_OTEL_FORWARD_AUTHORIZATION-is-not-set` — which the
+destination's own rejection quotes; `make otlp-inspector`, which never shows a credential's value,
+shows an opaque one of 42 characters.
 
 ### Channel 1 — observability, to your trace backend
 
@@ -466,7 +484,7 @@ Every span, metric and log. On by default, and the bundled Grafana is only the d
 | `AIRA_OTEL_BACKEND_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are.** Unset sends no credential of any kind. `…/backend-auth-header.yaml` sends one header, under any name, on both transports. A credential that expires is a recipe (below). |
 | `AIRA_OTEL_BACKEND_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
 | `AIRA_OTEL_BACKEND_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. Read only by the header fragment. HTTP basic — Grafana Cloud's OTLP endpoint — is `Basic <base64 of user:password>`. |
-| `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store. **This** is the answer to a backend behind an internal CA. |
+| `AIRA_OTEL_BACKEND_CA_FILE` | _(empty)_ | A private CA, from `deploy/compose/otel/ca/`. Empty means the system trust store; a file named here is the channel's **only** root, the image's public roots not added to it. **This** is the answer to a backend behind an internal CA. |
 | `AIRA_OTEL_BACKEND_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the backend authenticates **us** by certificate, instead of or as well as a credential. |
 | `AIRA_OTEL_BACKEND_INSECURE` | `false` | Keep TLS, stop checking the certificate. A reachability test, not a deployment — and not a substitute for the CA file above. |
 | `AIRA_OTEL_BACKEND_BATCH_SECONDS` | `200ms` | How long the collector holds telemetry for this channel. The default is the collector's own, so leaving it alone changes nothing. |
@@ -477,8 +495,9 @@ Every span, metric and log. On by default, and the bundled Grafana is only the d
 
 ### Channel 2 — delivery, a second destination beside it
 
-Off unless **both** of the first two are set. `AIRA_OTEL_FORWARD_CONFIG` is the switch; the rest are
-read only once it is.
+It takes **both** of the first two. `AIRA_OTEL_FORWARD_CONFIG` is the switch, and the endpoint says
+where: switched on without one, the channel sends to an address that never resolves and fails by
+name (below). The rest are read only once the switch is on.
 
 The same three slots and the same knobs as channel 1 above, one prefix along — the only two names
 that differ are the ones that name the transport this channel does *not* default to.
@@ -495,7 +514,7 @@ that differ are the ones that name the transport this channel does *not* default
 | `AIRA_OTEL_FORWARD_AUTH_CONFIG` | _(the empty fragment)_ | **Who we say we are, as its own fragment.** Unset sends no credential header of any kind. `…/forward-auth-header.yaml` sends one header, under any name, on both transports. OAuth2 and a platform identity are recipes (below). |
 | `AIRA_OTEL_FORWARD_AUTH_HEADER` | `authorization` | **The header name.** `Authorization` is what a minority of OTLP receivers ask for: `x-api-key`, `api-key`, `DD-API-KEY`, `X-Honeycomb-Team`, `X-Seq-ApiKey` are all in the field. |
 | `AIRA_OTEL_FORWARD_AUTHORIZATION` | _(names itself)_ | Its value, sent verbatim, scheme included. HTTP basic is `Basic <base64 of user:password>`. Read only by the header fragment — set alone it does nothing, the same shape as the endpoint and the switch. |
-| `AIRA_OTEL_FORWARD_CA_FILE` | _(empty)_ | A private CA's certificate, inside the collector — put the file in `deploy/compose/otel/ca/` and name it `/etc/otelcol-contrib/ca/<file>.crt`. Empty means the system trust store. **This** is the answer to a receiver behind an internal CA. |
+| `AIRA_OTEL_FORWARD_CA_FILE` | _(empty)_ | A private CA's certificate, inside the collector — put the file in `deploy/compose/otel/ca/` and name it `/etc/otelcol-contrib/ca/<file>.crt`. Empty means the system trust store; a file named here is the channel's **only** root, the image's public roots not added to it. **This** is the answer to a receiver behind an internal CA. |
 | `AIRA_OTEL_FORWARD_CLIENT_CERT_FILE` / `_CLIENT_KEY_FILE` | _(empty)_ | Mutual TLS: the receiver authenticates **us** by certificate, instead of or as well as a header. |
 | `AIRA_OTEL_FORWARD_INSECURE` | `false` | Skip certificate verification altogether. For a first reachability test, not for a deployment — and not a substitute for the CA file above, which answers a missing root without abandoning the check. |
 | `AIRA_OTEL_FORWARD_BATCH_SECONDS` | `10s` | How long the collector holds telemetry to send it in one piece. |
@@ -622,7 +641,7 @@ decision; today it does not.
 | `VAULT_ADDR`             | —        | Where Vault is. Not enough on its own — see above. Outside `local` a plain `http://` address that is not loopback refuses to boot on both planes, even while Vault is not in use ([§8](#8-what-refuses-to-boot)). |
 | `VAULT_ROLE_ID`          | —        | AppRole role id. With an address, this turns Vault on, and a secret id must then be found — or the process stops. |
 | `VAULT_SECRET_ID`        | —        | The secret id itself. **Wins** when the file below is set as well. A file is better: a variable is readable from `/proc` and inherited by every subprocess. |
-| `VAULT_SECRET_ID_FILE`   | —        | Path to a file holding the secret id — the better place for it. Read only while `VAULT_SECRET_ID` is empty; a path that cannot be read stops the process. |
+| `VAULT_SECRET_ID_FILE`   | —        | Path to a file holding the secret id — the better place for it. Read only while `VAULT_SECRET_ID` is empty; a path that cannot be read stops the process. `make vault-init` writes one to `deploy/compose/secrets/vault-secret-id` (mode `0600`, ignored by git); no shipped Compose file mounts it, so an override of the installation's own mounts it and this names the path inside the container. |
 | `VAULT_TOKEN`            | —        | A plain token instead of AppRole, used only while `VAULT_ROLE_ID` is empty; every use logs a warning. Dev only: the Compose stack's dev Vault has the root token `root`, which its `vault-init` uses to provision; the applications receive a token only if `.env` sets one. |
 | `VAULT_MOUNT`            | `secret` | KV-v2 mount.                                                                    |
 | `VAULT_PATH`             | `aira`   | Path within the mount.                                                          |
@@ -633,6 +652,14 @@ Keys **inside** Vault use the settings' own names, with or without the `AIRA_` p
 case (`google_api_key` is `AIRA_GOOGLE_API_KEY`) — those are the values being fetched, and they are
 unrelated to the connection variables above. Two spellings of one setting with different values
 refuse to start.
+
+**Which settings are credentials** is decided by name: every setting whose name ends in `_API_KEY`,
+`_PASSWORD`, `_SECRET`, `_SECRET_KEY`, `_CREDENTIALS` or `_TOKEN` — the database, Kafka, Redis and
+mail passwords (the shared ones and each plane's own), `AIRA_SECRET_KEY`, `AIRA_PSEUDONYM_SECRET`,
+the directory account's and the Vertex federation client's secrets, and the Google, Vertex and
+Foundry keys. A configuration file refuses to carry any of them, `make vault-init` copies them into
+Vault from the environment, and the `secrets.in_vault` list of each `config/*.example.yaml` names
+them all.
 **Rotation is a restart**: secrets are read once, at start-up — a decision, not an omission.
 "Vault is down" and "nobody wrote that key" are different exceptions and are reported differently.
 
@@ -691,13 +718,15 @@ Both planes:
 - a value the settings cannot read — a type it cannot hold (a port that is not a number), a Kafka
   stage or broker entry nothing could dial, an OIDC clock tolerance outside 0–300 s, an unknown
   name in `AIRA_DEBUG_INTEGRATIONS`
-- `AIRA_ROLE_GROUPS` that is malformed: an unknown or retired role name, a path not starting with
-  `/`, a role with no group
+- an `AIRA_TIME_ZONE` the time-zone database does not know, or a zone that is ever part of an hour
+  off UTC
+- `AIRA_ROLE_GROUPS` that is malformed: an unknown or retired role name, an entry without `=`, a
+  path not starting with `/` or the bare `/`, a role with no group
 - `VAULT_TIMEOUT` that is not a number of seconds above zero — read even while Vault is not in use
 - Vault is configured and cannot be used: unreachable, the login refused, nothing at its path, no
   secret id beside a role id or a secret-id file that cannot be read, or one setting held under two
   spellings with different values
-- `AIRA_OTEL_SAMPLE_RATIO` outside 0–1 while export is on
+- `AIRA_OTEL_SAMPLE_RATIO` outside 0–1 while traces are exported
 - `AIRA_DEFAULT_RETENTION_DAYS` outside 1–3650
 
 The gateway:
@@ -708,17 +737,25 @@ The gateway:
   name in `AIRA_ALLOWED_MODEL_REGIONS` — Vertex, Foundry, AI Studio and an OpenAI-compatible server
   that names a region alike
 - a configured Vertex model is not `region/publisher/model`, or names a publisher no adapter speaks
-- Vertex credentials that are not a service account's JSON, or whose key cannot sign
-- a Foundry endpoint with deployments and no key, or a deployment that names no region
-- an OpenAI-compatible server with no URL or no models
+- Vertex credentials that are neither a service account's key nor an `external_account`
+  configuration, a key that cannot sign or a key file that cannot be read; two of them at once
+  (the key and a key file, or either beside `AIRA_VERTEX_METADATA_SERVER`); federation settings
+  without an `external_account` configuration, without the client's id and secret, or beside the
+  metadata server
+- a Foundry endpoint with deployments and no key, a deployment that names no region, or one model
+  declared twice
+- an OpenAI-compatible server with no `http(s)://` URL or no models, or two under one name
 - two upstream adapters claim the same model name
+- an `AIRA_SMTP_SECURITY` other than `starttls`, `tls` or `none`, or an `AIRA_SMTP_PORT` outside
+  1–65535
 - Redis sentinels with no service name, or an entry that is not `host:port`
 - an `AIRA_OIDC_ISSUERS` entry with no issuer, while OIDC is on
 - a redaction pattern that is invalid, backtracks catastrophically or refers back to what a group
   matched
 - an `AIRA_ALLOWED_MODEL_REGIONS` entry that is not `region=model,model`
 - a size bound, interval or timeout of `0` or below; a negative failure limit, reservation estimate,
-  audit queue size or `AIRA_TRUSTED_PROXY_HOPS`
+  audit queue size, `AIRA_DRAIN_LEFT_STREAMS_SECONDS`, `AIRA_STREAM_KEEPALIVE_SECONDS` or
+  `AIRA_TRUSTED_PROXY_HOPS`
 
 Management:
 
@@ -728,6 +765,7 @@ Management:
 - a negative `AIRA_TRUSTED_PROXY_HOPS` (the gateway refuses it too, among its bounds above)
 - an `AIRA_PRIVACY_NOTICE_MODE` other than `once`, `monthly` or `always`, or a default language the
   notice has no text in
+- an `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` that is not a positive number
 
 That distinction is worth stating because the second group surprises people locally. Setting
 `AIRA_GOOGLE_API_KEY` on a default configuration stops the gateway starting: AI Studio answers on
@@ -737,5 +775,8 @@ deliberately, or use a regional platform.
 
 `make config-check` builds both planes' settings from the rendered file alone and asks their
 `unsafe_settings` — so it reports the table above, Management's whole list, and every value a
-settings class refuses to read. It builds no upstream, CORS policy, redactor or telemetry, so the
-rest of the gateway's list, and the sample ratio, are first met at start.
+settings class refuses to read: the bounds, the mail settings, two Vertex credentials at once, a
+malformed `AIRA_ALLOWED_MODEL_REGIONS` or sentinel entry. It builds no upstream, CORS policy,
+redactor or telemetry, so what only those check — a platform's models, regions and credentials,
+two adapters claiming one model, CORS, a redaction pattern, a sentinel list without its service
+name, the sample ratio — is first met at start.

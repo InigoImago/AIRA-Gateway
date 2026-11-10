@@ -5,6 +5,63 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The documents read against the code: what is there, how it runs, what is missing (2026-11-10)
+
+The owner asked for documentation that says what is built, how to get it running and what is still
+missing. Fifty-four rounds had landed since the last such pass (`36b5c2c8`), each keeping the
+document it worked on. Every reader document, the config examples' comments, the planning
+documents and the README were read claim by claim against the code at `ba3fda4d`. No behaviour
+changed. Outside the documents only comments moved; two tools' printed hints now name the console's
+**Requests** tab, `make showcase` prints its base URLs with `/uc/<slug>` instead of telling a key's
+client it needs nothing else, and the standalone example names the directory client its stack
+already uses, so `make config-verify` on it reports nothing.
+
+**What had drifted.** `dev.md`, `config/README.md` and `deploy/compose/README.md` had not been
+touched since the last pass, and `ARCHITECTURE.md` by three rounds; it knew nothing of strict data
+mode, mail, ranking, the technical record or the stream deadline.
+- The integrated guide's smoke test sent a key's model call without `/uc/<use-case>`, which the
+  gateway has refused with `400` since every call names its use case (`FRD-149`).
+- The request lifecycle had eight outright errors, among them the exhausted chain's statuses and a
+  dry run said never to ask the price condition.
+- The configuration reference claimed defaults *dumped from the settings classes*. No tool does
+  that, and no guard checks a default; all 140 were compared by hand and matched.
+- The compose example advised `docker compose down -v keycloak`, which does nothing for a realm
+  kept in Postgres, or, removing every project volume, deletes everything.
+- The gap analysis said *nobody is told* two weeks after budget and anomaly mail shipped, still
+  called the throttle's `429` unmarked a month after it was marked, and counted 13 built where 12
+  are.
+
+**Written down as gaps** (`GAP-ANALYSIS`):
+- built and never run against the real system: Foundry, Claude, keyless Google, billing prices,
+  each plane's Kafka identity over SASL, a real mail relay;
+- only the demo seeds the 100 questions, and no command loads them alone;
+- a published image reports no build;
+- the KIRA deprecation link leads to a `404`;
+- the consumer's lag and apply errors are not measured;
+- the previous release's fallback table waits for the release after `v0.1.14` to drop it.
+
+**Found, and left for the owner**, because the code rather than a document looks wrong:
+- Management never receives `AIRA_TRUSTED_PROXY_HOPS` under Compose, so behind a proxy and the
+  console's nginx its failed-sign-in bound keys on the proxy's address;
+- `AIRA_DIRECTORY_URL` falls back to `http://keycloak:8080` in an integrated deployment;
+- `AIRA_KIRA_SUNSET` reaches no gateway container;
+- the three config examples set `max.request_bytes` to 1 MiB, against the gateway's 8 MiB, a
+  coding session's size from about 300 000 tokens;
+- a pipeline step's audit row takes the request's id, and an unhandled `500` carries none;
+- `make showcase-reset-keys` waits for four keys of six, and the integration test named for a bound
+  key that needs no selector sends one through its helper;
+- the UI audit records detail reads.
+
+**Restored.** `bd538163`, the squash of `f5518ed5` under the same title, removed exactly what that
+commit added: two sentences of the Keycloak federation runbook and the entry *The Keycloak half of
+federation, run against a real Keycloak (2026-10-18)* below. Both are back.
+
+Method: eight parallel reviewers, one per group of documents, each correcting only its own files
+and reporting every change with the line of code it rests on. Their changes were checked against
+the code by sampling before they were kept.
+
+---
+
 ## Each signal to its own address (2026-11-09)
 
 The applications' OTLP leg had one address, `AIRA_OTEL_ENDPOINT`, with `/v1/traces`, `/v1/metrics`
@@ -1213,6 +1270,22 @@ run one after another. Also on the way: an ad-hoc gateway started for the flake 
 configuration, used its default database address — the showcase's Postgres — and wrote 206 audit rows
 for `mock-1` there; reported to the owner, not deleted. 1969 properties; `MG-1`–`MG-22`; `S5a`, `S6a`,
 `FXG2-20`, `PB7`, `PB8` re-anchored.
+
+---
+
+## The Keycloak half of federation, run against a real Keycloak (2026-10-18)
+
+Asked whether federation had been verified: only against played answers. The Keycloak half was then
+run against the showcase's own Keycloak with a temporary client (deleted afterwards): the gateway's
+client-credentials code obtained an RS256 access token, `iss` the realm, `azp` the client, `aud`
+`["aira-gcp", "account"]` with the audience mapper, five minutes' lifetime; that token was what the
+exchange sent as `subject_token`; a wrong secret and a client with service accounts switched off
+produced Keycloak's real descriptions, and both matched `CLIENT_REJECTED` and
+`SERVICE_ACCOUNTS_DISABLED`. The realm's JWKS carries `x5c`, `x5t` and `x5t#S256` on its signing key,
+so the runbook's `jq` that strips them is needed. Not checkable without a GCP project: whether
+Google accepts an `aud` array whose second value it does not allow; the runbook says how to make
+`aira-gcp` the only one. The Google half — STS, impersonation, Vertex with the resulting token — and
+a service-account key against Google's token endpoint have still only met played answers.
 
 ---
 

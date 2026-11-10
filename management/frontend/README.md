@@ -21,9 +21,11 @@ Run from the repository root:
 | `make fmt` | rewrites the formatting, of this and of the Python code |
 
 Where the console signs in comes from `public/runtime-config.js`, which names the local stack's
-realm (`http://localhost:8080/realms/aira`, client `aira-gateway`). In the container image,
-`deploy/10-runtime-config.envsh` writes that file at every start from `AIRA_OIDC_ISSUER` and
-`AIRA_OIDC_CLIENT_ID`, and derives the content policy's `connect-src` from the issuer.
+realm (`http://localhost:8080/realms/aira`, client `aira-gateway`) and no trace address. In the
+container image, `deploy/10-runtime-config.envsh` writes that file at every start from
+`AIRA_OIDC_ISSUER`, `AIRA_OIDC_CLIENT_ID` and `AIRA_TRACE_URL` — where a request's trace opens,
+`{trace_id}` standing for its id — and derives the content policy's `connect-src` from the issuer
+unless `AIRA_CSP_CONNECT_SRC` names it.
 
 ## Conventions
 
@@ -36,6 +38,11 @@ realm (`http://localhost:8080/realms/aira`, client `aira-gateway`). In the conta
 - **No silent failures.** Every load and mutation reports its outcome through
   `core/api/error-message.ts`, which surfaces the backend's error envelope.
 - **Tests assert the rendered DOM and real interactions**, not component methods.
+- **One file is generated.** `src/app/features/use-cases/opencode-plugin.generated.ts` is the
+  OpenCode budget plugin the console hands out beside a new key, copied from
+  `tools/opencode/plugins/aira-budget/tui.tsx` by
+  `uv run python tools/opencode_plugin_asset.py --write`. Edit the plugin, never the copy: a test
+  fails while the two differ.
 
 ## Browser tests
 

@@ -104,7 +104,7 @@ def main() -> int:
     print('        -d \'{"contents":[{"role":"user","parts":[{"text":"Say OK."}]}]}\'')
     print()
     print("  Both land in the same audit trail, under different API names. Watch either arrive:")
-    print(f"      {CONSOLE}/use-cases/{SLUG}  →  Traces")
+    print(f"      {CONSOLE}/use-cases/{SLUG}  →  Requests")
     print()
     print(f"  '/uc/{SLUG}' names the use case; a client that cannot change its path sends")
     print(f"  'X-AIRA-Use-Case: {SLUG}' instead. A model call that names none is refused, a key")

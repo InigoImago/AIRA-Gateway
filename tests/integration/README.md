@@ -4,14 +4,24 @@ Server-side checks that need the **live Compose stack**. They carry the `integra
 the default hermetic `pytest` run excludes, and run with `make test-integration`
 (`uv run pytest -m integration --no-cov`).
 
-> **This suite calls a paid cloud model.** Whenever the stack has Vertex credentials,
-> `test_speech_live.py` catalogues Vertex's `gemini-2.5-flash-tts` in `europe-west1` and asks it
-> for speech twice, once buffered and once streamed. Without Vertex credentials nothing serves that
-> name and both cases skip. To run everything else without it:
+> **This suite calls a paid cloud model.** Whenever the gateway has a Vertex project and a way to
+> authenticate to it — a credential, a credentials file, the metadata server, or running on Google
+> Cloud — from its environment or its Vault, `test_speech_live.py` catalogues Vertex's
+> `gemini-2.5-flash-tts` in `europe-west1` and asks it for speech twice, once buffered and once
+> streamed. The model need not be configured anywhere. Without Vertex the gateway answers `404` for
+> that name and both cases skip; no marker leaves them out. The test replaces the gateway's
+> catalogue entry of that name for the run and deletes it afterwards. To run everything else
+> without it:
 >
 > ```bash
 > uv run pytest -m integration --no-cov --ignore=tests/integration/test_speech_live.py
 > ```
+>
+> `test_serving_options.py` addresses a real catalogued model as well — the first approved one with
+> a bounded thinking mode, a paid one where the catalogue has it — with a request the gateway must
+> refuse before dispatch, so it spends only if that refusal is broken. Every other model request in
+> the suite asks for the mock model, a local model, or a name nothing serves. CI's stacks have no
+> cloud credentials.
 
 ## What it needs
 
@@ -31,10 +41,23 @@ in and check that mode's answer, so the same commands test either; switch the st
 with `make showcase-strict-off` and `make showcase-strict-on` (`make showcase-mode` says which runs),
 or start it with the variable set: `AIRA_STRICT_DATA_MODE=false make up-full`.
 
+**The mail round needs the mail catcher.** `test_mail_round.py` uses up a budget and reads the mail
+it caused out of the showcase's mail catcher (`mailpit`, on port 8025), so the gateway has to send
+there, with a link to the console. CI's integration job starts the stack with these, and so must a
+local run that includes that file:
+
+```bash
+AIRA_SMTP_HOST=mailpit AIRA_SMTP_PORT=1025 AIRA_SMTP_SECURITY=none \
+AIRA_MAIL_FROM=aira@demo.aira AIRA_CONSOLE_URL=http://localhost:4200 make up-full
+```
+
+Without them that test fails after two and a half minutes; it does not skip.
+
 The suite talks to the gateway and Management over HTTP, to both PostgreSQL databases directly, to
-Keycloak through the development realm's test service accounts, and to Redis, Vault, the collector
-and the local model; it also runs `docker` on the host. Before the first test it prints what the
-gateway's `/readyz` reports, so a degraded stack shows above the failures it causes.
+Keycloak through the development realm's test service accounts, and to Redis, Vault, the collector,
+the mail catcher and the local model; it also runs `docker` on the host, into the Vault, Kafka and
+model containers among others. Before the first test it prints what the gateway's `/readyz`
+reports, so a degraded stack shows above the failures it causes.
 `test_diagnostics.py` stops the local model's container on purpose and starts it again in a
 `finally` — after an interrupted run, `docker start aira-ollama` brings it back. A stack started
 without the demo profile has no local model; the tests that need one skip.

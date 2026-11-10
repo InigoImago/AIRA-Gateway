@@ -25,6 +25,12 @@ local model `qwen3:0.6b`, configuration reaches the gateway only through the out
 `up-full` runs in a loop (`make relay` is a single pass), and the clean-up after a run executes
 inside the `management` container.
 
+**A run costs nothing.** Every request a spec sends asks for the mock model (`mock-1`), the local
+model, or a name nothing serves. One spec opens the model catalogue's import and lists the first
+provider's models with the stack's own key — Google AI Studio's, where the stack holds one — and
+Google does not bill a listing. The Windows sign-on suite asks for the mock model only, and the UI
+audit presses no button that calls a model.
+
 The suite finds the stack where `tools/stack_addresses.py` says it is, so a port moved with an
 `AIRA_PUBLISH_…_PORT` variable moves here too. `AIRA_E2E_BASE_URL`, `AIRA_E2E_GATEWAY_URL` and
 `AIRA_E2E_KEYCLOAK_URL` point it at another stack instead (`e2e/stack.ts`).
@@ -43,15 +49,18 @@ full local run, start it the same way: `AIRA_THROTTLE_USER=6000/minute make up-f
 
 **What a run leaves behind.** Everything a test creates is written to a register under
 `e2e/.artifacts/` before it is made. The global teardown (`teardown.ts`) signs in as the Global
-Administrator and removes exactly what the register names, through the API — so a use case is
-retired, which keeps its record. `make test-e2e` then purges those retired use cases
-(`make purge-e2e-use-cases`), which is possible only on a demo installation and not over HTTP. Both
-run whether the suite passed or not; a run that was killed leaves the register, and the next run's
-teardown adopts it.
+Administrator and removes exactly what the register names: use cases, rules, roles, models and
+installation budgets through Management's API — so a use case is retired, which keeps its record —
+and a model release put back as it was; a pipeline-test run from Management's database, through
+the `postgres` container, and a person the suite made in the realm through Keycloak's admin API.
+`make test-e2e` then purges those retired use cases (`make purge-e2e-use-cases`), which is possible
+only on a demo installation and not over HTTP. Both run whether the suite passed or not; a run that
+was killed leaves the register, and the next run's teardown adopts it.
 
 **When a test fails**, the reporter is a list in the terminal, and the failing test's trace is kept
 under `e2e/test-results/` (`npx playwright show-trace <its trace.zip>`). The HTML report is written
-only in CI, which uploads it as the `playwright-report` artifact.
+only in CI, which uploads it with the traces as the `playwright-report` artifact when the job
+fails.
 
 ## Browser
 

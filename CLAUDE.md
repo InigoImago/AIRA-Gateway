@@ -108,8 +108,8 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 The ADRs and FRDs record *why*; these record *what*, and the `README.md` is a hub linking them:
 [`ARCHITECTURE`](docs/ARCHITECTURE.md), [`REQUEST-LIFECYCLE`](docs/REQUEST-LIFECYCLE.md) (one
 request, every control, in order), [`deployment/`](docs/deployment/README.md) (four ways to run it),
-[`CONFIGURATION`](docs/CONFIGURATION.md) (every `AIRA_*` variable, defaults dumped from the settings
-classes), [`INTEGRATIONS`](docs/INTEGRATIONS.md), [`API`](docs/API.md), [`ROLES`](docs/ROLES.md) and
+[`CONFIGURATION`](docs/CONFIGURATION.md) (every `AIRA_*` variable — a test holds the names to the
+settings classes both ways; the defaults are written by hand and checked by nothing), [`INTEGRATIONS`](docs/INTEGRATIONS.md), [`API`](docs/API.md), [`ROLES`](docs/ROLES.md) and
 the planning map [`GAP-ANALYSIS`](docs/GAP-ANALYSIS.md). Licence: **Apache 2.0**. Except that map,
 **they describe and never cite** an FRD, an ADR, the DEVLOG, the lessons or this file: the reader
 needs the fact in the sentence (`test_reader_documents_describe_rather_than_cite.py`). When a

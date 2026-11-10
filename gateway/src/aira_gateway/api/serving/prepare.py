@@ -391,7 +391,7 @@ async def embed_along_chain(
     """Send a prepared embedding request along its chain (`FRD-310`), and say on ``trail`` which
     model gave the vectors and who was passed over.
 
-    The chain is empty unless the installation set one and the use case follows it; each candidate
+    The chain is the use case's own, empty unless its administrators set one; each candidate
     meets every condition of the installation and gives vectors of the width the model asked for
     would have given, or is passed over by name (`fallbacks.embedding_fit`).
     """

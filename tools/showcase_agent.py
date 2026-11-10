@@ -210,7 +210,7 @@ def main() -> None:
     print(f"      OPENCODE_CONFIG={target} opencode run 'list the files here'")
     print()
     print("  Everything it does is governed and recorded. In the console:")
-    print(f"      {GATEWAY.replace('8001', '4200')}/use-cases/{SLUG}  →  Traces")
+    print(f"      {GATEWAY.replace('8001', '4200')}/use-cases/{SLUG}  →  Requests")
     print("  — every turn, which model, how it ended, what it cost, and which functions it asked")
     print("  for. The key names the person accountable for it, not the author of each request.")
     print()

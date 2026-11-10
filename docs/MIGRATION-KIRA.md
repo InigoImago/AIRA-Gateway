@@ -138,8 +138,9 @@ curl -X POST http://localhost:8002/api/v1/use-cases/migration-demo/groups/ \
 # 201  {"group_path":"/aira/migration-demo","role":"user","granted_by":"…","reaches":0, …}
 ```
 
-`role` is `user` or `admin`; an admin of a use case may change its configuration, release models
-and issue keys. `reaches` counts the people Management has seen sign in with that group, so `0`
+`role` is `user` or `admin`; a user may call the use case and issue keys for themselves, an admin
+may also change its configuration, release models, decide who reaches it and issue keys in another
+member's name. `reaches` counts the people Management has seen sign in with that group, so `0`
 means none of them **yet** — the group may be empty, not created yet, or its members may not have
 signed in. A group grant is checked for its shape, not against Keycloak, so a mistyped path is
 accepted and reaches nobody; the console picks the group from a directory search instead. AIRA never
@@ -252,10 +253,10 @@ None of these is an accident, and each has a reason a migrating client can act o
 | | AIRA | why |
 |---|---|---|
 | **Unmodelled request fields** | accepted, and named in an `X-AIRA-Unmodelled-Fields` response header | a client may send fields this surface does not act on; it keeps working, and none is dropped unseen. Only a field that differs from a modelled one in spelling alone — `conversationHistory` for `conversation_history` — is refused, `422 VALIDATION_ERROR` naming the spelling this surface takes, because accepting it would answer without what was sent |
-| **`GET /models`** | needs a credential | the catalog names what an installation runs and what it costs |
+| **`GET /models`** | needs a credential | which models an installation approved, and their limits, are not public |
 | **Attachment signatures** | checked | a file declared `application/pdf` that is not one is refused rather than sent |
 | **`responseSchema`** | bounded (32 KiB, 8 levels, 256 properties) and unknown fields refused | an unbounded schema from a caller is an input nobody bounded |
-| **How much a request holds** | at most 10 000 turns and 20 000 parts across them, and a body of at most 250 000 JSON values nesting at most 64 levels; past one, `422 VALIDATION_ERROR` naming it, before the request is validated | what a body costs is its structure, and all of it is paid before a rate limit can refuse anything. No chatbot's conversation comes near these, and a long document travels as text — one value, however long |
+| **How much a request holds** | at most 10 000 turns and 20 000 parts across them, and a body of at most 250 000 JSON values nesting at most 64 levels; past one, `422 VALIDATION_ERROR` naming it, before the request is validated. A body larger than `AIRA_MAX_REQUEST_BYTES` (8 MiB by default) is `413 VALIDATION_ERROR`, unread | what a body costs is its structure, and all of it is paid before a rate limit can refuse anything. No chatbot's conversation comes near these, and a long document travels as text — one value, however long |
 | **`thinking`** | checked against the model | see below |
 | **Error codes** | more specific where the predecessor had no word (`EMBEDDING_BOUND_EXCEEDED`, …) | the predecessor's codes are all still produced where it produces them, with its statuses: an upstream failure is `502 EXTERNAL_KI_API_ERROR` and a provider's `429` stays `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside 0–2 are `422`; `maxTokens` of 0 or less, an unknown `task_type` and an empty or blank embedding text are `VALIDATION_ERROR`; a `model_id` nothing has — zero and negative ones included — is always `422 MODEL_NOT_FOUND`. Two keep their own answer: a thinking word the model does not offer is `INVALID_THINKING_MODE` naming what it offers, because the words are the model's, not a fixed list; and an id the catalogue assigns twice is `503`, because the installation is misconfigured, not the request |
 | **A function result** | answers a call of the model turn **directly before** it | Anthropic and OpenAI refuse a conversation whose result is separated from its call, and Gemini reads it as the result of whichever call has its name — an answer to the wrong question. Here it is `422 INVALID_FUNCTION_RESPONSE` before anything is spent |
@@ -270,7 +271,7 @@ None of these is an accident, and each has a reason a migrating client can act o
 | **A budget's `429`** | no `Retry-After`; when the budget resets is in the message | a client that honours the header would sleep until the period ends |
 | **CORS** | no origin unless `AIRA_CORS_ORIGINS` names it | the predecessor allows every origin with credentials, which lets any website a user visits call the API as that user |
 | **`INVALID_TOKEN` vs `NOT_AUTHENTICATED`** | kept apart | a rejected credential is a security signal, an absent one is a deployment slip |
-| **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` and `X-AIRA-Pipeline` on an answer | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
+| **What happened** | headers only: `X-AIRA-Request-Id` on every response, `X-AIRA-Reason` on a refusal, `X-AIRA-Model` on an answer, `X-AIRA-Pipeline` wherever the use case's pipeline ran — a block included | the envelope and the stream events stay the predecessor's — a client that parses them strictly keeps working — and the request id finds the request's details in the console, which say what the pipeline did and which models were tried. A stream that breaks off still ends without `completed`; its reason is in those details |
 | **Messages** | English | AIRA is English throughout |
 | **`/health`** | cached background probe | probing every upstream on every call makes readiness as slow as the slowest provider — a health check that can take down a healthy service |
 | **`/ki-usage`** | the caller's own rows, one per model, in the use cases the credential may act in (a key: its own use case); `user_id` is the caller's name and `model_id` the model's id. Any credential may ask, and nobody — whatever their role — gets another person's rows. A window spans at most 366 days | the endpoint names a person in every row, and another person's figures are shown in the console, under the rules that decide who may see them. The console's **Reporting** screen and its CSV export are the answer for a team or an installation |
@@ -300,8 +301,10 @@ first and the text after them, as the predecessor sends a turn. An attachment in
 **Functions.** A request offers functions in `tools` — `{"type": "function", "name", "description",
 "parameters"}`, `type` optional, the other three required — and only where the use case has tool
 calling enabled; otherwise the answer is `422 INVALID_TOOL_CONFIGURATION`. A missing or empty field
-is `422 VALIDATION_ERROR`; a filled one the predecessor would refuse — a description of blanks, a
-name declared twice, a `parameters` schema outside its rule — is `422 INVALID_TOOL_CONFIGURATION`.
+is `422 VALIDATION_ERROR`; a filled one the predecessor would refuse — a name that is not a
+function name (a letter or `_`, then up to 63 letters, digits, `_`, `.` or `-`), a description of
+blanks, a name declared twice, a `parameters` schema outside its rule — is
+`422 INVALID_TOOL_CONFIGURATION`.
 The rule, at every level of the schema: the keywords `$ref`, `additionalProperties`, `anyOf`,
 `default`, `description`, `enum`, `format`, `items`, `maxItems`, `maxLength`, `maxProperties`,
 `maximum`, `minItems`, `minLength`, `minProperties`, `minimum`, `nullable`, `pattern`,

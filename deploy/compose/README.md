@@ -27,6 +27,11 @@ The infrastructure file, `docker-compose.yml`. Every port is published on `AIRA_
 > Grafana `otel-lgtm`, behind the stack's own `otel-collector`. `make up` starts the infrastructure
 > and the `observability` profile; `make up-core` starts the infrastructure without it.
 
+The other files publish the same way: the applications file the gateway on 8001, Management on
+8002 and the console on 4200 (`AIRA_PUBLISH_GATEWAY_PORT`, `_MANAGEMENT_PORT`, `_FRONTEND_PORT`);
+the showcase file a mail catcher, `mailpit`, on 8025, and under `windows-sso` the domain's KDC on
+1088.
+
 **The infrastructure file is a development one.** Its Keycloak imports the development realm —
 published passwords, `admin` among the global administrators, client secrets in this repository —
 and its Vault runs in `-dev` mode. Nothing in it is meant for a deployment that anybody else can
@@ -38,9 +43,9 @@ reach.
 | --- | --- | --- |
 | `docker-compose.yml` | infrastructure: Postgres, Keycloak with the development realm, Kafka, Vault in `-dev` mode, Redis, observability | `make up` |
 | `docker-compose.apps.yml` | **the product**: both migrations, the topic one-shot, the gateway, its config consumer and retention loop, Management, its relay loop, the console behind nginx | `make up-apps` (with the file above) |
-| `docker-compose.showcase.yml` | the demo around it: the realm repair (`keycloak-init`), the `-dev` Vault's secrets (`vault-init`), the seed (`management-seed`), and the Windows domain (`ad`, profile `windows-sso`) | `make up-full` / `make showcase` |
+| `docker-compose.showcase.yml` | the demo around it: the realm repair (`keycloak-init`), the `-dev` Vault's secrets (`vault-init`), the seed (`management-seed`), a mail catcher (`mailpit`) that receives the gateway's mail once `.env` names it the relay (`AIRA_SMTP_HOST=mailpit`, `AIRA_SMTP_PORT=1025`, `AIRA_SMTP_SECURITY=none`, `AIRA_MAIL_FROM`), and the Windows domain (`ad`, profile `windows-sso`) | `make up-full` / `make showcase` |
 | `docker-compose.release.yml` | overlay: the three application images from the registry, their `build:` removed | `RELEASE=vX.Y.Z` on any target that starts the applications |
-| `docker-compose.external.yml` | overlay: the applications **without** the infrastructure file, every address a required variable; the topic one-shot moves behind the profile `create-topics` | `make up-integrated`, `make kafka-topics-external` |
+| `docker-compose.external.yml` | overlay: the applications **without** the infrastructure file, every address a required variable — Redis and Vault may be set empty, the others may not; the topic one-shot moves behind the profile `create-topics` | `make up-integrated`, `make kafka-topics-external` |
 | `docker-compose.loadtest.yml` | overlay: the upstream double `modelsim`, the gateway pointed at it, its cloud settings emptied | `make loadtest-up` |
 
 Each layer is added with another `-f`; the Makefile targets above already do that.
@@ -84,10 +89,13 @@ docker compose ps
 ## Notes
 
 - `.env` is git-ignored and holds **local-only** dev credentials. Real secrets belong in Vault: set
-  `VAULT_ADDR` and a role id, and the applications read their credentials from it at start-up,
-  ranked above the environment. Left empty, as `.env.example` leaves it, they read
-  the environment. `make vault-init` creates the path, a read-only policy and an AppRole on the
-  development Vault.
+  `VAULT_ADDR` and a role id with its secret-id — or, against the development Vault,
+  `VAULT_TOKEN` — and the applications read their credentials from it at start-up, ranked above
+  the environment. Left empty, as `.env.example` leaves them, they read the environment.
+  `make vault-init` creates the path, a read-only policy and an AppRole on the development Vault,
+  copies in the `AIRA_*` credentials set in your shell, and writes the secret-id to
+  `secrets/vault-secret-id`, which no shipped Compose file mounts. The `-dev` Vault keeps all of it
+  in memory, and a restarted Vault container has forgotten the AppRole.
 - Keycloak imports the `aira` realm from `keycloak/realms/` on first startup — see below.
 - Kafka runs in single-node KRaft mode (no ZooKeeper). Topic auto-creation is **off**: the
   `kafka-topics` one-shot creates the nine compacted config topics when `make up-apps`,
@@ -95,7 +103,8 @@ docker compose ps
   stack's broker for a from-source setup — both with the `aira.<stage>.` prefix when
   `AIRA_KAFKA_STAGE` is set.
 - Redis runs with `--save "" --appendonly no`: its counters are not persisted, because Postgres
-  is the system of record for budget usage.
+  is the system of record for budget usage. And with `--maxmemory-policy noeviction`, so a full
+  Redis refuses a write rather than silently dropping a counter.
 
 ## Test clients in the dev realm
 
@@ -146,7 +155,8 @@ make windows-sso-down   # take the realm's half away, stop the domain
 ```
 
 **Not a template for a real domain**: its LDAP accepts a simple bind in plain text inside the
-stack's network, and its bind password is random, per domain, and never leaves the container. What
+stack's network, and its bind password is random, per domain, and leaves the container only for
+the realm's federation, which `apply` hands it to — never printed, never written here. What
 an installation sets is in [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md) §2, *Windows sign-on*.
 
 ## Changing the Keycloak realm
@@ -185,9 +195,9 @@ Three things to watch when editing it:
 - The realm carries three realm roles, which grant nothing, and six people, all with
   `demo-password`: `admin`, `itsec` and `itgov`, each in the group that confers one built-in role
   under the `AIRA_ROLE_GROUPS` the Compose files default to; `ucadmin` and `ucuser`, who hold no
-  role and reach use cases through grants; and `demo-user`. Usernames match the Django seed. Keycloak is the source of truth
-  for roles through **group membership**, so a group missing here means the role is held
-  nowhere.
+  role and reach use cases through grants; and `demo-user`. The first five are the Django seed's
+  usernames too. Keycloak is the source of truth for roles through **group membership**, so a group
+  missing here means the role is held nowhere.
 - **Every user and group needs an `id`.** Without one, recreating the realm orphans the
   Management users — see the note above. A new entry added without an id is a trap that only
   springs on the next person to recreate their realm, so the test suite refuses it.

@@ -205,7 +205,8 @@ def _usecase_fields(payload: dict[str, Any]) -> dict[str, Any]:
         "retention_days": int(payload.get("retention_days") or DEFAULT_RETENTION_DAYS),
         # Absent keeps `None`, read as unrestricted; an empty list releases nothing (`FRD-308`).
         "allowed_models": _released_models(payload),
-        # `FRD-409`. Absent is the default both planes share, and so is no mail about findings.
+        # `FRD-409`. Absent is the default both planes share: thresholds of `[100]`, and mail to
+        # the administrators about findings.
         "budget_mail_thresholds": _mail_thresholds(payload),
         "mail_admins_on_anomalies": bool(payload.get("mail_admins_on_anomalies", True)),
     }

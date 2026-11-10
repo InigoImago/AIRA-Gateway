@@ -1,6 +1,6 @@
 # AIRA Gateway — Delivery Roadmap (Phases)
 
-> Status: **Draft v0.1** · Last updated: 2026-10-14
+> Status: **Draft v0.1** · Last updated: 2026-11-10
 > Companion to `docs/PRD.md`. Each phase lists its goals, deliverables, and the FRDs it contains.
 >
 > Phases 0–6, 8 and 9 are delivered, Phase 7 in part. Where a phase's plan was not built, the
@@ -103,7 +103,10 @@ Deliverables:
   Phase 8, and Foundry has never run against Azure (`FRD-120`).
 
 FRDs: `FRD-300-pipeline-engine` (routing is specified there; `FRD-301` was never written),
-`FRD-302-model-fallback`, `FRD-303-pipeline-builder-ui`, `FRD-304-upstream-adapters`.
+`FRD-302-model-fallback`, `FRD-303-pipeline-builder-ui`, `FRD-304-upstream-adapters`; later
+`FRD-306` (LLM routing, the explained filter, the dry run), `FRD-307`/`FRD-308` (approval and
+release), `FRD-309` (personal data replaced), `FRD-310` (a use case's own fallback chain per kind of
+request, `ADR-0052`) and `FRD-141` (why a provider refused).
 
 ---
 
@@ -119,7 +122,8 @@ Deliverables:
   person, or for the shared budget the administrators, are mailed; 100 % by default.
 
 FRDs: `FRD-400-budget-model`, `FRD-401-budget-enforcement`, `FRD-402-budget-ui`; then `FRD-403`
-(cost), `FRD-404` (retention), `FRD-405` (rate limits) and `FRD-406` (redaction).
+(cost), `FRD-404` (retention), `FRD-405` (rate limits), `FRD-406` (redaction), `FRD-407` (a person's
+own budget), `FRD-408` (what a long session costs) and `FRD-409` (mail).
 
 ---
 
@@ -189,8 +193,10 @@ FRDs: ~~`FRD-600-governance-views`~~ — never written; the governance view is `
 **Goal:** Production polish and a path off the developer machine.
 
 **Partly delivered.** Capacity is measured (`FRD-136`), releases are published and run from the
-registry (`FRD-137`, `FRD-138`), what a role may do is a set of permissions an installation can
-change (`FRD-614`), and the stages may share a Kafka cluster and a Redis Sentinel (`FRD-623`).
+registry (`FRD-137`, `FRD-138`) and say what they contain (`FRD-148`, SBOMs), what a role may do is
+a set of permissions an installation can change (`FRD-614`), the stages may share a Kafka cluster
+and a Redis Sentinel (`FRD-623`), and each plane has its own database user and Kafka identity
+(`FRD-150`).
 Several gateway instances (`FRD-127`) and the audit trail as an event stream (`FRD-616`) are
 specified and not built; Kubernetes/Helm has no FRD yet.
 
@@ -262,8 +268,8 @@ saw, with a 200 — failing is recoverable, being quietly wrong is not. Model Ga
 side also makes the transport × dialect grid a real **matrix** (the OpenAI dialect is needed on
 Vertex, not only on Foundry) and introduces **cold starts and capacity-shaped 429s**, which the
 dispatch timeout and the readiness probe must treat differently from quota. *As built:* that
-self-deployed side is not built (`FRD-115` FR-2a); Agent Platform's managed open models (GLM,
-DeepSeek) are, on the same transport.
+self-deployed side is not built (`FRD-115` FR-2a); Agent Platform's managed open models are, on
+the same transport — GLM-5.2 today, since Google retired the earlier GLM versions and DeepSeek.
 
 `ADR-0010` framed the programme and its one open decision — whether AIRA also serves the
 predecessor's **wire contract** — and is now **accepted (Option C)**: the owner's feature definition
@@ -276,19 +282,19 @@ The owner's priority is KIRA compatibility, then the Google/Microsoft model conn
 document handling, then the review findings (PRD §1.3). Priority 1 depends on priority 3, so the
 order below serves the priorities rather than restating them.
 
-| Stufe | Was | Warum hier |
+| Stage | What | Why here |
 |---|---|---|
-| **0** done | ~~`FRD-122` — vollständiger Audit-Trail~~ **fertig 2026-08-06** | Klein, additiv, kein Eingriff in den Request-Pfad — und **jede spätere Stufe wird dagegen getestet**. Ablehnungen, das aufrufende System und `requested_model` vs. `model` sind genau das, was man bei Fallback über zwei Anbieter und einer zweiten API-Fläche braucht. Zuerst, weil es danach mühsamer nachzurüsten ist als jetzt. |
-| **1** done | ~~`FRD-114` — Modell-Metadaten~~ **fertig 2026-08-06** | Voraussetzung für alles: Publisher, Capabilities, Default-Cap, Adressierung, Hosting. |
-| **2** done | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **fertig 2026-08-06** | Priorität 2, erste Hälfte. Erst danach ist überhaupt ein produktionsfähiges (EU-)Modell erreichbar. |
-| **3** done | ~~`FRD-110` — Dokumente~~ **fertig 2026-08-06** | Priorität 3. Bewusst **nach** Stufe 2: ohne dokumentenfähiges Modell in der EU wären Dokumente nur gegen den Mock nutzbar. |
-| **4** done | ~~`FRD-107` Stage A — KIRA-Fläche~~ **fertig 2026-08-06**, inkl. Dokumenten | Priorität 1, so früh wie ehrlich möglich. Nicht unterstützte Felder werden **abgewiesen**, nie ignoriert (`FRD-107` §5.2). Einfache Clients migrieren hier. |
-| **5** done | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **fertig 2026-08-06** | Thinking, strukturierte Ausgabe, Embedding-Optionen. |
-| **6** done | ~~`FRD-107` Stage B~~ **fertig 2026-08-06** | Dieselben Felder wurden von abgewiesen zu bedient — **Vertrag unverändert**, direkt mit Stufe 5 ausgeliefert, weil eine Fähigkeit zu bauen und sie an der Kompatibilitätsfläche weiter abzuweisen niemandem nützt. |
-| **7** done | ~~`FRD-120` — Microsoft Foundry~~ **fertig 2026-08-06** | Priorität 2, zweite Hälfte. **Der Diff hat `upstreams/` nicht verlassen** — Feature 19 damit belegt, nicht behauptet. Hermetisch getestet; es gibt hier keine Azure-Subscription. |
-| **8** done | ~~`FRD-116`, `FRD-117`, `FRD-602`, `FRD-124`, `FRD-406`~~ **fertig** | Vault, Diagnostik, Export, Maskierung. `FRD-117` ohne FR-7, `FRD-406` nur die Credential-Hälfte. |
-| **9** done | ~~`FRD-504`, `FRD-500`/`501`/`503`~~ **fertig** | IT-Security: Smoke-Tests, Anomalien, Incident Response. |
-| **9** done | ~~`FRD-131`, `FRD-132`, `FRD-133`~~ **fertig** | Agenten und Coding-Assistenten: Tool Calling (per Use Case, Default aus), Flächenentscheidung nach Messung — keine neue Fläche (`FRD-132` B1) —, Prompt-Caching zuletzt. |
+| **0** done | ~~`FRD-122` — a complete audit trail~~ **done 2026-08-06** | Small, additive, no change to the request path — and **every later stage is tested against it**. Refusals, the calling system and `requested_model` vs. `model` are exactly what fallback across two vendors and a second API surface need. First, because retrofitting it later is harder than doing it now. |
+| **1** done | ~~`FRD-114` — model metadata~~ **done 2026-08-06** | The precondition for everything: publisher, capabilities, default cap, addressing, hosting. |
+| **2** done | ~~`FRD-115` + `FRD-119` — Vertex EU, Gemini + Anthropic~~ **done 2026-08-06** | Priority 2, first half. Only from here on is a production-grade model in the EU reachable at all. |
+| **3** done | ~~`FRD-110` — documents~~ **done 2026-08-06** | Priority 3. Deliberately **after** stage 2: without a document-capable model in the EU, documents could only be used against the mock. |
+| **4** done | ~~`FRD-107` Stage A — the KIRA surface~~ **done 2026-08-06**, documents included | Priority 1, as early as honestly possible. Unsupported fields were **refused**, never ignored (`FRD-107` §5.2). Simple clients migrate here. *As built since:* a field the surface does not model is accepted and named in `X-AIRA-Unmodelled-Fields` (`FRD-124`). |
+| **5** done | ~~`FRD-111`, `FRD-112`, `FRD-113`~~ **done 2026-08-06** | Thinking, structured output, embedding options. |
+| **6** done | ~~`FRD-107` Stage B~~ **done 2026-08-06** | The same fields went from refused to served — **the contract unchanged**, shipped together with stage 5, because building a capability and still refusing it on the compatibility surface helps nobody. |
+| **7** done | ~~`FRD-120` — Microsoft Foundry~~ **done 2026-08-06** | Priority 2, second half. **The diff never left `upstreams/`** — feature 19 shown rather than claimed. Tested hermetically; there is no Azure subscription here. |
+| **8** done | ~~`FRD-116`, `FRD-117`, `FRD-602`, `FRD-124`, `FRD-406`~~ **done** | Vault, diagnostics, export, masking. `FRD-117` without FR-7, `FRD-406` the credential half only. |
+| **9** done | ~~`FRD-504`, `FRD-500`/`501`/`503`~~ **done** | IT Security: smoke tests, anomalies, incident response. |
+| **10** done | ~~`FRD-131`, `FRD-132`, `FRD-133`~~ **done** | Agents and coding assistants: tool calling (per use case, off by default), the surface decided by measurement — no new surface (`FRD-132` B1) — and prompt caching last. |
 
 Two deliberate deviations from a naive reading of the priority list, both stated so they can be
 overruled rather than discovered:
@@ -303,9 +309,9 @@ overruled rather than discovered:
 | FRD | What | Blocking? |
 |---|---|---|
 | ~~`FRD-110`~~ | Documents and images in a request | **Done (2026-08-06).** Ordered parts, allow-list + signature check + bounds, per-model media types checked after routing, reservation counts them, audit keeps a description not the bytes. A model that cannot read it **refuses**. |
-| ~~`FRD-111`~~ | Thinking modes and budgets | **Done (2026-08-06).** Sieben Modi, pro Modell validiert, Level→Budget aus dem Katalog; die Reservierung enthält das Budget, und eine Kette überspringt einen Kandidaten, der es nicht kann. Gedanken werden zurückgegeben, solange der Use Case es nicht abschaltet (`include_reasoning`, Standard an, `FRD-135`). |
-| ~~`FRD-112`~~ | `responseSchema` — forced JSON output | **Done (2026-08-06).** Ein Feld, das wir nicht kennen, wird **benannt** abgelehnt; Grenzen für Größe/Tiefe/Anzahl; Gemini per Parameter, Anthropic per `output_config` (JSON-Schema) neben den Tools; die Fähigkeitsprüfung läuft **pro Hop**. |
-| ~~`FRD-113`~~ | Embedding task types, batches, dimensions | **Done (2026-08-06).** Ein Batch von n wiegt **n** gegen Limit und Budget — sonst wäre das Limit auf dem Papier intakt und in der Praxis weg. |
+| ~~`FRD-111`~~ | Thinking modes and budgets | **Done (2026-08-06).** Seven modes, validated per model; the reservation includes the budget, and a chain skips a candidate that cannot do it. *As built since:* a level is the vendor's own word, checked against the model, rather than a token figure from the catalogue (`ADR-0021`). Thoughts are returned unless the use case switches that off (`include_reasoning`, on by default, `FRD-135`). |
+| ~~`FRD-112`~~ | `responseSchema` — forced JSON output | **Done (2026-08-06).** A field we do not know is refused **by name**; bounds on size, depth and count; Gemini by parameter, Anthropic by `output_config` (a JSON schema) beside the tools; the capability check runs **per hop**. |
+| ~~`FRD-113`~~ | Embedding task types, batches, dimensions | **Done (2026-08-06).** A batch of n weighs **n** against limit and budget — otherwise the limit would be intact on paper and gone in practice. |
 | ~~`FRD-123`~~ | A real local model (Ollama) over the OpenAI dialect | **Done.** Ollama runs in the stack (`make verify-up`), over the dialect `FRD-120` reuses. |
 | ~~`FRD-114`~~ | Model capability metadata | **Done (2026-08-06).** Capabilities, publisher/platform/addressing, output caps, thinking/embedding/attachment declarations, hosting, deprecation. Undeclared = baseline only. |
 | ~~`FRD-115`~~ | Vertex AI / Model Garden in the EU | **Done (2026-08-06)** except FR-2a's self-deployed endpoints. Shared `TokenSource`, region allow-list enforced at startup, ambiguous routing table refuses to boot, provenance on every audit row. |
@@ -400,13 +406,13 @@ header); a feature's status is in the [generated index](features/README.md).
 |------:|-------|------|
 | 0 | Foundation & Infra, and the demo | 000–002, 130 |
 | 1 | Gateway MVP; platform; observability | 100–105, 134, 139, 140, 615, 617–621 |
-| 2 | Management Foundation | 200–209, 605 |
-| 3 | Routing/Pipeline/Fallback | 125, 300, 302–304, 306–309, 506 |
-| 4 | Budgets & Quotas | 400–406 |
+| 2 | Management Foundation | 200–210, 605 |
+| 3 | Routing/Pipeline/Fallback | 125, 141, 300, 302–304, 306–310, 506 |
+| 4 | Budgets & Quotas | 400–409 |
 | 5 | Anomaly & IT Security | 500–505, 604 |
-| 6 | Governance & Analytics | 507, 601, 603, 606–613, 622, 625, 626 |
-| 7 | Hardening & Prod | 127, 136–138, 614, 616, 623 |
-| 8 | KIRA parity | 107, 110–124, 126, 128, 135, 602, 624 |
+| 6 | Governance & Analytics | 149, 507–509, 601, 603, 606–613, 622, 625–630 |
+| 7 | Hardening & Prod | 127, 136–138, 148, 150, 614, 616, 623 |
+| 8 | KIRA parity | 107, 110–124, 126, 128, 135, 142–147, 151, 152, 602, 624 |
 | 9 | Agents & coding assistants | 131–133 |
 
 Numbers that were used and have no document: `FRD-106` (the OpenAI-compatible surface, withdrawn),

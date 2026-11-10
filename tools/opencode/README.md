@@ -28,9 +28,12 @@ surface, which AIRA once planned and withdrew, and an Anthropic-shaped one.
 
 The console's API-keys panel offers **Copy OpenCode config** and **Download opencode.json** on a key
 it has just issued — built at that moment because the plaintext exists for exactly
-that moment, and naming only the models released to the use case whose catalog entry **declares**
-`tools`. On the showcase, `make showcase` — or `make showcase-agent` alone — writes the same kind of
-file, `opencode.showcase.json`, for its `coding-assistant` use case.
+that moment, so the file holds the key and is kept as the key is. It names only the models released
+to the use case, approved for the installation, whose catalog entry **declares** `tools`. On the
+showcase, `make showcase` — or `make showcase-agent` alone — writes a file of the same shape,
+`opencode.showcase.json`, with the demo key for its `coding-assistant` use case and no prices, so
+OpenCode's session cost reads `$0.00` there (§1 below). To learn which models the use case may
+call, it asks each listed model that declares `tools` for one token — which a paid model bills.
 
 Use one of those if you want a working assistant. `opencode.json` here stays as the **harness**: it
 is what re-runs that measurement against a changed gateway, and it is hand-editable in ways a
@@ -40,7 +43,8 @@ generated file deliberately is not.
 
 ```bash
 # 1. A use case and a key. Keys are always bounded; 30 days is the default.
-#    Issue one in the console, or:
+#    Issue one in the console, or with the token of a member of the use case
+#    (the answer's "api_key" is the key, shown this once):
 curl -sX POST http://localhost:8002/api/v1/use-cases/coding-assistant/api-keys/ \
      -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
      -d '{"label":"opencode","expires_in_days":30}'
@@ -74,8 +78,10 @@ many model calls per human instruction.
 
 Tools are carried — never executed — where the use case has `tools_enabled` on and the model's
 catalog entry declares `tools`; the showcase's `coding-assistant` is such a use case.
-Without the switch, `tools` is refused with a **400** naming it. A model that does not declare tool
-calling is skipped by a fallback chain, and refused when it is the only candidate.
+Without the switch, a request that declares functions, or carries a function call or its result, is
+refused with a **400** that names the use case and says an administrator can turn tool calling on.
+A model that does not declare tool calling is skipped by a fallback chain, and refused when it is
+the only candidate.
 
 ## Showing a developer what they are spending
 
@@ -89,12 +95,15 @@ Two different figures with two different owners:
 ### 1. The session cost: prices in the configuration
 
 Without a `cost` block OpenCode prints **`$0.00` forever**, whatever was spent. The console's
-generated configuration always writes the catalog's prices and puts the currency in the model's
-**name** (`qwen3:0.6b via AIRA (EUR)`), since the name is the one field it controls. Nothing is
-converted — an exchange rate needs a date per booking.
+generated configuration writes the catalog's prices for every model that has both an input and an
+output price on file — the cache rates too, a missing one filled as the gateway fills it, and the
+rates above 200,000 prompt tokens where the catalog states them — and puts a currency other than
+USD in the model's **name** (`qwen3:0.6b via AIRA (EUR)`), since the name is the one field it
+controls. Nothing is converted — an exchange rate needs a date per booking.
 
-The harness config here carries the same block for the one model this installation catalogues, so
-a run reproduces the figure:
+The harness config here carries the catalog's input and output prices for the one chat model the
+showcase catalogues, so a run shows what it cost; the console's file adds the cache rates, for this
+model `cache_read` 0.1 and `cache_write` 0.125:
 
 ```json
 "qwen3:0.6b": { "cost": { "input": 0.1, "output": 0.4 } }
@@ -146,10 +155,11 @@ This month         7.87 EUR · 310 req
 — the limit that will refuse **first** across every budget that binds you, whose counter it is and
 when it resets, then the three periods. Where the terminal is too narrow for the sidebar (120
 columns and below) one line takes its place in the prompt footer, `AIRA · 85% used · 0.37 EUR
-today`. **`/budget`** (or *AIRA budget* in the command palette) opens every allowance with requests
-and tokens. It reads at start, at the end of every turn and every five minutes; it toasts only when
-a limit is crossed — four fifths, then the limit — and once when the budget cannot be read. Nothing
-goes through the model and nothing into the conversation.
+today`. **`/budget`** (or *AIRA budget* in the command palette) opens every allowance — its bar and
+what is left — and the three periods with cost, requests and tokens. It reads at start, at the end
+of every turn and, in OpenCode 2, at its start, whenever `/budget` opens, and every five minutes;
+it toasts only when a limit is crossed — four fifths, then the limit — and once when the budget
+cannot be read, saying why. Nothing goes through the model and nothing into the conversation.
 
 **Install** — the same file for both generations:
 
@@ -158,17 +168,19 @@ mkdir -p .opencode/plugins/aira-budget
 cp /path/to/AIRA/tools/opencode/plugins/aira-budget/tui.tsx .opencode/plugins/aira-budget/
 #   …or ~/.config/opencode/plugins/aira-budget/ for every project. OpenCode 2 finds it there.
 
-# OpenCode 1 (from 1.4) loads a TUI plugin only from tui.json, beside it in .opencode/:
+# OpenCode 1 (from 1.4) loads a TUI plugin only from tui.json, beside it in .opencode/ —
+# add the entry to its "plugin" list, or, where there is no tui.json yet:
 echo '{ "plugin": ["./plugins/aira-budget/tui.tsx"] }' > .opencode/tui.json
 ```
 
 **On many workstations**, take the file from the release instead of a checkout. Every GitHub Release
 from v0.1.7 on carries `opencode-aira-budget-<version>.tar.gz` and its `.sha256`, downloadable
-without an account. The archive holds one file, laid out relative to OpenCode's configuration
-directory, so unpacking it there is the installation for every project:
+without an account; the rules below hold for the file from v0.1.8 on, so take the newest. The
+archive holds one file, laid out relative to OpenCode's configuration directory, so unpacking it
+there is the installation for every project:
 
 ```bash
-v=v0.1.7
+v=v0.1.14   # the release to install
 base=https://github.com/InigoImago/AIRA-Gateway/releases/download/$v
 curl -fsSLO "$base/opencode-aira-budget-$v.tar.gz" -O "$base/opencode-aira-budget-$v.tar.gz.sha256"
 sha256sum -c "opencode-aira-budget-$v.tar.gz.sha256"
@@ -190,15 +202,17 @@ The archive carries no `tui.json`, because that file is the developer's own and 
 would erase their settings. OpenCode 1 needs `"./plugins/aira-budget/tui.tsx"` in the `plugin`
 list of `~/.config/opencode/tui.json`. A rollout tool should merge that entry into the file, not
 overwrite it. Two builds of one version are the same bytes, so a rollout that compares checksums
-does not reinstall an unchanged plugin. `make opencode-plugin-archive VERSION=v0.1.7` builds the
-same archive from a checkout.
+does not reinstall an unchanged plugin. `make opencode-plugin-archive VERSION=vX.Y.Z` packs the
+checkout's file into `dist/`, so in a checkout of that tag it builds the same archive the release
+attached.
 
 It finds the gateway in the `aira` provider OpenCode has loaded — the configuration the console
-generates names it so — and uses the key OpenCode sends to it: from the configuration, from the
-environment variable the configuration names, or from OpenCode's credential store
-(`opencode auth login`). `AIRA_BASE_URL` and `AIRA_API_KEY` override both. It stores nothing and
-guesses no address. A rollout that hands out the key puts it where OpenCode 2 reads it: its
-credential store, with `opencode auth import` and a file shaped like `opencode auth export` prints.
+generates names it so — or, where there is none, in the one provider that has both an address and
+a key, and uses the key OpenCode sends to it: from the configuration, from the environment variable
+the configuration names, or from OpenCode's credential store (`opencode auth login`).
+`AIRA_BASE_URL` and `AIRA_API_KEY` override both. It stores nothing and guesses no address. A
+rollout that hands out the key puts it where OpenCode 2 reads it: its credential store, with
+`opencode auth import` and a file shaped like `opencode auth export` prints.
 OpenCode 2.1.3 reads no key from OpenCode 1's `auth.json`, for its model calls or for the plugin.
 
 **Before OpenCode's first turn, a missing gateway is not yet missing.** OpenCode loads its
@@ -211,9 +225,10 @@ missing is said, once.
 **The key goes to that address and nowhere else.** The budget read carries the same key as every
 model call, so the plugin sends it over **https**, or over plain http only to this machine
 (`localhost`, `127.0.0.1`, `[::1]`); a gateway configured as `http://` anywhere else is not asked,
-and the sidebar says why. It never follows a redirect — `fetch` would carry the key to wherever
-the answer points — and it reads an answer only from the address it asked. A gateway behind a
-sign-in proxy that redirects shows *answered with a redirect* instead of a figure.
+the sidebar says *Unavailable*, and the toast and `/budget` say why. It never follows a redirect —
+`fetch` would carry the key to wherever the answer points — and it reads an answer only from the
+address it asked. A gateway behind a sign-in proxy that redirects shows *Unavailable* instead of a
+figure, and the toast says it *answered with a redirect*.
 
 **What the file obeys, each rule measured against a client:**
 
@@ -227,9 +242,11 @@ sign-in proxy that redirects shows *answered with a redirect* instead of a figur
    Anything else would have to be installed beside the file.
 4. **Loading does not wait on the network.** The first reading is started, not awaited.
 5. **The key reaches the gateway alone**: over https or on this machine, never after a redirect,
-   and an answer from another origin is not read — the sidebar says which of them it met.
-6. **Nothing is called broken before OpenCode's first turn**: a missing gateway or key is asked
-   for again until a reading succeeds or a turn ends, and an unloaded plugin leaves no try behind.
+   and an answer from another origin is not read — the toast and `/budget` say which of them it
+   met.
+6. **A missing gateway or key is not called missing before OpenCode's first turn has ended**: it
+   is asked for again until a reading succeeds or a turn ends, and an unloaded plugin leaves no try
+   behind.
 
 **After editing the plugin**, run `uv run python tools/opencode_plugin_asset.py --write`: the
 console hands out a generated copy, and `tools/tests/test_the_console_hands_out_the_plugin_it_ships.py`

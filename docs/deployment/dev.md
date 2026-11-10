@@ -102,6 +102,11 @@ For the console's directory search, and for binding a role to a group, give Mana
 development realm's read-only directory client as well: `AIRA_DIRECTORY_CLIENT_ID=aira-directory`,
 `AIRA_DIRECTORY_CLIENT_SECRET=aira-directory-dev-secret`, `AIRA_DIRECTORY_URL=http://localhost:8080`.
 
+Instead of exporting them, you can write them into a `.env` where the process starts: each reads
+the one in its own working directory — the repository root for the gateway's targets (`gateway/`
+for `make migrate-gateway`), `management/backend/` for Management's. The root `.env.example` lists
+what a run from source usually needs beyond the defaults.
+
 The first four in their own terminal; the last two publish or delete what is pending and exit, so
 run them when you need them.
 
@@ -116,6 +121,12 @@ make prune              # payload retention          (optional; hourly in produc
 
 Run `make relay` once now, to carry what `make seed` wrote. Then open <http://localhost:4200> and
 sign in as `admin` / `demo-password`.
+
+**A model to call.** The demo use cases call the local model the showcase runs, and from source
+nothing serves or catalogues it yet. `make verify-up` starts it, pulls it and prints the three
+`AIRA_OLLAMA_*` variables that point `make run-gateway-oidc` at it. Run `make seed` once more with
+`AIRA_OLLAMA_URL` set as well — it catalogues only the models the endpoint answers for, and releases
+them to the demo use cases — then `make relay`.
 
 ---
 
@@ -159,13 +170,16 @@ Each layer sees what the one below structurally cannot.
 make test              # hermetic: Python + console, with the coverage gates CI enforces
 make ci                # lint, types and unit tests — the hermetic half of CI
 make mutants           # break each guarded property in turn and require a test to notice
+make test-clients      # real clients — every AI SDK major, google-genai, OpenCode 1 and 2
 make test-integration  # against the containerised stack
 make test-e2e          # a real browser against the running console
 ```
 
 `make ci` is the one to run before pushing. CI runs the same commands, written out in its own jobs
-and held to these targets by a test, and runs the integration and browser suites as well, each on
-a stack of its own. The live suites need the containerised stack, not the processes above:
+and held to these targets by a test, and runs the real clients, the integration and the browser
+suites as well, the last two each on a stack of its own. `make test-clients` needs no stack — the
+test serves the gateway itself — but installs `tools/clients` and reads OpenCode's terminal
+interface from `tmux`. The live suites need the containerised stack, not the processes above:
 `make up-full`, `make wait-healthy` and `make demo-ready` first. **`make test-integration` calls a
 paid cloud model when the stack has Vertex credentials** — [`TESTING.md`](../TESTING.md) says which,
 and what each layer needs.
@@ -202,7 +216,8 @@ whole body is shown, and the gateway's API documentation is at <http://localhost
 ```bash
 make seed-reset         # seed the demo again from scratch (seed_demo --fresh), then `make relay`
 make down               # stop, keep the data
-make destroy            # stop and delete the volumes — the audit trail, the configuration, the realm
+make destroy            # stop and delete the volumes — the audit trail, the configuration,
+                        # the realm and a downloaded local model
 ```
 
 ---
@@ -245,6 +260,10 @@ table and the worked shapes.
 
 **Sending telemetry *to* this stack needs nothing at all.** The collector takes OTLP on 4317 (gRPC)
 and 4318 (HTTP), protobuf or JSON — any conformant producer can point at it.
+
+**And a process can send one signal past the collector.** `AIRA_OTEL_TRACES_ENDPOINT`,
+`AIRA_OTEL_METRICS_ENDPOINT` and `AIRA_OTEL_LOGS_ENDPOINT` each take a whole URL, route included,
+and nothing is appended. A signal without one still goes to `AIRA_OTEL_ENDPOINT`, the collector.
 
 ### Did it arrive?
 

@@ -60,7 +60,9 @@ INVALID_ARGUMENT` on the Gemini surface, `403 STANDARD_USER_PERMISSION_REQUIRED`
 surface — and the message says which to name: a key's own use case, or those the caller reaches
 (`must_name_a_use_case`, `missing_use_case`, `api/kira/attribution.py`). A `GET` spends nothing and
 needs none; a key's `GET` is its own use case's (`implied_use_case`). The unbound break-glass key
-and demo mode may name none.
+may name none, and so may every caller of a gateway with `AIRA_AUTH_REQUIRED` or
+`AIRA_REQUIRE_USE_CASE` off — both refused outside `AIRA_ENVIRONMENT=local`; with the second off, a
+bound key's call goes to its own use case.
 
 **Management** accepts a Keycloak bearer token and nothing else (`apps/api/authentication.py`).
 Refused authentications are bounded per address (`AIRA_THROTTLE_AUTH_FAILURES`) and every signed-in
@@ -91,30 +93,32 @@ try an unsaved pipeline as an administrator could.
 
 | Where                                       | Body                                                                                       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Gateway, paths under `/v1beta/`             | Google's envelope: `{"error": {"code": 403, "message": "…", "status": "PERMISSION_DENIED", "details": [ErrorInfo]}}` |
+| Gateway, paths under `/v1beta/`, and every refusal on Google's ranking path (`/v1/projects/…:rank`) | Google's envelope: `{"error": {"code": 403, "message": "…", "status": "PERMISSION_DENIED", "details": [ErrorInfo]}}` |
 | Gateway, paths under `/kira/api/external/`  | the predecessor's: `{"code": "…", "message": "…"}`                                         |
 | Gateway, every other path                   | `{"error": {"code": "not_found", "message": "…"}}`                                         |
 | Management                                  | `{"error": {"code": "permission_denied", "message": "…", "details": …}}` — a `400` carries the field errors in `details` |
 
-The gateway answers a parameter it cannot accept with `400` naming it, never `422`, and a body
-larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it, naming the limit. Both planes
-also refuse a body unread when it nests deeper than 64 levels or holds more than 250 000 JSON values
-— `400` naming the bound, on the KIRA surface `422 VALIDATION_ERROR` — and both model surfaces
-refuse a request of more than 10 000 turns or 20 000 parts before parsing them, and one offering
-more than 128 functions. A traced response carries its trace id in `x-trace-id`, failures
-included; the health probes are not traced.
+The gateway answers a query or path parameter it cannot accept with `400` naming it, never `422`,
+and a body larger than `AIRA_MAX_REQUEST_BYTES` with `413` before reading it, naming the limit.
+Both planes also refuse a body unread when it nests deeper than 64 levels or holds more than
+250 000 JSON values — `400` naming the bound, on the KIRA surface `422 VALIDATION_ERROR` — and both
+model surfaces refuse a request of more than 10 000 turns or 20 000 parts before parsing them, and
+one offering more than 128 functions. A traced response carries its trace id in `x-trace-id`,
+failures included; the health probes are not traced.
 
 **Which control refused.** A Gemini refusal's `details` holds one Google `ErrorInfo` —
 `{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "BLOCKED_BY_PIPELINE", "domain":
 "aira.gateway", "metadata": {"request_id": "…", "step": "injection_filter"}}` — so a Gemini SDK,
 which keeps `details` and prints it with its exception, carries it to the developer. `reason` is the
 request's outcome in upper case (`BLOCKED_BY_PIPELINE`, `BUDGET_EXCEEDED`, `RATE_LIMITED`,
-`NO_CAPABLE_MODEL`, `UPSTREAM_ERROR`, `MODEL_NOT_FOUND`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`,
-`SUSPENDED`; `UNAUTHENTICATED` and `PERMISSION_DENIED` before a request is attributed). `metadata`
-adds `step` for a pipeline block and `resets_at` for a budget. A `request_id` never contains a run that
-reads as a status clients retry (`408`, `409`, `425`, `429`, `5xx`), because some clients look for a
-status in the text of an error and would send a final refusal again. The status and the message are what
-they were without it. The KIRA envelope is the predecessor's and gains nothing: there the same word
+`NO_CAPABLE_MODEL`, `UPSTREAM_ERROR`, `MODEL_NOT_FOUND`, `INVALID_REQUEST`, `SUSPENDED`;
+`UNAUTHENTICATED` for every `401` and `PERMISSION_DENIED` for every `403`, the refusals before a
+request is attributed among them). `metadata` adds `step` for a pipeline block and `resets_at` for
+a budget. A body refused for its size carries no `ErrorInfo`: its reason, `request_too_large`, is
+in the `X-AIRA-Reason` header alone. A `request_id` never contains a run that reads as a status
+clients retry (`408`, `409`, `425`, `429`, `5xx`), because some clients look for a status in the
+text of an error and would send a final refusal again. The status and the message are what they
+were without it. The KIRA envelope is the predecessor's and gains nothing: there the same word
 is the `X-AIRA-Reason` header.
 
 **Headers that say what happened**, on every gateway response, both surfaces, exposed to browsers:
@@ -128,7 +132,8 @@ is the `X-AIRA-Reason` header.
 
 Headers, because a client validates the body it parses and ignores a header it does not know: the
 `google-genai` SDK and the AI SDK's Google provider (OpenCode's) read every answer and every
-refusal as before.
+refusal as before. A Gemini answer from a model the catalogue marks deprecated also carries
+`Warning: 299 - "Model <name> is deprecated and will be withdrawn."`; it warns and refuses nothing.
 
 **A failure says who acted**, in its first words: the provider by its platform's name
 (`Google Vertex AI returned 529. Reason: overloaded_error.`), or AIRA where the gateway stopped —
@@ -168,10 +173,12 @@ helper is `GET /docs/oauth2-redirect`) and `GET /redoc` with ReDoc — **only wh
 `AIRA_ENVIRONMENT=local` or `AIRA_DEMO_MODE` is on** (`create_app` in
 `gateway/src/aira_gateway/app.py`). Anywhere else the four paths answer `404`: a map of every
 incident and content-read route is for whoever develops against the gateway, not for anybody who
-can reach its port. The document describes no request body and no response, because the routes read
-and write their JSON by hand; this page and the two guides describe them. No copy of it is committed
-or published with a release, and no OpenAPI 3.0 version is generated for an API portal that reads
-only 3.0.
+can reach its port. The document describes no request body, and no response beyond the plain
+objects of `/healthz` and `/version-info`, because the routes read and write their JSON by hand;
+this page and the two guides describe them. It does list the framework's default `422` validation
+error for every route with a parameter, which the gateway never answers: it refuses a parameter with
+`400` (§1.4). No copy of it is committed or published with a release, and no OpenAPI 3.0 version is
+generated for an API portal that reads only 3.0.
 
 **Management has no schema endpoint.** DRF's schema generation is not routed, and JSON is its only
 renderer (`REST_FRAMEWORK` in `management/backend/src/aira_management/config/settings.py`). This
@@ -198,22 +205,25 @@ thins every span. The guides say the rest.
 | `GET /v1beta/models` | any credential | The models this gateway has an upstream for, as Google's `Model` resource with the verbs each answers and what the catalogue declares about it (`airaCapabilities`, `airaDeclared`, …). One the catalogue holds and has not approved is left out. |
 | `GET /v1beta/models/{model}` | any credential | One model of that list; `404` for any other. |
 | `POST /v1beta/models/{model}:generateContent` | a grant on the use case it is attributed to | The whole answer in one response. Google's request body: a function's parameters as `parameters` (the OpenAPI subset) or `parametersJsonSchema` (JSON Schema, carried as written), not both; an answer's schema as `responseSchema` or `responseJsonSchema`, with `responseMimeType` `application/json`; thinking as `thinkingBudget` or `thinkingLevel`; `tools` as a list or one tool object. |
-| `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. The status waits at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15) for the model's first chunk; a refusal decided later — every model of the chain failed before its first word — arrives as the stream's last element, Google's error object, after a `200`. A blank line whenever the stream was quiet for that long: SSE dispatches nothing for it, and in the array it is whitespace. `X-Accel-Buffering: no`. |
+| `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. The status waits at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15) for the model's first chunk; a failure after it went out — every model of the chain failing before its first word, or the answer breaking off — arrives as the stream's last element, Google's error object, after a `200`. A blank line whenever the stream was quiet for that long: SSE dispatches nothing for it, and in the array it is whitespace. `X-Accel-Buffering: no`. |
 | `POST /v1beta/models/{model}:embedContent` | the same | `{embedding: {values}}`. |
 | `POST /v1beta/models/{model}:batchEmbedContents` | the same | `{embeddings: [{values}]}`, one per entry of the body's `requests`. |
-| `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | a grant on the use case it is attributed to | Google's ranking API: `{model, query, records: [{id, title?, content?}], topN?, ignoreRecordDetailsInResponse?}` answered with `{records: [{id, score, title?, content?}]}` in the reranker's order. `model` is required and names a catalogue entry declared `rerank`; the path's project, location and configuration select nothing — the gateway ranks in its own project, at the locations the catalogue gives the model. At most `AIRA_RERANK_MAX_RECORDS` records. Booked as one ranking unit per hundred records: that many requests against a rate limit, and that many units as the input figure the entry's input price applies to. |
+| `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | a grant on the use case it is attributed to | Google's ranking API: `{model, query, records: [{id, title?, content?}], topN?, ignoreRecordDetailsInResponse?}` answered with `{records: [{id, score, title?, content?}]}` in the reranker's order. `model` is required and names a catalogue entry declared `rerank`; the path's project, location and configuration select nothing — the gateway ranks in its own project, at the locations the catalogue gives the model. At most `AIRA_RERANK_MAX_RECORDS` (200) records, each with a title or a content. Booked as one ranking unit per hundred records: that many requests against a rate limit — one per text where a pipeline step reads each text — and that many units as the input figure the entry's input price applies to. |
 | `POST /kira/api/external/chat` | a grant on the use case it is attributed to | The whole answer in one response, in the predecessor's shape. `tools` declares functions (`{type?: "function", name, description, parameters}`, parameters a JSON Schema object under the predecessor's rule) where the use case enables tool calling; a call comes back as a part `{type: "function_call", id, name, arguments, opaque_metadata}` (`opaque_metadata` `null` or `{thoughtSignature}`), and its result goes back as `{type?: "function_result", call_id, name, result, error?}` in the next request. `usage_data.token_output` leaves out thinking. An answer with no text, no call and no output token is `502 EXTERNAL_KI_API_ERROR`; one that cost output and says nothing is `parts: []`. |
-| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk — none for a `responseSchema` answer, which comes whole in `completed` — a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every `AIRA_STREAM_KEEPALIVE_SECONDS` (15) while nothing else was sent — from the moment the model is asked, before its first word too; `X-Accel-Buffering: no`. A stream whose models all failed after that ends without `completed`. |
+| `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk — none for a `responseSchema` answer, which comes whole in `completed` — a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every `AIRA_STREAM_KEEPALIVE_SECONDS` (15) while nothing else was sent — from the moment the model is asked, before its first word too; `X-Accel-Buffering: no`. A stream whose models all failed after that, or that broke off, ends without `completed`. |
 | `POST /kira/api/external/embed` | the same | One vector. For a model whose upstream name begins with `gemini-embedding-2`, each text goes as its own part inside its task's prompt (`task: search result \| query: …`), and a list is one embedding of all parts; for any other, a list of texts is joined into one text. |
 | `POST /kira/api/external/rerank` | the same | `{model_id, query, records: [{id, title, content}]}`, every field filled, answered with `{records: [{id, score, title, content}]}` in the reranker's order. `422 NO_RERANKER_CAPABILITIES` for a model not declared `rerank`. Booked as on Google's ranking path. |
 | `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities (`Chat`, `Embedding`, `Reranker`), limits, thinking (modes and level words, a default, `null` for an undeclared bound) and embedding options. |
 | `GET /kira/api/external/health` | public; the upstreams are listed only to whom `/readyz` shows its diagnosis | The gateway, and each upstream from the background probe's last verdict; `503` when any of them is unhealthy. |
 | `GET /kira/api/external/version-info` | public | Build metadata, `null` where none was set. |
-| `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none) — counted **in the use cases the credential may act in**: an API key's own use case, a signed-in person's memberships. Nobody else's figures, whatever the caller's role, and none from a use case the credential has no part in. CSV with a byte-order mark for `Accept: text/csv`. A date that does not parse is `422`; a window of more than 366 days is `400 INVALID_TIME_RANGE`. A date without an offset is read on the installation's clock (`AIRA_TIME_ZONE`); seconds since 1970 need none. |
+| `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none) — counted **in the use cases the credential may act in**: an API key's own use case, the use cases a signed-in person holds a grant on. Nobody else's figures, whatever the caller's role, and none from a use case the credential has no part in. CSV with a byte-order mark for `Accept: text/csv`. A missing date is `400 MISSING_QUERY_PARAM`, one that does not parse `422`; an `endDatum` not after `startDatum`, or a window of more than 366 days, is `400 INVALID_TIME_RANGE`. A date without an offset is read on the installation's clock (`AIRA_TIME_ZONE`); seconds since 1970 need none. |
 
 An upstream failure on the KIRA surface is `502 EXTERNAL_KI_API_ERROR`, whatever the provider said,
 except `429`; an attachment type nobody accepts, a schema it cannot read and a `temperature` outside
-0–2 are `422`. Its `422` `details` carry `loc` (beginning with `"body"`), `msg` and `type`.
+0–2 are `422`. Its `422` `details` carry `loc` (beginning with `"body"`), `msg` and `type`. Every
+KIRA response carries `Deprecation: true` and `Link: </docs/migration>; rel="deprecation"`,
+`Sunset` where `AIRA_KIRA_SUNSET` is set, and — where the request sent fields the surface accepts
+without acting on them — `X-AIRA-Unmodelled-Fields` naming them.
 
 The four Gemini verbs are one route, `/v1beta/models/{model}:{verb}`, split at the **last** colon so
 a model name may contain one; any other verb, `:countTokens` among them, is `400`.
@@ -243,7 +253,7 @@ a model name may contain one; any other verb, `:countTokens` among them, is `400
 | Operation                     | Who may call | Answers |
 | ----------------------------- | ------------ | ------- |
 | `GET /v1beta/usage/{use_case}` | `report.read_all`, or a grant on the use case | `200 {use_case, usage, enforced}`: one entry per budget with its limits, `used_*`, `remaining_*`, `period_ends`, `binds` and `replaced_by`. A per-person budget shows the caller's own counter where it binds them: a budget for each member, or one set for this caller alone. `binds` is whether the budget binds the caller under the hierarchy — the use case's budget over everybody, a person's own in place of the one for each member of its period — and `replaced_by` names the budget that binds the caller instead of a per-person one that gives way; a budget set for somebody else names nobody here and carries no figures. `enforced` says whether budgets refuse at all (`AIRA_ENFORCE_BUDGETS`). |
-| `GET /v1beta/me/budget`       | any credential; the use case comes from the header or `/uc/<slug>`, or is a key's own | `200 {use_case, person, enforced, currency, time_zone, allowances, today, this_week, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller — a budget set for them in place of the one for each member; `today`, `this_week` (since Monday) and `this_period` (the calendar month) are what the audit trail says the caller spent, on the installation's clock, with or without a budget — each `{from, to}` with the reporting totals. `time_zone` names that clock (`AIRA_TIME_ZONE`), and every moment in the answer — `from`, `to`, an allowance's `period_ends` — is written with its offset, so the date of a reset is the installation's date. |
+| `GET /v1beta/me/budget`       | any credential; the use case comes from the header or `/uc/<slug>`, or is a key's own | `200 {use_case, person, enforced, currency, time_zone, allowances, today, this_week, this_period}`: `allowances` are the counters enforcement reads, one per budget that binds this caller — a budget set for them in place of the one for each member; `today`, `this_week` (since Monday) and `this_period` (the calendar month) are what the audit trail says the caller spent, on the installation's clock, with or without a budget — each `{from, to}` with the reporting totals. `time_zone` names that clock (`AIRA_TIME_ZONE`), and every moment in the answer — `from`, `to`, an allowance's `period_ends` — is written with its offset, so the date of a reset is the installation's date. Every figure is this caller's in that one use case; a caller who names none and holds no key bound to one is answered `use_case: null`, no allowances and zeros. |
 
 ### 2.5 Figures, requests and findings
 
@@ -254,12 +264,12 @@ are newest first, `limit` at most 200 (50 by default), continued with the `next_
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
-| `GET /v1beta/reporting` | any credential, bounded by `report.read_all` | Spend and usage over `from`–`to` (ISO 8601; a date or time without an offset is read on the installation's clock, `AIRA_TIME_ZONE`; this calendar month on that clock by default; at most 366 days), narrowed by `use_case` and `person`. `series` (`auto`, `day`, `hour`) adds the window bucket by bucket, in bands by `split` (`model`, `use_case`, `outcome`), with `time_zone` naming the clock its buckets are on: a day bucket is that clock's date, and an hour bucket carries its offset where the clock is not UTC (`2026-10-25T02+01:00`), so the hour the clocks go back is two buckets. JSON: `{from, to, totals, by_use_case, by_model, by_member, by_outcome, by_person, series, scope, use_case, person, in_scope, people_limited, enforced}`, `series` only when asked, `from` and `to` written with the clock's offset. `Accept: text/csv` answers one `breakdown` (`use_case`, `model`, `member`) as a CSV file; any other `Accept` is `406`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own row in the two splits by person; on `oversight` nobody inside the use case sees those splits, its admins included. Totals and the other breakdowns stay whole. |
+| `GET /v1beta/reporting` | any credential, bounded by `report.read_all` | Spend and usage over `from`–`to` (ISO 8601; a date or time without an offset is read on the installation's clock, `AIRA_TIME_ZONE`; this calendar month on that clock by default; at most 366 days), narrowed by `use_case` and `person`. `series` (`auto`, `day`, `hour`) adds the window bucket by bucket, in bands by `split` (`model`, `use_case`, `outcome`), with `time_zone` naming the clock its buckets are on: a day bucket is that clock's date, and an hour bucket carries its offset where the clock is not UTC (`2026-10-25T02+01:00`), so the hour the clocks go back is two buckets. JSON: `{from, to, time_zone, totals, by_use_case, by_model, by_member, by_outcome, by_person, series, scope, use_case, person, in_scope, people_limited, enforced, strict_data}`, `series` only when asked, `from` and `to` written with the clock's offset. `Accept: text/csv` answers one `breakdown` (`use_case`, `model`, `member`) as a CSV file; any other `Accept` is `406`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own row in the two splits by person; on `oversight` everybody inside the use case, its admins included, sees only their own row there. Under strict data mode every use case counts as `oversight` and only `incident.investigate` exempts a reader — `report.read_all` does not — and the two splits by person carry no latency. `people_limited` says whether this answer was narrowed so. Totals and the other breakdowns stay whole. |
 | `GET /v1beta/register` | any credential, bounded by `report.read_all` | The register of processing activities over `from`–`to`, read as the report reads them: `{from, to, scope, use_cases, processed_in, catalogue, last_erasure}` — per use case its purpose, its released models and where they run, retention, content visibility, controls and members, and where its traffic actually went. CSV with `Accept: text/csv`. |
-| `GET /v1beta/traces` | any credential, bounded by `trace.read_all`; `source_ip` and filtering by it need `incident.investigate` | Request metadata, never content: `{traces, next_cursor, scope, in_scope}`, each row an allow-list of the audit row's columns (`id`, `created_at`, `operation`, `api`, `model`, `status`, `outcome`, the token counts, `latency_ms`, `cost_nanos`, `provider`, `region`, `trace_id`, `subject`, `credential`, `use_case`, `tool_calls`, `flagged`, …). Filters `use_case`, `outcome`, `refusals_only`, `credential`, `subject`, `source_ip`, `mine`, `tools_only`, `flagged_only`, `request_id`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own requests; `incident.investigate` is never narrowed. |
+| `GET /v1beta/traces` | any credential, bounded by `trace.read_all`; `source_ip` and filtering by it need `incident.investigate` | Request metadata, never content: `{traces, next_cursor, scope, in_scope}`, each row an allow-list of the audit row's columns (`id`, `created_at`, `operation`, `api`, `model`, `status`, `outcome`, the token counts, `latency_ms`, `cost_nanos`, `provider`, `region`, `trace_id`, `subject`, `credential`, `use_case`, `tool_calls`, `flagged`, …) and `person_withheld`. Filters `use_case`, `outcome`, `refusals_only`, `credential`, `subject`, `source_ip`, `mine`, `tools_only`, `flagged_only`, `request_id`. In a use case whose `payload_visibility` is `own`, a member who is not its admin sees only their own requests; `incident.investigate` is never narrowed. Under strict data mode a caller without `incident.investigate` sees every row in scope, but another person's carries `subject` and `credential` as `null` (`person_withheld: true`), and filtering by `subject` or `credential` is refused `403`. |
 | `GET /v1beta/traces/{id}` | as the list: `trace.read_all`, or a grant on the request's use case | `200 {trace, recorded: true}` — one row as the list shows it to this caller plus what explains it: `pipeline_decisions` (each step's verdict and each model the chain skipped or tried, with why), `degraded`, `error` (the message the caller was given) and `technical` — codes and numbers only, or `null` for a request refused before anything happened to it: `phase` (`completed`, `before_dispatch`, `waiting_for_provider`, `mid_answer`, `after_provider_finished`), `timeline_ms` (milliseconds from arrival to `dispatched`, `provider_first_chunk`, `provider_finished`, `response_started`, `last_byte_to_caller`, `caller_left`, `recorded`, each present only when reached), `to_caller` (`bytes`, `writes`, `keepalives`), `provider` (`status`, `reason`, `request_id`, `retry_after`, `host`, `where`) and `exception` (`chain` of class names, `errno`, and `at`, the gateway's own line, for a failure of its own). Never a provider's or an exception's text, and nothing strict data mode withholds. **The opening is recorded** (`kind: metadata` in the access log) before it is returned. `404` for a request that does not exist or lies outside the caller's scope, and then nothing is recorded. |
-| `GET /v1beta/traces/{id}/payload` | `payload.read_any`; otherwise a grant on the request's use case, as far as its `payload_visibility` allows | `200 {id, request, response, available: true, ground}` — the read is recorded before the content is returned, and does not happen if the record cannot be written. `200 {id, available: false, reason, message}` when there is nothing to show (`not_stored`, `expired`, `past_retention`, `never_had_one`, `never_kept`; either half of an available payload may be `null`); `403` with the reason when the caller may not read it; `404` for a request that does not exist or lies outside the caller's scope — one answer for both. |
-| `GET /v1beta/anomalies` | any credential, bounded by `anomaly.read_all` | What the detector found: `{events, next_cursor, scope, in_scope}`, each `{id, created_at, rule_id, rule, kind, use_case, target, target_value, observed, threshold, sample, window_minutes, action_taken, detail}`; addresses in `detail` only with `incident.investigate`. A finding a global rule made about a person or a credential belongs to no use case and is seen with `anomaly.read_all` alone; in a use case on `own`, a member who is not its admin sees the findings about the use case and about themselves. |
+| `GET /v1beta/traces/{id}/payload` | `payload.read_any`; otherwise a grant on the request's use case, as far as its `payload_visibility` allows — under strict data mode, which reads every use case as `oversight`, `payload.read_any` alone | `200 {id, request, response, available: true, ground}` — the read is recorded before the content is returned, and does not happen if the record cannot be written. `200 {id, available: false, reason, message}` when there is nothing to show (`not_stored`, `expired`, `past_retention`, `never_had_one`, `never_kept`; either half of an available payload may be `null`); `403` with the reason when the caller may not read it; `404` for a request that does not exist or lies outside the caller's scope — one answer for both. |
+| `GET /v1beta/anomalies` | any credential, bounded by `anomaly.read_all` | What the detector found, narrowed by `?use_case=`: `{events, next_cursor, scope, in_scope}`, each `{id, created_at, rule_id, rule, kind, use_case, target, target_value, target_withheld, observed, threshold, sample, window_minutes, action_taken, detail}`; addresses in `detail` only with `incident.investigate`. Under strict data mode a finding about another person or their key carries `target_value: null` (`target_withheld: true`) to a caller without `incident.investigate`. A finding a global rule made about a person or a credential belongs to no use case and is seen with `anomaly.read_all` alone; in a use case on `own`, a member who is not its admin sees the findings about the use case and about themselves. |
 
 ### 2.6 Incidents and operations
 
@@ -267,11 +277,11 @@ are newest first, `limit` at most 200 (50 by default), continued with the `next_
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
-| `GET /v1beta/suspensions` | `incident.suspend` or `anomaly.read_all`: every stop. A caller with a grant, with `?use_case=`: the stops on that use case and on themselves in it. Anybody else `403` | `{suspensions, scope: all \| own, in_scope}`: every suspension in force, then up to 200 lifted or expired. Each `{id, created_at, use_case, target, target_value, action, throttle_rpm, expires_at, author, reason, lifted_at, lifted_by}`. |
+| `GET /v1beta/suspensions` | `incident.suspend` or `anomaly.read_all`: every stop, `?use_case=` narrowing them to one use case. Anybody else with `?use_case=`: the stops on that use case and on themselves in it — empty with `in_scope: false` where they hold no grant on it. Anybody else without it `403` | `{suspensions, scope: all \| own, in_scope}`: every suspension in force, then up to 200 lifted or expired. Each `{id, created_at, use_case, target, target_value, target_withheld, action, throttle_rpm, expires_at, author, reason, lifted_at, lifted_by}`; under strict data mode a stop on another person or their key carries `target_value: null` (`target_withheld: true`) to a caller without `incident.investigate`. |
 | `POST /v1beta/suspensions` | `incident.suspend` | Body `{target, target_value, use_case, action, throttle_rpm, minutes, reason}`: `target` is `use_case`, `subject` or `credential`; `action` is `block` (the default) or `throttle` with `throttle_rpm`; no `minutes` means until lifted. `201` the suspension. Stored in the gateway's own database and **never sent through Management or Kafka**, so it works while either is down; in force at once on the instance that stored it and within 5 seconds on every other. |
 | `DELETE /v1beta/suspensions/{id}` | `incident.suspend` | `200` the suspension, stamped `lifted_at` and `lifted_by` — kept, never deleted. `404` for an unknown id. |
 | `GET /v1beta/content-reads` | `content_read.read` | Who read which stored content, on what ground: `{reads: [{id, created_at, request_log_id, use_case, subject, username, ground, roles, auth_method, credential, kind}], next_cursor, count}` — `kind` is `content` (prompt and response read) or `metadata` (a request's details opened); filters `use_case`, `reader` and `kind`. |
-| `GET /v1beta/models/{model}:check` | `operations.diagnose` | `{model, declared, served, reachable, detail, reason, explanation, regions: [{region, reachable, detail, reason, explanation}]}`: whether the model is catalogued, whether an adapter serves it, and whether its provider answers a cheap question in each region (5 seconds each). Where it does not, `reason` is the cause the provider or the connection stated — one word, such as `SERVICE_DISABLED` or `CERTIFICATE_NOT_TRUSTED` — and `explanation` what to change; both `null` where none was stated. **Never a generation.** `provider`, `publisher` and `region` describe an editor's unsaved values. Each probe writes a `diagnostic` audit row attributed to no use case. |
+| `GET /v1beta/models/{model}:check` | `operations.diagnose` | `{model, declared, served, reachable, detail, reason, explanation, regions: [{region, reachable, detail, reason, explanation}]}`: whether the model is catalogued, whether an adapter serves it, and whether its provider answers a cheap question in each region (5 seconds each). Where it does not, `reason` is the cause the provider or the connection stated — one word, such as `SERVICE_DISABLED` or `CERTIFICATE_NOT_TRUSTED` — and `explanation` what to change; both `null` where none was stated. **Never a generation.** `provider`, `publisher` and `region` describe an editor's unsaved values; `region` may name several, comma-separated, at most 16. Each probe writes a `diagnostic` audit row attributed to no use case. |
 | `POST /v1beta/models/{model}:checkThinking` | `operations.diagnose` | Body `{levels, modes}`, the first 12 of each asked. Whether the model accepts each thinking level word — one generation capped at one output token per word and region, billed and recorded as `diagnostic` — and whether its dialect can express each mode, answered without a call: `{model, results: [{region, level, accepted, detail}], modes: [{mode, accepted, detail}]}`. `400` when no upstream serves the model. |
 
 ### 2.7 What a provider offers
@@ -341,11 +351,11 @@ reason; `mail_admins_on_anomalies` mails the use case's administrators what its 
 | `GET /api/v1/use-cases/` | signed in | Paged: the live use cases the caller sees, `?q=` filtering on name and slug. `?may_call=true` lists instead those the gateway would accept this caller's token for, by the gateway's own rule (`aira_common.access.resolve`) — an oversight role sees every use case and may call none. |
 | `POST /api/v1/use-cases/` | `usecase.create` | `201` the use case; its creator becomes its admin. Emits `usecase.upserted`, `membership.upserted`. |
 | `GET /api/v1/use-cases/{slug}/` | sees it | `200` the use case. |
-| `PUT /api/v1/use-cases/{slug}/` | admin | `200` the use case. The slug is its identity and cannot change; `allowed_models` takes approved models only. Emits `usecase.upserted`. |
+| `PUT /api/v1/use-cases/{slug}/` | admin | `200` the use case. The slug is its identity and cannot change; `allowed_models` takes approved models only, at most 64. Emits `usecase.upserted`. |
 | `PATCH /api/v1/use-cases/{slug}/` | admin | As `PUT`, with only the fields sent. |
-| `DELETE /api/v1/use-cases/{slug}/` | admin | `204`. **Retires** it: every access it granted ends and its record stays. Emits `usecase.deleted`. |
+| `DELETE /api/v1/use-cases/{slug}/` | admin | `204`. **Retires** it: every access it granted ends and its record stays. Emits `usecase.deleted`, then each child's own removal (§4.1): `api_key.revoked` per active key, `membership.removed`, `use_case_group.revoked`, `budget.deleted`, `ratelimit.deleted` and `anomaly_rule.deleted` per row, and `pipeline.deleted` where it has a pipeline. |
 | `GET /api/v1/use-cases/retired/` | `usecase.read_retired` | `[{slug, name, description, processing_notes, store_payloads, retention_days, created_at, deleted_at, deleted_by, purgeable_on}]`. |
-| `DELETE /api/v1/use-cases/{slug}/purge/` | `usecase.purge` | `204` for a use case retired at least 30 days ago, `400` before then, `404` for one that is live or unknown — alike. Emits `usecase.purged`. |
+| `DELETE /api/v1/use-cases/{slug}/purge/` | `usecase.purge` | `204` for a use case retired at least 30 days ago, `400` before then, `404` for one that is live or unknown — alike. Emits each child's removal once more, then `usecase.purged`. |
 
 ### 3.4 Who reaches a use case
 
@@ -387,12 +397,19 @@ record is deleted by its id; an id the use case does not have is `400`.
 
 `apps/catalog/views.py`. A model is answered with `name`, `display_name`, `approved`, `provider`,
 the four prices (`input_price_per_million`, `output_price_per_million`,
-`cached_input_price_per_million`, `cache_write_price_per_million`, decimal strings), `is_priced`,
-its declaration (`capabilities`, `publisher`, `platform`, `addressing`, `underlying_model`,
-`context_window`, `max_output_tokens`, `default_max_output_tokens`, `thinking`, `embedding`,
-`attachments`, `fixed_sampling`, `default_sampling`, `hosting`, `deprecated`, `numeric_id`),
-`is_declared` and `updated_at`. The list is not paged. `fixed_sampling` is `true` for a model that
-samples at its own settings: the gateway never sends it a request that sets `temperature` other than
+`cached_input_price_per_million`, `cache_write_price_per_million`, decimal strings), the long-prompt
+prices (`long_context_threshold`, a number of tokens, and `long_context_input_price_per_million`,
+`long_context_output_price_per_million`, `long_context_cached_input_price_per_million`,
+`long_context_cache_write_price_per_million`), `is_priced`, its declaration (`capabilities`,
+`publisher`, `platform`, `addressing`, `underlying_model`, `context_window`, `max_output_tokens`,
+`default_max_output_tokens`, `thinking`, `embedding`, `attachments`, `fixed_sampling`,
+`default_sampling`, `hosting`, `deprecated`, `numeric_id`), `is_declared` and `updated_at`. The list
+is not paged. Input and output prices are set together or not at all. A prompt longer than
+`long_context_threshold` is billed, every token of it, at the long-prompt prices; the threshold and
+both its input and output price are set together or not at all, and only beside the ordinary
+prices. A model created without a `numeric_id` is given one above the highest in the catalogue, at
+least 9501. `fixed_sampling` is `true` for a model that samples at its own settings: the gateway
+never sends it a request that sets `temperature` other than
 1, `top_p` other than 1 or any `top_k`, and tries the next model in the chain or refuses naming the
 control. It defaults to `false`, no restriction, and accepts only a JSON `true` or `false`.
 `default_sampling` is `{top_p, top_k}`, either or both, or `null`: sent where a caller sets that
@@ -409,7 +426,7 @@ release, approval, residency, price and the KIRA id stay the entry's own.
 | `PUT /api/v1/models/{name}/` | `catalog.write` | `200`. A model's name cannot change. Emits `model.upserted`. |
 | `PATCH /api/v1/models/{name}/` | `catalog.write` | As `PUT`, with only the fields sent. |
 | `DELETE /api/v1/models/{name}/` | `catalog.write` | `204`. Emits `model.deleted`, and `usecase.upserted` for every live use case it was released to. |
-| `GET /api/v1/model-reference/` | `catalog.write` | `{source, as_of, currency, conversion, live_error, entries}`: drafts of catalog entries from a public model list, for the console's *Add a model*. Each entry is `{platform, name, display_name, publisher, family, status, release_date, knowledge, description, declaration: {capabilities, context_window, max_output_tokens, thinking, attachments, fixed_sampling}, prices: {input, output, cached_input, cache_write}, notes}`, prices per million tokens in `currency` (US dollars). From the copy the release ships, or from `AIRA_MODEL_REFERENCE_URL` where set; `live_error` says why that list was not used; `conversion` is `{from, to, rate}` where `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` is set and the installation does not count in the list's currency, otherwise `null`. Writes nothing. |
+| `GET /api/v1/model-reference/` | `catalog.write` | `{source, as_of, currency, conversion, live_error, entries}`: drafts of catalog entries from a public model list, for the console's *Add a model*. Each entry is `{platform, name, display_name, publisher, family, status, release_date, knowledge, description, declaration: {capabilities, context_window, max_output_tokens, thinking, attachments, fixed_sampling}, prices: {input, output, cached_input, cache_write, long_context}, notes}`, prices per million tokens in `currency` (US dollars), `long_context` `{threshold, input, output, cached_input, cache_write}` where the list prices a long prompt apart, otherwise `null`. From the copy the release ships, or from `AIRA_MODEL_REFERENCE_URL` where set; `live_error` says why that list was not used; `conversion` is `{from, to, rate}` where `AIRA_MODEL_REFERENCE_EXCHANGE_RATE` is set and the installation does not count in the list's currency, otherwise `null`. Writes nothing. |
 
 ### 3.7 The installation's own budget, and global rules
 
@@ -595,7 +612,7 @@ same function (`apps/usecases/views/payloads.py`, `catalog/views.py` `_payload`,
 
 | Events | Fields | Notes |
 | ------ | ------ | ----- |
-| `usecase.upserted`, `usecase.deleted` | `slug`, `name`, `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `restrict_members_to_own_requests`, `tools_enabled`, `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`, `budget_mail_thresholds`, `mail_admins_on_anomalies`, `allowed_models` | The use case as it stands; `usecase.deleted` carries it as it stood when retired, so a read-model rebuilt from the compacted topic still knows its retention. `restrict_members_to_own_requests` is the retired form of `payload_visibility`, derived from it, for a gateway that predates it. `budget_mail_thresholds` is ascending; absent, the gateway mails at 100 % of a budget, and `mail_admins_on_anomalies` absent is off. `allowed_models` is sorted. |
+| `usecase.upserted`, `usecase.deleted` | `slug`, `name`, `description`, `processing_notes`, `store_payloads`, `payload_visibility`, `restrict_members_to_own_requests`, `tools_enabled`, `include_reasoning`, `prompt_caching_enabled`, `prompt_cache_ttl`, `retention_days`, `budget_mail_thresholds`, `mail_admins_on_anomalies`, `allowed_models` | The use case as it stands; `usecase.deleted` carries it as it stood when retired, so a read-model rebuilt from the compacted topic still knows its retention. `restrict_members_to_own_requests` is the retired form of `payload_visibility`, derived from it, for a gateway that predates it. `budget_mail_thresholds` is ascending; absent, the gateway mails at 100 % of a budget, and `mail_admins_on_anomalies` absent is on, as Management's default is. `allowed_models` is sorted. |
 | `usecase.purged` | `slug` | |
 | `membership.upserted` | `slug`, `username`, `role` | `username` is Management's account name, which the gateway matches against a token's `preferred_username`. |
 | `membership.removed` | `slug`, `username` | |
@@ -647,6 +664,7 @@ gateway does with what it does not expect is in `consumer/apply.py` and `consume
 | What arrives | What the consumer does | Logged as |
 | ------------ | ---------------------- | --------- |
 | an event type it has no handler for — what an older gateway gets from a newer Management | skips it; the change does not take effect on this gateway | `config_event_not_applied`, with the payload's field names, never their values |
+| `fallback_chain.upserted`, the installation-wide fallback chain no Management sends any more, which the compacted `aira.pipelines` topic can still hold for a rebuild | skips it: every chain now lives in its use case's pipeline | — |
 | a record without a readable `event_type` header | skips it | `config_event_without_type`, with topic, partition and offset |
 | a value that is not a JSON object (a compacted topic's tombstone included), a missing required field, or a value the database refuses | skips it, and marks its span failed | `config_event_failed`, with event type, topic, partition, offset and error type |
 | a field it does not know | ignores it: each handler reads only the fields it names | — |
@@ -659,10 +677,10 @@ changed again in Management or the topics are replayed.
 
 What an absent field is read as differs by handler, on purpose (`consumer/apply.py`):
 
-- **a use case** — `tools_enabled` and `prompt_caching_enabled` off; `store_payloads` and
-  `include_reasoning` on; `prompt_cache_ttl` `5m`; `retention_days` the installation's default;
-  `budget_mail_thresholds` 100 % and `mail_admins_on_anomalies` off, and thresholds no Management
-  would have accepted are read as absent and logged. An
+- **a use case** — `tools_enabled` and `prompt_caching_enabled` off; `store_payloads`,
+  `include_reasoning` and `mail_admins_on_anomalies` on; `prompt_cache_ttl` `5m`; `retention_days`
+  7, Management's default for a use case; `budget_mail_thresholds` 100 %, and thresholds no
+  Management would have accepted are read as absent and logged. An
   absent `allowed_models` leaves the release unrecorded, which the gateway serves as unrestricted,
   while an empty list releases nothing. An absent `payload_visibility` is read from
   `restrict_members_to_own_requests`, and a value the gateway does not know as `oversight`, the
