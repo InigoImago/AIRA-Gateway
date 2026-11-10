@@ -30,6 +30,58 @@ def test_create_app_instruments_when_otel_enabled(instrumentation_restored: None
     assert client.get("/healthz").status_code == 200
 
 
+def test_configure_process_passes_each_signal_its_own_url(monkeypatch) -> None:
+    """The settings reach the function that builds the exporters, in the gateway and its workers."""
+    import aira_gateway.config as config_module
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        config_module, "configure_observability", lambda **kwargs: seen.update(kwargs) or True
+    )
+    config_module.configure_process(
+        GatewaySettings(
+            otel_enabled=True,
+            otel_traces_endpoint="http://tempo/v1/traces",
+            otel_metrics_endpoint="http://mimir/otlp/v1/metrics",
+            otel_logs_endpoint="http://loki/otlp/v1/logs",
+        )
+    )
+
+    assert seen["endpoint"] == "http://localhost:4318"
+    assert (
+        seen["traces_endpoint"],
+        seen["metrics_endpoint"],
+        seen["logs_endpoint"],
+    ) == ("http://tempo/v1/traces", "http://mimir/otlp/v1/metrics", "http://loki/otlp/v1/logs")
+
+
+def test_a_gateway_with_metrics_and_logs_but_no_traces_serves_requests(
+    monkeypatch, instrumentation_restored: None
+) -> None:
+    """Traces exported nowhere — no base, no URL of their own — while metrics and logs are. The
+    instrumentation still wraps every request, against OpenTelemetry's no-op tracer, and the
+    gateway answers, refuses and starts up exactly as with all three signals exported."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "0.1")
+    monkeypatch.setattr("aira_common.observability.providers._configured", False)
+    settings = GatewaySettings(
+        otel_enabled=True,
+        otel_endpoint="",
+        otel_metrics_endpoint="http://127.0.0.1:1/otlp/v1/metrics",
+        otel_logs_endpoint="http://127.0.0.1:1/otlp/v1/logs",
+    )
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/healthz").status_code == 200
+        refused = client.get("/v1beta/models")
+        assert refused.status_code == 401
+        assert refused.json()["error"]["code"] == 401
+
+    assert not isinstance(trace.get_tracer_provider(), TracerProvider)
+
+
 # ---- what a deployment shows of itself ------------------------------------------------------
 
 _DOCUMENTS = ("/docs", "/redoc", "/openapi.json")

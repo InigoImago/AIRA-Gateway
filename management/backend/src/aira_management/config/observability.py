@@ -21,6 +21,9 @@ def setup_observability(settings: ManagementSettings) -> bool:
         service_version=__version__,
         environment=settings.environment,
         endpoint=settings.otel_endpoint,
+        traces_endpoint=settings.otel_traces_endpoint,
+        metrics_endpoint=settings.otel_metrics_endpoint,
+        logs_endpoint=settings.otel_logs_endpoint,
         enabled=settings.otel_enabled,
         sample_ratio=settings.otel_sample_ratio,
     )

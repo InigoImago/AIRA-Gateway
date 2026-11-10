@@ -364,6 +364,15 @@ otel:
   # Neither is a branch of the other, and neither can retune the other.
   enabled: true
   endpoint: http://otel-collector.internal:4318
+  # One signal somewhere else, as a whole URL with its route — nothing is appended. Each is
+  # optional on its own: empty sends that signal under `endpoint` above, and with that empty too
+  # the signal is not exported. No traces means nothing for a SIEM on the delivery channel.
+  #   traces_endpoint: http://tempo.internal:4318/v1/traces
+  #   metrics_endpoint: http://mimir.internal:9009/otlp/v1/metrics
+  #   logs_endpoint: http://loki.internal:3100/otlp/v1/logs
+  traces_endpoint: ''
+  metrics_endpoint: ''
+  logs_endpoint: ''
   # A tenth of the traces — and so a tenth of the delivery channel's access records, which are
   # spans. `1.0` where a SIEM has to see every access; the audit trail is whole either way.
   sample_ratio: 0.1

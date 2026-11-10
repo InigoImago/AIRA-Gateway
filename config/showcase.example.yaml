@@ -335,6 +335,11 @@ allowed:
 otel:
   enabled: true
   endpoint: http://otel-collector:4318
+  # One signal somewhere else, as a whole URL with its route — nothing is appended. Each is
+  # optional: left out, that signal goes under `endpoint` above.
+  #   traces_endpoint: http://tempo.internal:4318/v1/traces
+  #   metrics_endpoint: http://mimir.internal:9009/otlp/v1/metrics
+  #   logs_endpoint: http://loki.internal:3100/otlp/v1/logs
   sample_ratio: 1.0
   # ---- Two channels, and how to point each one somewhere -------------------------------------
   #

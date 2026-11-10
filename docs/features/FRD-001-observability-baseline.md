@@ -62,8 +62,20 @@ feature is observable by default.
   root, so a caller cannot switch its own request's span off, and every process given the same
   ratio keeps a trace whole (`request_sampler`).
 - **FR-8 Metrics baseline**: request latency/count/error metrics auto-exported for both services.
-- **FR-9 Toggle**: observability is enabled via `otel_enabled`; when off (or endpoint empty) the SDK
-  setup is a no-op so tests and low-resource machines are unaffected.
+- **FR-9 Toggle**: observability is enabled via `otel_enabled`; when off (or no signal has a URL)
+  the SDK setup is a no-op so tests and low-resource machines are unaffected.
+- **FR-10 One base URL, and each signal's own** (2026-11-09): `otel_endpoint` is the base every
+  signal goes under, `/v1/<signal>` appended. `otel_traces_endpoint`, `otel_metrics_endpoint` and
+  `otel_logs_endpoint` (`AIRA_OTEL_*_ENDPOINT`) send one signal elsewhere, each a **whole URL**
+  with nothing appended — the SDK's own rule for `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`, and what a
+  one-signal backend needs (Mimir at `/otlp/v1/metrics`, Loki at `/otlp/v1/logs`). Each is optional
+  on its own: empty takes the base; with the base empty too, that signal gets **no provider** and
+  stays on OpenTelemetry's no-op one, and nothing else changes — requests are served, the other
+  signals export, the instrumentation wraps as before. The cost is stated rather than hidden: no
+  traces means no `X-Trace-Id` on a response and nothing on the delivery channel to a SIEM, whose
+  records are spans. `signal_endpoints` resolves the three; tests drive all eight combinations
+  through real providers and a gateway serving requests with metrics and logs but no traces
+  (`libs/tests/test_observability.py`, `gateway/tests/test_app.py`); mutations `OTS1`–`OTS6`.
 
 ## 5. Design & Architecture
 ```

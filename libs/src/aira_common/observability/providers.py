@@ -45,6 +45,9 @@ EXCLUDED_URLS_ENV = "OTEL_PYTHON_EXCLUDED_URLS"
 #: The variable that names a process's propagators. OpenTelemetry reads it once, at import.
 PROPAGATORS_ENV = "OTEL_PROPAGATORS"
 
+#: The three OTLP signals, each with the route the OTLP/HTTP specification appends to a base URL.
+SIGNAL_PATHS = {"traces": "/v1/traces", "metrics": "/v1/metrics", "logs": "/v1/logs"}
+
 _configured = False
 
 
@@ -96,26 +99,63 @@ def request_sampler(ratio: float) -> Sampler:
     )
 
 
+def signal_endpoints(
+    endpoint: str | None,
+    *,
+    traces: str | None = None,
+    metrics: str | None = None,
+    logs: str | None = None,
+) -> dict[str, str]:
+    """Where each signal is exported: its own URL when one is given, else the base + its route.
+
+    A signal's own URL is taken **whole**, nothing appended, as the OpenTelemetry SDK does with
+    `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`: a backend that receives one signal names its own route
+    (`/otlp/v1/metrics`, `/loki/api/v1/otlp/v1/logs`). A signal with neither is absent from the
+    result and is not exported, so one signal can go somewhere with the base left empty.
+    Whitespace counts as empty, because that is what an unset variable comes through Compose as.
+    """
+    base = (endpoint or "").strip().rstrip("/")
+    own = {"traces": traces, "metrics": metrics, "logs": logs}
+    resolved: dict[str, str] = {}
+    for signal, path in SIGNAL_PATHS.items():
+        url = (own[signal] or "").strip()
+        if url:
+            resolved[signal] = url
+        elif base:
+            resolved[signal] = f"{base}{path}"
+    return resolved
+
+
 def configure_observability(
     *,
     service_name: str,
     service_version: str = "0.0.0",
     environment: str = "local",
     endpoint: str | None = None,
+    traces_endpoint: str | None = None,
+    metrics_endpoint: str | None = None,
+    logs_endpoint: str | None = None,
     enabled: bool = True,
     sample_ratio: float = 1.0,
 ) -> bool:
-    """Configure global OTel providers exporting OTLP/HTTP to ``endpoint``.
+    """Configure global OTel providers exporting OTLP/HTTP, each signal to its own URL.
 
-    Returns True if observability was configured, False if it was disabled or no endpoint was
-    given. Idempotent.
+    ``endpoint`` is the base every signal is sent under; ``traces_endpoint``, ``metrics_endpoint``
+    and ``logs_endpoint`` replace it for one signal (:func:`signal_endpoints`). Only a signal with
+    a URL gets a provider. Returns True if any signal was configured, False if export is disabled
+    or no signal has a URL. Idempotent.
     """
     global _configured
     # **Before the early return**: an instrumentation can be in place with nothing exporting — the
     # control plane instruments Django on `AIRA_OTEL_ENABLED` alone — and it parses the headers
     # either way.
     propagate_trace_context_only()
-    if not enabled or not endpoint:
+    if not enabled:
+        return False
+    targets = signal_endpoints(
+        endpoint, traces=traces_endpoint, metrics=metrics_endpoint, logs=logs_endpoint
+    )
+    if not targets:
         return False
     if _configured:
         return True
@@ -127,7 +167,6 @@ def configure_observability(
             "deployment.environment": environment,
         }
     )
-    base = endpoint.rstrip("/")
 
     # **Before anything is instrumented**: an instrumentor reads the exclusion list when it is
     # constructed, so setting it afterwards excludes nothing.
@@ -137,35 +176,32 @@ def configure_observability(
     # root logger, where the OTLP handler below is installed (see `SdkDiagnostics`).
     route_sdk_diagnostics()
 
-    traces = f"{base}/v1/traces"
-    metrics_endpoint = f"{base}/v1/metrics"
-    logs = f"{base}/v1/logs"
+    if traces := targets.get("traces"):
+        tracer_provider = TracerProvider(resource=resource, sampler=request_sampler(sample_ratio))
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(watched_export(OTLPSpanExporter(endpoint=traces), "traces", traces))
+        )
+        trace.set_tracer_provider(tracer_provider)
 
-    tracer_provider = TracerProvider(resource=resource, sampler=request_sampler(sample_ratio))
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(watched_export(OTLPSpanExporter(endpoint=traces), "traces", traces))
-    )
-    trace.set_tracer_provider(tracer_provider)
-
-    meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[
-            PeriodicExportingMetricReader(
-                watched_export(
-                    OTLPMetricExporter(endpoint=metrics_endpoint), "metrics", metrics_endpoint
+    if metrics_url := targets.get("metrics"):
+        meter_provider = MeterProvider(
+            resource=resource,
+            metric_readers=[
+                PeriodicExportingMetricReader(
+                    watched_export(OTLPMetricExporter(endpoint=metrics_url), "metrics", metrics_url)
                 )
-            )
-        ],
-    )
-    metrics.set_meter_provider(meter_provider)
+            ],
+        )
+        metrics.set_meter_provider(meter_provider)
 
-    logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(watched_export(OTLPLogExporter(endpoint=logs), "logs", logs))
-    )
-    set_logger_provider(logger_provider)
-    # Bridge stdlib logging to OTLP; structlog lines reach it through `aira_common.logging`.
-    logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
+    if logs := targets.get("logs"):
+        logger_provider = LoggerProvider(resource=resource)
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(watched_export(OTLPLogExporter(endpoint=logs), "logs", logs))
+        )
+        set_logger_provider(logger_provider)
+        # Bridge stdlib logging to OTLP; structlog lines reach it through `aira_common.logging`.
+        logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
 
     _configured = True
     return True

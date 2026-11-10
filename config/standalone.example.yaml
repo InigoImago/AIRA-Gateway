@@ -359,6 +359,11 @@ allowed:
 otel:
   enabled: true
   endpoint: http://otel-collector:4318
+  # One signal somewhere else, as a whole URL with its route — nothing is appended. Each is
+  # optional: left out, that signal goes under `endpoint` above.
+  #   traces_endpoint: http://tempo.internal:4318/v1/traces
+  #   metrics_endpoint: http://mimir.internal:9009/otlp/v1/metrics
+  #   logs_endpoint: http://loki.internal:3100/otlp/v1/logs
   # A quarter of the traces — and so a quarter of the delivery channel's access records, which are
   # spans. `1.0` where a SIEM has to see every access; the audit trail is whole either way.
   sample_ratio: 0.25

@@ -1250,7 +1250,12 @@ unless a self-hosted server's URL says otherwise:
 ## 6. Observability
 
 OTLP over HTTP to any collector that accepts it without a credential: the applications' leg has one
-AIRA setting, `AIRA_OTEL_ENDPOINT`, and nothing for a header or a CA. (The OpenTelemetry SDK reads
+address, `AIRA_OTEL_ENDPOINT`, and nothing for a header or a CA. Each signal can be sent elsewhere
+on its own — `AIRA_OTEL_TRACES_ENDPOINT`, `AIRA_OTEL_METRICS_ENDPOINT`, `AIRA_OTEL_LOGS_ENDPOINT`,
+each a whole URL with its route, nothing appended — for a backend that takes one signal (Tempo,
+Mimir, Loki). One left empty goes under `AIRA_OTEL_ENDPOINT`; with that empty as well, the signal
+is not exported and the rest runs unchanged. Traces not exported means the delivery channel below
+has nothing to deliver. (The OpenTelemetry SDK reads
 its own `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_CERTIFICATE`; nothing here sets or tests
 them, and the shipped Compose passes neither.) Nothing is exported until `AIRA_OTEL_ENABLED=true`,
 which is off by default. Traces carry `aira.*` attributes — subject, use case, model, outcome,
@@ -1283,7 +1288,7 @@ went and what answered.
 | filtered | no | traces, to requests and the calls made inside them; metrics and logs whole |
 | on by default | yes, in the collector | no |
 | prefix | `AIRA_OTEL_BACKEND_` | `AIRA_OTEL_FORWARD_` |
-| shared by both | `AIRA_OTEL_ENABLED` and `AIRA_OTEL_ENDPOINT` — the hop *into* the collector | |
+| shared by both | `AIRA_OTEL_ENABLED` and `AIRA_OTEL_ENDPOINT` (or the per-signal URLs) — the hop *into* the collector | |
 
 **Sampling is the installation's, not the caller's.** `AIRA_OTEL_SAMPLE_RATIO` is applied in the
 applications, to each request's trace id. A caller's `traceparent` continues its trace id, and its

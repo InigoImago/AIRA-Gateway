@@ -773,6 +773,7 @@ when a database is restored (§6b).
 ```bash
 AIRA_OTEL_ENABLED=true
 AIRA_OTEL_ENDPOINT=http://otel-collector:4318     # OTLP/HTTP, no trailing path
+#AIRA_OTEL_METRICS_ENDPOINT=http://mimir:9009/otlp/v1/metrics   # optional: one signal elsewhere, whole URL
 AIRA_OTEL_SAMPLE_RATIO=1.0                        # by trace id; below 1 also thins what a SIEM receives
 ```
 
@@ -913,7 +914,8 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_CURRENCY`                                                | `EUR`                                                      | Currency all model prices and cost budgets are expressed in. One per installation; no conversion happens, so it must match the prices you enter. |
 | `AIRA_TIME_ZONE`                                               | `UTC`                                                      | The installation's clock (an IANA name, e.g. `Europe/Berlin`): where budget days and months begin, the days of every report and chart, and the clock the console shows every time on. The same value on both services. A change moves the boundary of the period in progress once. |
 | `AIRA_OTEL_ENABLED`                                            | `false`                                                    | Export OTLP                                                                                                                                                |
-| `AIRA_OTEL_ENDPOINT`                                           | `http://localhost:4318`                                    | OTLP/HTTP endpoint                                                                                                                                         |
+| `AIRA_OTEL_ENDPOINT`                                           | `http://localhost:4318`                                    | OTLP/HTTP base URL; `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended                                                                                |
+| `AIRA_OTEL_TRACES_ENDPOINT` / `_METRICS_ENDPOINT` / `_LOGS_ENDPOINT` | _(empty)_                                                  | One signal to a URL of its own, taken whole. Empty uses the base URL; with that empty too the signal is not exported, and nothing else changes. No traces means no records for a SIEM |
 | `AIRA_OTEL_SAMPLE_RATIO`                                       | `1.0`                                                      | Share of requests sampled, by trace id; a caller's trace flag decides nothing. Below 1 also thins the delivery channel a SIEM reads                       |
 | `AIRA_POSTGRES_HOST` / `_PORT` / `_DB` / `_USER` / `_PASSWORD` | `localhost` / `5432` / per service / `aira` / `aira-local` | Database connection                                                                                                                                        |
 | `AIRA_KAFKA_BOOTSTRAP_SERVERS`                                 | `localhost:29092`                                          | Comma-separated broker list; the security settings are in §3.3                                                                                             |

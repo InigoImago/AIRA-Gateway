@@ -1,3 +1,4 @@
+import itertools
 import logging
 import os
 from collections.abc import Iterator
@@ -343,3 +344,109 @@ def test_configure_observability_is_what_restricts_the_propagators(
     )
 
     assert propagate.get_global_textmap().fields == {"traceparent", "tracestate"}
+
+
+# --- one base URL, and each signal's own --------------------------------------------------------
+
+SIGNALS = ("traces", "metrics", "logs")
+
+
+def test_the_base_url_carries_every_signal_under_its_route() -> None:
+    assert obs.signal_endpoints("http://collector:4318/") == {
+        "traces": "http://collector:4318/v1/traces",
+        "metrics": "http://collector:4318/v1/metrics",
+        "logs": "http://collector:4318/v1/logs",
+    }
+
+
+def test_a_signal_of_its_own_is_taken_whole_and_the_others_keep_the_base() -> None:
+    """Metrics and logs elsewhere, traces left out: traces still go under the base. Nothing is
+    appended to a signal's own URL, because a backend for one signal names its own route."""
+    assert obs.signal_endpoints(
+        "http://collector:4318",
+        metrics="http://mimir:9009/otlp/v1/metrics",
+        logs="http://loki:3100/otlp/v1/logs",
+    ) == {
+        "traces": "http://collector:4318/v1/traces",
+        "metrics": "http://mimir:9009/otlp/v1/metrics",
+        "logs": "http://loki:3100/otlp/v1/logs",
+    }
+
+
+def test_without_a_base_only_the_signals_given_their_own_url_are_exported() -> None:
+    """Whitespace is empty: an unset variable arrives through Compose as an empty string."""
+    assert obs.signal_endpoints(
+        " ", traces="", metrics="http://mimir/otlp/v1/metrics", logs="  "
+    ) == {"metrics": "http://mimir/otlp/v1/metrics"}
+    assert obs.signal_endpoints(None) == {}
+    assert obs.signal_endpoints("", traces=None, metrics=None, logs=None) == {}
+
+
+@pytest.fixture
+def exporter_targets(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """The URL each real exporter was built with, by signal — recorded on the way through, so the
+    exporters themselves are the SDK's and only the address is read back."""
+    from aira_common.observability import providers
+
+    targets: dict[str, str] = {}
+    for signal, name in (
+        ("traces", "OTLPSpanExporter"),
+        ("metrics", "OTLPMetricExporter"),
+        ("logs", "OTLPLogExporter"),
+    ):
+        real = getattr(providers, name)
+
+        def build(*, endpoint: str, _real=real, _signal=signal):  # type: ignore[no-untyped-def]
+            targets[_signal] = endpoint
+            return _real(endpoint=endpoint)
+
+        monkeypatch.setattr(providers, name, build)
+    return targets
+
+
+@pytest.mark.parametrize(
+    "own",
+    [
+        frozenset(subset)
+        for size in range(len(SIGNALS) + 1)
+        for subset in itertools.combinations(SIGNALS, size)
+    ],
+    ids=lambda own: "+".join(sorted(own)) or "none",
+)
+def test_any_combination_of_signals_starts_and_runs(
+    monkeypatch, providers_put_back: None, exporter_targets: dict[str, str], own: frozenset[str]
+) -> None:
+    """Every subset of the three own URLs with **no base**: a signal without a URL gets no provider
+    and stays on OpenTelemetry's no-op one, and a process that then traces, counts and logs runs
+    as it does with all three. Nothing in either plane may depend on a signal being exported."""
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk.metrics import MeterProvider
+
+    from aira_common.logging import get_logger
+
+    monkeypatch.setattr("aira_common.observability.providers._configured", False)
+    urls = {signal: f"http://127.0.0.1:1/{signal}-only" for signal in own}
+
+    configured = obs.configure_observability(
+        service_name="t",
+        endpoint="",
+        traces_endpoint=urls.get("traces"),
+        metrics_endpoint=urls.get("metrics"),
+        logs_endpoint=urls.get("logs"),
+    )
+
+    assert configured is bool(own)
+    assert exporter_targets == urls
+    installed = {
+        "traces": isinstance(trace.get_tracer_provider(), TracerProvider),
+        "metrics": isinstance(metrics_api.get_meter_provider(), MeterProvider),
+        "logs": isinstance(logs_api.get_logger_provider(), LoggerProvider),
+    }
+    assert {signal for signal, is_sdk in installed.items() if is_sdk} == set(own)
+
+    # What a request does to each signal, whether or not it is exported.
+    with trace.get_tracer("t").start_as_current_span("request"):
+        metrics_api.get_meter_provider().get_meter("t").create_counter("c").add(1)
+        get_logger("t").warning("a_line", signal="any")
+        logging.getLogger("t").error("a stdlib line")
+        obs.trace_context_fields()

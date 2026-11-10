@@ -5,6 +5,30 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Each signal to its own address (2026-11-09)
+
+The applications' OTLP leg had one address, `AIRA_OTEL_ENDPOINT`, with `/v1/traces`, `/v1/metrics`
+and `/v1/logs` appended. An installation whose backends take one signal each (Tempo, Mimir, Loki)
+had no way to say so. `AIRA_OTEL_TRACES_ENDPOINT`, `AIRA_OTEL_METRICS_ENDPOINT` and
+`AIRA_OTEL_LOGS_ENDPOINT` now send one signal to a whole URL of its own; the base stays the
+default for whichever is left empty (`FRD-001` FR-10). Only the applications' leg — the collector's
+observability channel (`AIRA_OTEL_BACKEND_*`) is unchanged.
+
+The owner's condition was that one URL left out must not destabilise anything, e.g. metrics and
+logs set and traces not. With a base URL that cannot happen — traces go under it. Without one, the
+signal gets no provider at all rather than an exporter pointed at nothing, and stays on the API's
+no-op provider. Nothing in either plane reads an SDK provider (`force_flush`, `shutdown`, an
+`isinstance`), so that was checked by running it: all eight combinations configure, trace, count
+and log without an error, and a gateway with metrics and logs but no traces starts, answers
+`/healthz` and refuses an unauthenticated call with its usual envelope. What does change is
+stated in `CONFIGURATION.md`: no `X-Trace-Id`, and nothing for a SIEM on the delivery channel.
+
+No privacy edition: the same data goes to the controller's connected systems, which the
+telemetry activity names already, only possibly to more than one of them. Mutations `OTS1`–`OTS6`
+are caught.
+
+---
+
 ## The fallback panel's caption, measured against a step's (2026-11-04)
 
 The owner did not find the use case's fallback in the pipeline editor: the local stack still ran

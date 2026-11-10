@@ -211,7 +211,7 @@ deployment starts, and whether it starts as a deployment:
 | `AIRA_TRUST_FORWARDED_FOR`, `AIRA_TRUSTED_PROXY_HOPS` | `true`, and the number of proxies that append, **only** behind proxies you control | Otherwise a caller can dictate the address in your audit trail |
 | `AIRA_MAX_REQUEST_BYTES` | your body ceiling | The default is 8 MiB; documents raise it |
 | `AIRA_STORE_PAYLOADS` | your policy | A kill switch above the per-use-case setting |
-| `AIRA_OTEL_ENABLED`, `AIRA_OTEL_ENDPOINT` | your collector | The default endpoint names a collector this composition does not start |
+| `AIRA_OTEL_ENABLED`, `AIRA_OTEL_ENDPOINT` | your collector — or, per signal, `AIRA_OTEL_TRACES_ENDPOINT`, `_METRICS_ENDPOINT`, `_LOGS_ENDPOINT` as whole URLs | The default endpoint names a collector this composition does not start; a signal with no URL at all is not exported |
 
 Outside `local` the control plane also refuses a development `SECRET_KEY`, `DEBUG=true`,
 `ALLOWED_HOSTS=*` and plain-HTTP issuer, JWKS or Vault addresses; the gateway refuses

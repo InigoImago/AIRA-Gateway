@@ -66,3 +66,29 @@ def test_instrumenting_twice_adds_one_middleware(settings) -> None:
         DjangoInstrumentor().uninstrument()
         if was_instrumented:
             DjangoInstrumentor().instrument()
+
+
+def test_setup_observability_passes_each_signal_its_own_url(monkeypatch) -> None:
+    """The settings reach the function that builds the exporters — a field nothing passes on is a
+    setting somebody turns and believes."""
+    import aira_management.config.observability as observability
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        observability, "configure_observability", lambda **kwargs: seen.update(kwargs) or True
+    )
+    setup_observability(
+        ManagementSettings(
+            otel_enabled=True,
+            otel_endpoint="",
+            otel_traces_endpoint="http://tempo/v1/traces",
+            otel_metrics_endpoint="http://mimir/otlp/v1/metrics",
+            otel_logs_endpoint="http://loki/otlp/v1/logs",
+        )
+    )
+
+    assert (
+        seen["traces_endpoint"],
+        seen["metrics_endpoint"],
+        seen["logs_endpoint"],
+    ) == ("http://tempo/v1/traces", "http://mimir/otlp/v1/metrics", "http://loki/otlp/v1/logs")

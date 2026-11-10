@@ -270,7 +270,18 @@ class BaseAiraSettings(BaseSettings):
     """Enable OpenTelemetry export (traces/metrics/logs) via OTLP (see FRD-001)."""
 
     otel_endpoint: str = "http://localhost:4318"
-    """OTLP/HTTP endpoint of the OpenTelemetry Collector."""
+    """OTLP/HTTP endpoint of the OpenTelemetry Collector: the base URL every signal is sent under,
+    with `/v1/traces`, `/v1/metrics` or `/v1/logs` appended."""
+
+    otel_traces_endpoint: str = ""
+    """Where traces go instead, as a **whole URL** — nothing is appended, because a backend that
+    receives one signal names its own route. Empty is ``otel_endpoint`` + `/v1/traces`."""
+
+    otel_metrics_endpoint: str = ""
+    """Where metrics go instead, as a whole URL. Empty is ``otel_endpoint`` + `/v1/metrics`."""
+
+    otel_logs_endpoint: str = ""
+    """Where logs go instead, as a whole URL. Empty is ``otel_endpoint`` + `/v1/logs`."""
 
     otel_sample_ratio: float = 1.0
     """Trace sampling ratio, decided by trace id in every process and never by a caller's
