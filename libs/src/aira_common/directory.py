@@ -36,6 +36,15 @@ DOT_SEGMENTS = frozenset({".", ".."})
 #: Where Keycloak names the realm in an issuer: `https://sso.example/realms/<realm>`.
 REALMS_MARKER = "/realms/"
 
+#: What a token realm cannot hold, because it is written into the token endpoint's path: a
+#: separator, the start of a query or a fragment, or an escape the server reads as any of them —
+#: each would carry the account's credential to another path than that realm's token endpoint.
+#: Keycloak refuses all but `%` in a realm's name itself.
+NOT_IN_A_REALM_NAME = frozenset("/\\?#%")
+
+#: The setting a token realm comes from, named in the refusal so that it says what to fix.
+TOKEN_REALM_SETTING = "AIRA_DIRECTORY_TOKEN_REALM"
+
 
 @dataclass(frozen=True, slots=True)
 class DirectoryEntry:
@@ -50,12 +59,36 @@ class DirectoryEntry:
     detail: str = ""
 
 
+#: The two exchanges a lookup makes, as :attr:`DirectoryUnavailable.step` names them.
+TOKEN_STEP = "token"
+LOOKUP_STEP = "lookup"
+
+
 class DirectoryUnavailable(RuntimeError):
     """The identity provider could not be asked.
 
     Distinct from "nothing matched": an empty list for both would have somebody conclude a group
     does not exist when nobody could look.
+
+    The message is said to whoever is granting access, so it names neither the account nor the
+    reason. Where it failed is kept beside it for an operator's log line: the ``step``
+    (:data:`TOKEN_STEP` or :data:`LOOKUP_STEP`), the ``realm`` that exchange was addressed to, and
+    the HTTP ``status`` where an answer came back — a token refused by the wrong realm is
+    `token`, that realm, `401`.
     """
+
+    def __init__(
+        self, message: str, *, step: str = "", realm: str = "", status: int | None = None
+    ) -> None:
+        super().__init__(message)
+        self.step = step
+        self.realm = realm
+        self.status = status
+
+
+def _status(exc: Exception) -> int | None:
+    """The status a failed exchange was answered with, or ``None`` when no answer came back."""
+    return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
 
 
 def _user_entry(row: dict[str, Any], username: str) -> DirectoryEntry:
@@ -70,20 +103,47 @@ def _user_entry(row: dict[str, Any], username: str) -> DirectoryEntry:
     )
 
 
+def checked_token_realm(value: str) -> str:
+    """``value`` as the realm a directory account obtains its token in, stripped; empty stays
+    empty, which is the issuer's realm.
+
+    Raises ``ValueError`` where the token request would carry the credential somewhere else: a
+    character of :data:`NOT_IN_A_REALM_NAME`, a control character, or a `.` or `..` an HTTP client
+    resolves before it sends. Keycloak lets a realm be called `.` or `..`, which no URL reaches,
+    and lets a `%` into a name, which cannot be named here: the server reads an escape such as
+    `%2F` as the character it stands for. A space is a name's own — Keycloak allows one, and it is
+    sent escaped.
+    """
+    name = value.strip()
+    if name in DOT_SEGMENTS or any(
+        char in NOT_IN_A_REALM_NAME or not char.isprintable() for char in name
+    ):
+        raise ValueError(
+            f"{TOKEN_REALM_SETTING} is {value!r}, which is not one realm's name. It is written "
+            "into the token endpoint's path, so it may hold no '/', '\\', '?', '#', '%' or "
+            "control character, and may not be '.' or '..'. Leave it empty for the issuer's "
+            "realm, or name the realm the directory account lives in, such as master."
+        )
+    return name
+
+
 def directory_for(
-    issuer: str, url: str, client_id: str, client_secret: str
+    issuer: str, url: str, client_id: str, client_secret: str, token_realm: str = ""
 ) -> KeycloakDirectory | None:
     """The directory an installation configured, or ``None`` without an account or a realm.
 
     The realm is the issuer's. The admin API is reached at ``url`` where one is set — the issuer
     is the address browsers use, and inside a container it is rarely Keycloak — and at the
-    issuer's server otherwise.
+    issuer's server otherwise. ``token_realm`` is where the account obtains its token, when it
+    lives in another realm than the one it reads.
     """
     issuer = issuer.strip().rstrip("/")
     if REALMS_MARKER not in issuer or not (client_id and client_secret):
         return None
     server, realm = issuer.rsplit(REALMS_MARKER, 1)
-    return KeycloakDirectory(url.strip() or server, realm, client_id, client_secret)
+    return KeycloakDirectory(
+        url.strip() or server, realm, client_id, client_secret, token_realm=token_realm
+    )
 
 
 def _names_a_group(path: str) -> bool:
@@ -98,6 +158,11 @@ class KeycloakDirectory:
     Authenticates as a **client-credentials** service account with `view-users` and `query-groups`,
     never with the reader's token: results would then depend on what that individual may see in
     Keycloak, not on who could be granted access here.
+
+    The account may live in another realm than the one it reads. Many installations keep their
+    administrative service accounts in `master` and give them those two roles through `master`'s
+    `<realm>-realm` client; such an account obtains its token in its own realm (``token_realm``),
+    and that token is accepted by the realm's admin API. Every lookup names the realm it reads.
     """
 
     def __init__(
@@ -107,10 +172,15 @@ class KeycloakDirectory:
         client_id: str,
         client_secret: str,
         *,
+        token_realm: str = "",
         client: httpx.Client | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
+        #: The realm every lookup reads.
         self._realm = realm
+        #: Where the token is obtained: the account's own realm, which is the one it reads unless
+        #: it lives elsewhere.
+        self._token_realm = checked_token_realm(token_realm) or realm
         self._client_id = client_id
         self._client_secret = client_secret
         #: Injected in tests, so the class is exercised against a transport rather than a stand-in;
@@ -199,16 +269,28 @@ class KeycloakDirectory:
                 headers={"Authorization": f"Bearer {token}"},
             )
         except httpx.HTTPError as exc:
-            raise DirectoryUnavailable("the identity provider could not be reached") from exc
+            raise DirectoryUnavailable(
+                "the identity provider could not be reached", step=LOOKUP_STEP, realm=self._realm
+            ) from exc
         if response.status_code == 404:
             return None
         if response.status_code != 200:
             # A refusal to *look* (403 without `query-groups`) is not a "no": nobody could check.
-            raise DirectoryUnavailable("the identity provider could not be asked")
+            raise DirectoryUnavailable(
+                "the identity provider could not be asked",
+                step=LOOKUP_STEP,
+                realm=self._realm,
+                status=response.status_code,
+            )
         try:
             body = response.json()
         except ValueError as exc:
-            raise DirectoryUnavailable("the identity provider answered unreadably") from exc
+            raise DirectoryUnavailable(
+                "the identity provider answered unreadably",
+                step=LOOKUP_STEP,
+                realm=self._realm,
+                status=response.status_code,
+            ) from exc
         return body if isinstance(body, dict) and body.get("path") == path else None
 
     def search(self, query: str) -> list[DirectoryEntry]:
@@ -228,7 +310,7 @@ class KeycloakDirectory:
     def _token(self, http: httpx.Client) -> str:
         try:
             response = http.post(
-                f"{self._base}/realms/{self._realm}/protocol/openid-connect/token",
+                f"{self._base}/realms/{self._token_realm}/protocol/openid-connect/token",
                 data={
                     "grant_type": "client_credentials",
                     "client_id": self._client_id,
@@ -240,9 +322,19 @@ class KeycloakDirectory:
         except (httpx.HTTPError, ValueError) as exc:
             # The reason is not carried outward: it may name the client, and the console shows
             # this to whoever is granting access.
-            raise DirectoryUnavailable("the identity provider could not be reached") from exc
+            raise DirectoryUnavailable(
+                "the identity provider could not be reached",
+                step=TOKEN_STEP,
+                realm=self._token_realm,
+                status=_status(exc),
+            ) from exc
         if not isinstance(token, str) or not token:
-            raise DirectoryUnavailable("the identity provider returned no token")
+            raise DirectoryUnavailable(
+                "the identity provider returned no token",
+                step=TOKEN_STEP,
+                realm=self._token_realm,
+                status=response.status_code,
+            )
         return token
 
     def _get(
@@ -257,7 +349,12 @@ class KeycloakDirectory:
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise DirectoryUnavailable("the identity provider could not be reached") from exc
+            raise DirectoryUnavailable(
+                "the identity provider could not be reached",
+                step=LOOKUP_STEP,
+                realm=self._realm,
+                status=_status(exc),
+            ) from exc
         return body if isinstance(body, list) else []
 
     def _groups(self, http: httpx.Client, token: str, query: str) -> list[DirectoryEntry]:

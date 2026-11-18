@@ -92,9 +92,17 @@ class DirectorySearchView(APIView):
             try:
                 entries = directory.search(query)
                 return Response({"results": [_as_dict(e) for e in entries], "source": "keycloak"})
-            except DirectoryUnavailable:
-                # Fall back to the local answer — a real subset — rather than fail.
-                pass
+            except DirectoryUnavailable as exc:
+                # Fall back to the local answer — a real subset — rather than fail. Said where an
+                # operator looks: in the console a directory that cannot be asked is only a
+                # shorter list. Where it failed and with what status, never the account.
+                _log.warning(
+                    "directory.unavailable",
+                    step=exc.step,
+                    realm=exc.realm,
+                    status=exc.status,
+                    why=str(exc),
+                )
 
         return Response(
             {

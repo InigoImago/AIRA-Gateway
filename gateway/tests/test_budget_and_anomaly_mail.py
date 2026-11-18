@@ -769,3 +769,47 @@ def test_a_blank_relay_is_no_relay(
         build_notifier(_settings(smtp_host=settings_relay, mail_from="a@b"), sessions, BERLIN)
         is None
     )
+
+
+@pytest.mark.parametrize(("token_realm", "account_in"), [("", "aira"), ("master", "master")])
+def test_the_notifier_gets_its_token_where_the_directory_account_lives(
+    sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    token_realm: str,
+    account_in: str,
+) -> None:
+    """The gateway reads a mail's addresses with the account Management searches with, so an
+    account kept in `master` must be asked for its token there by both — and the address is still
+    read from the issuer's realm."""
+    asked: list[tuple[str, str]] = []
+
+    def keycloak(request: httpx.Request) -> httpx.Response:
+        asked.append((request.method, request.url.path))
+        if request.url.path == f"/realms/{account_in}/protocol/openid-connect/token":
+            return httpx.Response(200, json={"access_token": "t"})
+        if request.url.path == "/admin/realms/aira/users":
+            return httpx.Response(200, json=[{"username": "ada", "email": PEOPLE["ada"]}])
+        return httpx.Response(401, json={"error": "invalid_client"})
+
+    real = httpx.Client
+    monkeypatch.setattr(
+        "aira_common.directory.httpx.Client",
+        lambda **kwargs: real(transport=httpx.MockTransport(keycloak)),
+    )
+    notifier = build_notifier(
+        _settings(
+            smtp_host="relay.example",
+            mail_from="aira@example.com",
+            directory_token_realm=token_realm,
+        ),
+        sessions,
+        BERLIN,
+    )
+
+    assert notifier is not None and notifier.directory is not None
+    found = notifier.directory.find_user("ada")
+    assert found is not None and found.detail == PEOPLE["ada"]
+    assert asked == [
+        ("POST", f"/realms/{account_in}/protocol/openid-connect/token"),
+        ("GET", "/admin/realms/aira/users"),
+    ]

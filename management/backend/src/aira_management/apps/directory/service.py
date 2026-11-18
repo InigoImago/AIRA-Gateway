@@ -22,9 +22,11 @@ def build_directory() -> KeycloakDirectory | None:
     realm = getattr(settings, "AIRA_OIDC_REALM", "") or ""
     client_id = getattr(settings, "AIRA_DIRECTORY_CLIENT_ID", "") or ""
     secret = getattr(settings, "AIRA_DIRECTORY_CLIENT_SECRET", "") or ""
+    # Where the account obtains its token, when it lives in another realm than the one it reads.
+    token_realm = getattr(settings, "AIRA_DIRECTORY_TOKEN_REALM", "") or ""
     if not (base and realm and client_id and secret):
         return None
-    return KeycloakDirectory(base, realm, client_id, secret)
+    return KeycloakDirectory(base, realm, client_id, secret, token_realm=token_realm)
 
 
 def known_person(username: str) -> DirectoryEntry | None:

@@ -177,6 +177,9 @@ privacy:
 directory:
   client_id: aira-directory
   url: http://keycloak:8080
+  # Where the account obtains its token, when it lives in another realm than the issuer's —
+  # `master`, say. The development realm's client lives in the realm it reads, so: empty.
+  token_realm: ''
   # client_secret: → Vault.
 
 # Mail: a person when their own budget crosses one of their use case's thresholds, a use case's

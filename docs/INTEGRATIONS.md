@@ -310,7 +310,7 @@ they describe one population. The audit row records the issuer a token came from
 the console read one issuer, `AIRA_OIDC_ISSUER`: people from the other realms call the gateway and
 do not sign in to the console. The gateway asks the first entry's realm for mail addresses
 ([§4b](#4b-a-mail-relay--optional)), so list the console's realm first — the one the directory
-account belongs to.
+account reads.
 
 #### And one that decides whose allowance is whose
 
@@ -406,6 +406,23 @@ members of a group that administers a use case, with the same account — and so
 to every profile in the realm; an installation that gives each service its own Vault path puts the
 secret on the gateway's as well.
 
+**Where the account lives — two setups, both read-only:**
+
+| The account is | Its two roles come from | Set |
+|---|---|---|
+| a confidential client **in your realm**, with service accounts on | your realm's `realm-management` client | `AIRA_DIRECTORY_CLIENT_ID`, `AIRA_DIRECTORY_CLIENT_SECRET` |
+| a confidential client **in `master`**, where many installations keep their administrative service accounts | `master`'s `<realm>-realm` client — `preprod-realm` for a realm `preprod` | the same two, and `AIRA_DIRECTORY_TOKEN_REALM=master` |
+
+The token is asked of the realm the account lives in, and every lookup names your realm, so a
+`master` token is used on `/admin/realms/<your realm>/…` — which Keycloak accepts for those roles.
+Without `AIRA_DIRECTORY_TOKEN_REALM` the token is asked of your realm, which does not know a
+`master` client: Keycloak answers `401 invalid_client`, the console offers only what Management
+already knows, and Management logs `directory.unavailable` with the step that failed (`token`), the
+realm it asked and the status — never the account or its secret. **An account in `master` can be
+given roles on every realm of the server**, because that is what `master` is for. AIRA only reads,
+but the account's secret is good for whatever Keycloak lets the account do: keep its roles to
+`view-users` and `query-groups` on the one realm AIRA reads.
+
 **Binding a role to a group is refused without it.** A group nobody could check is not trusted: the
 console says the group could not be verified, and the three built-in roles keep working. The
 development realm ships such a client, `aira-directory`, and the compose stack uses it by default.
@@ -429,7 +446,7 @@ the group is named `/use-cases/<slug>` and needs no grant.
 |---|---|---|---|
 | `aira-gateway` | public, **PKCE S256** | the console, whose tokens both planes accept | exact redirect URIs and web origins — never `*`; the client scopes `profile` and `email` |
 | *(service accounts)* | confidential | machine-to-machine callers | `client_credentials`; membership of the groups that grant what the caller may do, and the groups and audience mappers. A realm role grants nothing |
-| *(directory, optional)* | confidential | Management's directory lookups, and the gateway's mail addresses | `view-users` and `query-groups` from `realm-management`, nothing else — see above |
+| *(directory, optional)* | confidential | Management's directory lookups, and the gateway's mail addresses | `view-users` and `query-groups` from `realm-management`, nothing else — or, for a client kept in `master`, from `master`'s `<realm>-realm` client, with `AIRA_DIRECTORY_TOKEN_REALM=master` — see above |
 | *(Google federation, optional)* | confidential | the gateway's access to Vertex without a key | service accounts on, every other flow off, and an audience mapper for Google's pool — see [§5 D](#d--no-key-at-all-workload-identity-federation-through-your-keycloak) |
 
 **Settings on your side that matter**

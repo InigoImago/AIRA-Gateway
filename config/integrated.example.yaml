@@ -179,6 +179,12 @@ privacy:
 directory:
   client_id: aira-directory
   url: https://sso.example.com
+  # The realm the account obtains its token in, when it is kept in another realm than the
+  # issuer's: `master`, for an account given `view-users` and `query-groups` on your realm through
+  # `master`'s `<realm>-realm` client. Without it, your realm refuses such an account as
+  # `invalid_client` and the console offers only what it already knows. Empty asks the issuer's
+  # realm. Every lookup reads the issuer's realm either way.
+  token_realm: ''
   # client_secret: → Vault.
 
 # Mail: a person when their own budget crosses one of their use case's thresholds, a use case's

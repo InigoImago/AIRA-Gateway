@@ -357,3 +357,30 @@ def test_no_container_name_is_a_literal() -> None:
         f"These container names are fixed: {sorted(set(literal))}. Docker refuses a duplicate "
         "name, so a second stack cannot start beside this one whatever its ports are."
     )
+
+
+#: The services that ask the directory, each with the whole account: Management searches people
+#: and groups and checks a group before a role is bound to it, and the gateway reads a mail's
+#: addresses (`FRD-209`, `FRD-409`).
+ASKS_THE_DIRECTORY = ("management", "gateway")
+
+
+def test_the_directory_account_reaches_every_service_that_asks_the_directory() -> None:
+    """An account setting one plane receives and the other does not configures half an
+    installation, and the other half asks the wrong realm or the wrong address without a word:
+    the console falls back to what Management already knows, and a mail finds nobody. So *every*
+    `AIRA_DIRECTORY_*` setting either declares, to both."""
+    services = compose_files.load(compose_files.APPS)["services"]
+    account = {name for name in _settings_names() if name.startswith("AIRA_DIRECTORY_")}
+    # A guard on the guard: the prefix still finds the account, the realm it signs in to included.
+    assert {"AIRA_DIRECTORY_CLIENT_ID", "AIRA_DIRECTORY_TOKEN_REALM"} <= account
+
+    missing = {
+        service: sorted(account - set(services[service]["environment"]))
+        for service in ASKS_THE_DIRECTORY
+    }
+
+    assert not any(missing.values()), (
+        f"These settings of the directory account do not reach every service that asks the "
+        f"directory: {missing}. Pass each to both in `docker-compose.apps.yml`."
+    )

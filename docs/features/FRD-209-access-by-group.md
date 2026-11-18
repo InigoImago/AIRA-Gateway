@@ -101,6 +101,42 @@ cannot invent a group nobody has ever used. The console says which of the two it
 to them, and does not delete them. The identity provider is the source of truth; a console that
 edited it would be a second place to change who works where.
 
+### 3.1 Where the directory account signs in (2026-11-18)
+
+The account is a client-credentials service account, and a realm names two different things about
+it: **where it lives** — the realm whose token endpoint issues its token — and **what it reads**,
+the realm in `/admin/realms/<realm>/…`. Until this section both were the realm in the issuer.
+
+Many installations keep their administrative service accounts in `master` instead and give them
+`view-users` and `query-groups` on a realm through `master`'s `<realm>-realm` client. Keycloak
+issues such a token in `master` and accepts it on the realm's admin API; asked of the realm itself,
+the token is refused as `401 invalid_client`, because the realm has no such client. On the
+installation this was reported from (Keycloak served under `/auth`, realm `preprod`) the account and
+its roles were right and only the token's realm was wrong — and nothing said so: the search fell
+back to Management's own answer, which on a fresh installation is nearly empty, and no custom role
+could be bound because no group could be checked.
+
+So the two are separate settings. `AIRA_DIRECTORY_TOKEN_REALM` names where the account lives;
+**unset, it is the issuer's realm**, which is every installation before this one. Every lookup —
+search, the exact username, the group by path, a group's members — reads the issuer's realm either
+way. Both planes take it: Management for the search and the checks, the gateway for a mail's
+addresses. The value is written into the token endpoint's path, so one that is not one realm's
+name — a `/`, `\`, `?`, `#`, `%` or a control character, or `.` or `..` — refuses to start on both
+planes rather than sending the credential to another path at the first search. Measured against
+Keycloak 26.1.5: it refuses `/`, `\`, `?` and `#` in a realm's name itself (its
+`ReservedCharValidator` refuses `:/?#@!$&()*+,;=[]\`), and accepts `%`, `.` and `..` — a realm so
+named cannot be named here, because the server reads `%2F` as a `/` and an HTTP client resolves
+`.` and `..` away. A space is a name's own: Keycloak accepts one, and it is sent escaped.
+
+**An account in `master` has the wider reach by nature**: it can be given roles on every realm of
+the server. AIRA only reads, but the secret is good for whatever Keycloak lets the account do, so
+the integration guide asks for those two roles on the one realm and nothing else.
+
+**And a search that falls back says why**, once per search, at warning: `directory.unavailable`
+with the step that failed (`token` or `lookup`), the realm that exchange was addressed to and the
+HTTP status — `token`, `preprod`, `401` on the installation above. Never the account or its secret;
+the message the console may show stays as general as it was.
+
 ## 4. What the gateway does
 
 The gateway cannot ask Management on the request path — that has been true since `FRD-204` and it
@@ -148,6 +184,11 @@ into tables it reads together.
 may fill it tomorrow. It is shown as granted, and the console says how many known people it
 currently reaches so an empty one is visible rather than silent.
 
+**FR-9** (2026-11-18) — The directory account obtains its token in `AIRA_DIRECTORY_TOKEN_REALM`
+when one is set, and in the issuer's realm otherwise; every lookup reads the issuer's realm. Both
+planes read the setting, a value that is not one realm's name refuses to start on both, and a
+search that falls back logs `directory.unavailable` with the step, the realm and the status (§3.1).
+
 ## 6. What this does not do
 
 - **No writes to Keycloak.** See §3.
@@ -173,6 +214,9 @@ currently reaches so an empty one is visible rather than silent.
 | Live stack | 85 | `tests/integration/test_access_round.py`, `test_access_by_group.py` |
 | Browser | 7 | `e2e/tests/access-by-group.spec.ts` |
 | Mutations | `N30`–`N39` | 271 properties in total |
+| Token realm (§3.1, FR-9) | 44 | `libs/tests/test_directory.py`, `test_config.py`, Management's `test_directory.py`, `gateway/tests/test_budget_and_anomaly_mail.py`, `tools/tests/test_compose_passes_the_settings_it_names.py` |
+| Against Keycloak 26.1.5 | 9 | once, in a throwaway container with the account in `master` (`DEVLOG`, 2026-11-18); not kept as a suite, since it writes to `master` |
+| Mutations (§3.1) | `DTR1`–`DTR16` | 2535 properties in total |
 
 The properties that matter, each asserted where only that layer can see it:
 

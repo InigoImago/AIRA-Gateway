@@ -579,6 +579,7 @@ def build_notifier(
         settings.directory_url,
         settings.directory_client_id,
         settings.directory_client_secret,
+        token_realm=settings.directory_token_realm,
     )
     if directory is None:
         _log.warning(

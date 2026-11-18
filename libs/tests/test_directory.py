@@ -13,9 +13,12 @@ import pytest
 
 from aira_common.access import SubjectKind
 from aira_common.directory import (
+    LOOKUP_STEP,
     SEARCH_LIMIT,
+    TOKEN_STEP,
     DirectoryUnavailable,
     KeycloakDirectory,
+    checked_token_realm,
     directory_for,
 )
 
@@ -553,3 +556,209 @@ def test_without_an_account_or_a_realm_there_is_no_directory(
     issuer: str, client_id: str, secret: str
 ) -> None:
     assert directory_for(issuer, "", client_id, secret) is None
+
+
+def test_without_a_token_realm_the_account_is_its_realms_own() -> None:
+    directory = directory_for("https://sso.example/realms/aira", "", "aira-directory", "s3cret")
+    assert directory is not None
+    assert directory._token_realm == "aira"
+
+
+def test_the_token_realm_is_passed_through_and_the_realm_read_stays_the_issuers() -> None:
+    directory = directory_for(
+        "https://sso.example/realms/preprod",
+        "https://sso.example",
+        "aira-directory-preprod",
+        "s3cret",
+        token_realm="master",
+    )
+    assert directory is not None
+    assert (directory._realm, directory._token_realm) == ("preprod", "master")
+
+
+# ---- an account that lives in another realm (`AIRA_DIRECTORY_TOKEN_REALM`) -----------------------
+#
+# Many installations keep their administrative service accounts in `master` and give them
+# `view-users` and `query-groups` on a realm through `master`'s `<realm>-realm` client. Keycloak
+# issues such an account's token in `master` and accepts it on `/admin/realms/<realm>/…`; the realm
+# itself does not know the client and refuses it as `invalid_client`.
+
+#: The one group and the one person of the realm below, which every lookup can find.
+COMPLIANCE = "/aira-t-compliance"
+
+
+def _master_account(asked: list[tuple[str, str]], *, account_in: str = "master"):
+    """A Keycloak whose directory account exists in ``account_in`` only, and whose realm `aira`
+    holds one group with one member. Every request is recorded as ``(method, path)``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        asked.append((request.method, path))
+        if path.endswith("/protocol/openid-connect/token"):
+            if path == f"/realms/{account_in}/protocol/openid-connect/token":
+                return httpx.Response(200, json={"access_token": "admin-token"})
+            # A realm that does not hold the client refuses it, as Keycloak does.
+            return httpx.Response(401, json={"error": "invalid_client"})
+        if path == GROUPS_PATH:
+            return httpx.Response(200, json=[{"name": COMPLIANCE[1:], "path": COMPLIANCE}])
+        if path == USERS_PATH:
+            return httpx.Response(200, json=[{"username": "ada", "email": "ada@example.com"}])
+        if path == f"{BY_PATH}{COMPLIANCE}":
+            return httpx.Response(200, json={"id": "g-1", "path": COMPLIANCE})
+        if path == "/admin/realms/aira/groups/g-1/members":
+            return httpx.Response(200, json=[{"username": "ada", "email": "ada@example.com"}])
+        return httpx.Response(404)
+
+    return handler
+
+
+def _reading_aira(handler, *, token_realm: str = "") -> KeycloakDirectory:
+    return KeycloakDirectory(
+        "https://keycloak.example",
+        "aira",
+        "aira-directory",
+        "s3cret",
+        token_realm=token_realm,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+def _every_lookup(directory: KeycloakDirectory) -> None:
+    """Each of the four questions the two planes ask, answered from the realm read."""
+    assert [entry.id for entry in directory.search("aira")] == [COMPLIANCE, "ada"]
+    found = directory.find_user("ada")
+    assert found is not None and found.detail == "ada@example.com"
+    assert directory.group_exists(COMPLIANCE) is True
+    assert [member.id for member in directory.group_members(COMPLIANCE, 5)] == ["ada"]
+
+
+def test_an_account_kept_in_master_gets_its_token_there_and_reads_only_the_realm() -> None:
+    asked: list[tuple[str, str]] = []
+
+    _every_lookup(_reading_aira(_master_account(asked), token_realm="master"))
+
+    tokens = [path for method, path in asked if method == "POST"]
+    lookups = [path for method, path in asked if method == "GET"]
+    assert tokens == ["/realms/master/protocol/openid-connect/token"] * 4
+    assert lookups and all(path.startswith("/admin/realms/aira/") for path in lookups)
+    assert not [path for path in lookups if path.startswith("/admin/realms/master")]
+
+
+def test_without_a_token_realm_the_token_is_asked_of_the_realm_it_reads() -> None:
+    """Unchanged for every installation that never sets it: the account is the realm's own."""
+    asked: list[tuple[str, str]] = []
+
+    _every_lookup(_reading_aira(_master_account(asked, account_in="aira")))
+
+    assert {path for method, path in asked if method == "POST"} == {TOKEN_PATH}
+
+
+def test_an_account_in_master_asked_for_its_token_in_the_realm_is_refused_and_says_where() -> None:
+    """The defect the setting answers: the realm does not know the client. Nobody could look, which
+    is not "nothing matched" — and the operator's line names the step, the realm and the status."""
+    with pytest.raises(DirectoryUnavailable) as caught:
+        _reading_aira(_master_account([])).search("aira")
+
+    refused = caught.value
+    assert (refused.step, refused.realm, refused.status) == (TOKEN_STEP, "aira", 401)
+    assert "aira-directory" not in str(refused)
+
+
+def test_a_refused_token_names_the_realm_it_was_asked_of() -> None:
+    with pytest.raises(DirectoryUnavailable) as caught:
+        _reading_aira(_master_account([], account_in="aira"), token_realm="master").search("aira")
+
+    assert (caught.value.step, caught.value.realm, caught.value.status) == (
+        TOKEN_STEP,
+        "master",
+        401,
+    )
+
+
+def test_a_lookup_refused_names_the_realm_read_and_its_status() -> None:
+    """A `master` token holding no roles on the realm is a `403` on the lookup, not the token."""
+
+    def no_roles(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/realms/master/protocol/openid-connect/token":
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        return httpx.Response(403, json={"error": "unknown_error"})
+
+    directory = _reading_aira(no_roles, token_realm="master")
+    for ask in (
+        lambda: directory.search("aira"),
+        lambda: directory.find_user("ada"),
+        lambda: directory.group_exists(COMPLIANCE),
+        lambda: directory.group_members(COMPLIANCE, 5),
+    ):
+        with pytest.raises(DirectoryUnavailable) as caught:
+            ask()
+        assert (caught.value.step, caught.value.realm, caught.value.status) == (
+            LOOKUP_STEP,
+            "aira",
+            403,
+        )
+
+
+def test_no_answer_at_all_has_no_status() -> None:
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route to host")
+
+    with pytest.raises(DirectoryUnavailable) as caught:
+        _reading_aira(unreachable, token_realm="master").search("aira")
+
+    assert (caught.value.step, caught.value.realm, caught.value.status) == (
+        TOKEN_STEP,
+        "master",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a/b",
+        "..",
+        ".",
+        " .. ",
+        "master/../preprod",
+        "master\\x",
+        "master?x=1",
+        "master#x",
+        "mas%2Fter",
+        "mas\tter",
+        "mas\nter",
+        "mas\x00ter",
+        "mas\u00a0ter",
+    ],
+)
+def test_a_token_realm_that_is_not_one_realms_name_is_refused(value: str) -> None:
+    """It is written into the token endpoint's path, so each of these would carry the account's
+    credential to another path than a realm's token endpoint, or put a control character into a
+    request line. Refused when the directory is made, never when it is first asked."""
+    with pytest.raises(ValueError, match="AIRA_DIRECTORY_TOKEN_REALM"):
+        checked_token_realm(value)
+    with pytest.raises(ValueError, match="AIRA_DIRECTORY_TOKEN_REALM"):
+        KeycloakDirectory("https://kc", "aira", "id", "secret", token_realm=value)
+    with pytest.raises(ValueError, match="AIRA_DIRECTORY_TOKEN_REALM"):
+        directory_for("https://kc/realms/aira", "", "id", "secret", token_realm=value)
+
+
+@pytest.mark.parametrize(
+    "value", ["master", "lvm-intern", "realm_2", "v1.2", "Geschäft", "Konzern Verwaltung"]
+)
+def test_a_realms_name_is_taken_as_it_is(value: str) -> None:
+    """Whatever Keycloak lets a realm be called and a URL can carry: a dot inside a name, a letter
+    outside ASCII and a space are sent escaped, and reach that realm's token endpoint."""
+    assert checked_token_realm(value) == value
+    assert (
+        KeycloakDirectory("https://kc", "aira", "i", "s", token_realm=value)._token_realm == value
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "taken"), [("", "aira"), ("   ", "aira"), (" master ", "master")]
+)
+def test_a_token_realm_is_read_without_the_space_around_it(value: str, taken: str) -> None:
+    assert (
+        KeycloakDirectory("https://kc", "aira", "i", "s", token_realm=value)._token_realm == taken
+    )

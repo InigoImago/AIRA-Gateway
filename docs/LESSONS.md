@@ -1452,6 +1452,12 @@ reading code.
   Order the causes by what is cheapest to rule out, and put the command that rules out the first
   one in the sentence.
 
+  *A fallback that serves a smaller answer is an empty screen with the hop hidden.* The directory
+  search answered `source: local` when Keycloak refused its account, and on a fresh installation
+  that is a picker with nobody in it — while no log line anywhere said a token had been refused, by
+  which realm, with which status. The fallback now says those three at warning, and nothing about
+  the account.
+
 - **A guard that lives in the thing being destroyed is not a guard.** The console had a flag so
   that five panels each getting a `401` would not start five logins — correct, and held in a
   service whose very next act is a full-page navigation to Keycloak that destroys it. Its own
@@ -1489,6 +1495,14 @@ reading code.
   else references is not. And the overlay's own footgun (restating the base exporter lists, because
   a merged list replaces) existed *only* because of the subordination: independence deleted the
   hazard and the guard test for it together.
+
+  **One value read for two questions is the same accident in a setting.** The directory account's
+  realm was the issuer's for both of its questions — where the account obtains its token, and which
+  realm it reads — because in every realm this project had seen they were one. An installation
+  that keeps its administrative accounts in `master` answers them differently, and the account,
+  its roles and its secret were all right while every search was refused as `invalid_client`
+  (`AIRA_DIRECTORY_TOKEN_REALM` separates them, `FRD-209` §3.1). When one value answers two
+  questions, ask whether any installation could answer them apart.
 
 - **A vendor fragment earns its place only by doing something the generic one cannot say.** Asked
   whether a named SIEM could be attached, a first round answered that SIEM: four of its

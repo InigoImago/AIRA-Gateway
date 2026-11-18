@@ -88,3 +88,32 @@ def test_a_default_retention_outside_a_real_period_refuses_to_start(days: int) -
 @pytest.mark.parametrize("days", [1, 7, 3650])
 def test_a_default_retention_within_a_use_cases_bounds_is_read(days: int) -> None:
     assert BaseAiraSettings(default_retention_days=days).default_retention_days == days
+
+
+# ---- the realm a directory account obtains its token in ------------------------------------------
+
+
+def test_without_a_token_realm_the_directory_account_is_the_issuers_realms_own() -> None:
+    assert BaseAiraSettings().directory_token_realm == ""
+
+
+def test_a_token_realm_is_read_from_the_environment_without_its_spaces(monkeypatch) -> None:
+    monkeypatch.setenv("AIRA_DIRECTORY_TOKEN_REALM", " master ")
+    assert BaseAiraSettings().directory_token_realm == "master"
+
+
+@pytest.mark.parametrize("value", ["a/b", "..", ".", "master?x", "mas\tter"])
+def test_a_token_realm_that_is_not_a_realms_name_refuses_both_planes_at_start(
+    monkeypatch, value: str
+) -> None:
+    """At start-up, not at the first search: a value written into the token endpoint's path that
+    names no realm would carry the account's credential elsewhere, and would otherwise surface as a
+    console that quietly offers fewer people."""
+    from aira_management.config.app_settings import ManagementSettings
+
+    from aira_gateway.config import GatewaySettings
+
+    monkeypatch.setenv("AIRA_DIRECTORY_TOKEN_REALM", value)
+    for plane in (GatewaySettings, ManagementSettings):
+        with pytest.raises(ValidationError, match="AIRA_DIRECTORY_TOKEN_REALM"):
+            plane()

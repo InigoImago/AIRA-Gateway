@@ -101,6 +101,9 @@ services:
       AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-aira-directory}
       AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-aira-directory-dev-secret}
       AIRA_DIRECTORY_URL: ${AIRA_DIRECTORY_URL:-http://keycloak:8080}
+      # The realm the account obtains its token in, when it lives in another realm than the
+      # issuer's — `master`, holding the realm's `<realm>-realm` roles. Empty: the issuer's realm.
+      AIRA_DIRECTORY_TOKEN_REALM: ${AIRA_DIRECTORY_TOKEN_REALM:-}
       AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
       AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
@@ -272,6 +275,10 @@ services:
       AIRA_DIRECTORY_CLIENT_ID: ${AIRA_DIRECTORY_CLIENT_ID:-aira-directory}
       AIRA_DIRECTORY_CLIENT_SECRET: ${AIRA_DIRECTORY_CLIENT_SECRET:-aira-directory-dev-secret}
       AIRA_DIRECTORY_URL: ${AIRA_DIRECTORY_URL:-http://keycloak:8080}
+      # Where the account obtains its token, when it is kept in another realm than the one it
+      # reads — `master`, with `view-users` and `query-groups` through `<realm>-realm`. Every lookup
+      # still reads the issuer's realm. Empty: the token is asked of that realm too.
+      AIRA_DIRECTORY_TOKEN_REALM: ${AIRA_DIRECTORY_TOKEN_REALM:-}
       # The model reference's live list (`FRD-508`). Empty: the copy this release ships.
       AIRA_MODEL_REFERENCE_URL: ${AIRA_MODEL_REFERENCE_URL:-}
       AIRA_MODEL_REFERENCE_EXCHANGE_RATE: ${AIRA_MODEL_REFERENCE_EXCHANGE_RATE:-}

@@ -7,9 +7,16 @@ answer says it is degraded rather than looking like "nothing matched".
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+import structlog
+from aira_management.apps.directory import views as directory_views
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant
 from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
@@ -205,3 +212,149 @@ def test_the_directory_is_asked_at_its_own_address_before_the_issuers(settings) 
 
     settings.AIRA_DIRECTORY_URL = ""
     assert build_directory()._base == "http://localhost:8080"  # type: ignore[union-attr]
+
+
+# ---- an account that lives in another realm (`AIRA_DIRECTORY_TOKEN_REALM`) -----------------------
+#
+# The installation this was found on keeps its admin service accounts in `master`, with
+# `view-users` and `query-groups` on its realm `preprod` through `master`'s `preprod-realm` client.
+# Keycloak issues that account's token in `master` and accepts it on `/admin/realms/preprod/…`;
+# `preprod` itself refuses the client as `invalid_client`. Its Keycloak is served under `/auth`, as
+# Keycloak's older distributions are, so every path below carries it.
+
+#: Where that Keycloak is served, and the context path every request carries.
+KEYCLOAK = "https://idprovider.example/auth"
+CONTEXT = "/auth"
+
+
+def _keycloak_with_the_account_in(
+    monkeypatch: pytest.MonkeyPatch, account_in: str
+) -> list[tuple[str, str]]:
+    """Every client the directory opens answers as that Keycloak, recording `(method, path)`."""
+    asked: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        asked.append((request.method, path))
+        if path.endswith("/protocol/openid-connect/token"):
+            if path == f"{CONTEXT}/realms/{account_in}/protocol/openid-connect/token":
+                return httpx.Response(200, json={"access_token": "master-token"})
+            return httpx.Response(401, json={"error": "invalid_client"})
+        if path == f"{CONTEXT}/admin/realms/preprod/groups":
+            names = ("aira-t-compliance", "aira-t-global-admin", "aira-t-it-security")
+            return httpx.Response(200, json=[{"name": n, "path": f"/{n}"} for n in names])
+        if path == f"{CONTEXT}/admin/realms/preprod/users":
+            return httpx.Response(200, json=[])
+        return httpx.Response(404)
+
+    real = httpx.Client
+    monkeypatch.setattr(
+        "aira_common.directory.httpx.Client",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler)),
+    )
+    return asked
+
+
+@pytest.fixture
+def preprod(settings) -> Any:
+    settings.AIRA_OIDC_ISSUER_BASE = KEYCLOAK
+    settings.AIRA_OIDC_REALM = "preprod"
+    settings.AIRA_DIRECTORY_URL = ""
+    settings.AIRA_DIRECTORY_CLIENT_ID = "aira-directory-preprod"
+    settings.AIRA_DIRECTORY_CLIENT_SECRET = "s3cret"
+    return settings
+
+
+def test_an_account_kept_in_master_answers_the_search_from_keycloak(
+    preprod: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preprod.AIRA_DIRECTORY_TOKEN_REALM = "master"
+    asked = _keycloak_with_the_account_in(monkeypatch, "master")
+
+    body = _client(_user("a", "global-admin")).get(f"{URL}?q=aira").data
+
+    assert body["source"] == "keycloak"
+    assert [row["id"] for row in body["results"]] == [
+        "/aira-t-compliance",
+        "/aira-t-global-admin",
+        "/aira-t-it-security",
+    ]
+    assert {path for method, path in asked if method == "POST"} == {
+        f"{CONTEXT}/realms/master/protocol/openid-connect/token"
+    }
+    assert {path for method, path in asked if method == "GET"} == {
+        f"{CONTEXT}/admin/realms/preprod/groups",
+        f"{CONTEXT}/admin/realms/preprod/users",
+    }
+
+
+def _fresh_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A logger first used inside the capture: the module's own may already be cached with the
+    processors an earlier test configured, and would log past it."""
+    monkeypatch.setattr(directory_views, "_log", structlog.get_logger(directory_views.__name__))
+
+
+def test_asked_of_the_wrong_realm_the_search_falls_back_and_the_log_says_where(
+    preprod: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the setting the token is asked of `preprod`, which refuses the account. The console
+    sees a shorter list — the operator gets one line naming the step, the realm and the status,
+    and neither the account nor its secret."""
+    preprod.AIRA_DIRECTORY_TOKEN_REALM = ""
+    _keycloak_with_the_account_in(monkeypatch, "master")
+
+    with structlog.testing.capture_logs() as logs:
+        _fresh_log(monkeypatch)
+        body = _client(_user("a", "global-admin")).get(f"{URL}?q=aira").data
+
+    assert body["source"] == "local"
+    (line,) = [entry for entry in logs if entry["event"] == "directory.unavailable"]
+    assert line["log_level"] == "warning"
+    assert (line["step"], line["realm"], line["status"]) == ("token", "preprod", 401)
+    assert "aira-directory-preprod" not in str(line)
+    assert "s3cret" not in str(line)
+
+
+def test_a_search_keycloak_answers_logs_no_warning(
+    preprod: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preprod.AIRA_DIRECTORY_TOKEN_REALM = "master"
+    _keycloak_with_the_account_in(monkeypatch, "master")
+
+    with structlog.testing.capture_logs() as logs:
+        _fresh_log(monkeypatch)
+        _client(_user("a", "global-admin")).get(f"{URL}?q=aira")
+
+    assert [entry["event"] for entry in logs] == ["directory.search"]
+
+
+def test_the_token_realm_reaches_the_directory_from_the_environment(tmp_path: Path) -> None:
+    """From the variable an operator sets to the directory Management builds — in a process of its
+    own, because Django reads its settings once, at start, and this process already started. Run
+    where no `.env` is, so that none can answer for the variable."""
+    probe = (
+        "import django; django.setup()\n"
+        "from aira_management.apps.directory.service import build_directory\n"
+        "directory = build_directory()\n"
+        "print(directory._realm, directory._token_realm)\n"
+    )
+    environment = {
+        **os.environ,
+        "DJANGO_SETTINGS_MODULE": "aira_management.config.settings",
+        "AIRA_TEST_DATABASE": "1",
+        "AIRA_OIDC_ISSUER": f"{KEYCLOAK}/realms/preprod",
+        "AIRA_DIRECTORY_CLIENT_ID": "aira-directory-preprod",
+        "AIRA_DIRECTORY_CLIENT_SECRET": "s3cret",
+        "AIRA_DIRECTORY_TOKEN_REALM": "master",
+    }
+    result = subprocess.run(  # noqa: S603 - this interpreter, a fixed program
+        [sys.executable, "-c", probe],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().splitlines()[-1] == "preprod master"

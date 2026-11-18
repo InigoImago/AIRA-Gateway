@@ -17,6 +17,7 @@ from pydantic_settings import (
 )
 
 from aira_common.clock import DEFAULT_TIME_ZONE, zone_named
+from aira_common.directory import checked_token_realm
 from aira_common.secrets import by_setting, load_secrets
 
 #: The settings a plane may also hold under its own name, `AIRA_<PLANE>_<SETTING>` (`FRD-150`).
@@ -250,6 +251,20 @@ class BaseAiraSettings(BaseSettings):
     """Where a service reaches Keycloak's admin API, when that is not the address in the issuer.
     The issuer is the address *browsers* use; inside a container it is usually not Keycloak at all,
     and every lookup would then fail as "could not be asked"."""
+
+    directory_token_realm: str = ""
+    """The realm the directory account obtains its token in, when it lives in another realm than
+    the issuer's. Many installations keep administrative service accounts in `master` and give
+    them `view-users` and `query-groups` on the realm through `master`'s `<realm>-realm` client:
+    Keycloak accepts that token on the realm's admin API, and refuses the account as
+    `invalid_client` when the token is asked of the realm itself. Empty, the default, asks the
+    issuer's realm. Every lookup reads the issuer's realm either way. Refused at start-up when it
+    is not one realm's name, since it is written into the token endpoint's path."""
+
+    @field_validator("directory_token_realm")
+    @classmethod
+    def _one_realm(cls, value: str) -> str:
+        return checked_token_realm(value)
 
     @property
     def mail_enabled(self) -> bool:

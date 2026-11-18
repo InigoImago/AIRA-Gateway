@@ -5,6 +5,54 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The directory account may live in another realm than the one it reads (2026-11-18)
+
+An integration ticket from stage T: adding members to a use case, the console found no groups and
+no people, and no custom role could be bound to a group. That installation keeps its
+administrative service accounts in Keycloak's `master` realm and gives them `view-users` and
+`query-groups` on its realm `preprod` through `master`'s `preprod-realm` client. `KeycloakDirectory`
+asked for the token in the realm it reads, the issuer's, which has no such client: `401
+invalid_client`. The search then fell back to Management's own answer, and no log line said so.
+
+`AIRA_DIRECTORY_TOKEN_REALM` names where the account obtains its token (`FRD-209` §3.1, FR-9).
+Unset, it is the issuer's realm, so nothing changes where it is not set, and every lookup reads the
+issuer's realm either way. Both planes read it — Management for the search and the group checks, the
+gateway for a mail's addresses — Compose passes it to both, and the three config examples and
+`.env.example` name it; the renderer needed nothing, since it maps keys by rule. A value that is
+not one realm's name refuses to start on both planes, and `make config-check` reports it before a
+deployment. A search that falls back logs `directory.unavailable` at warning with the step, the
+realm asked and the status — `token`, `preprod`, `401` there — and never the account or its secret:
+the ticket's optional follow-up.
+
+**Measured against a real Keycloak 26.1.5** — a throwaway container under `/auth` like stage T's,
+with realm `preprod` and a client `aira-directory-preprod` in `master` holding `preprod-realm` →
+`view-users`, `query-groups` — driving the real client, Management's endpoint and the gateway's
+notifier, nine checks:
+- without the setting, `preprod`'s token endpoint answers `401 invalid_client`, the endpoint
+  answers `source: local` with nothing, and the warning reads `token`, `preprod`, `401`;
+- with `master`, the endpoint answers `source: keycloak` with the three `aira-t-*` groups, and the
+  exact username, a group by its path and a group's members come from `preprod`, for the gateway's
+  notifier as well;
+- the `master` token reads `preprod`'s users and groups, lists `preprod`'s clients as an empty
+  list, and is refused (`403`) creating a group there, reading `master`'s users or clients, and
+  reading another realm.
+
+**What Keycloak lets a realm be called decided the refusal.** It refuses `/`, `\`, `?`, `#`, `:`
+and `;` in a name (`400`), and accepts a space, `%`, a letter outside ASCII, `.` and `..`. So a
+space is taken — sent escaped, and a realm called `Konzern Verwaltung` answered at its token
+endpoint — while `/ \ ? # %`, control characters, `.` and `..` are refused: each sends the
+credential to another path, or names a realm no URL reaches. The first version refused every white
+space, which is a name Keycloak allows.
+
+Mutations `DTR1`–`DTR16`, 2535 in all, every one caught — the swap the ticket asked for among them,
+token realm for realm in `_token()` and the other way round in `_get()`. Not built: a live-stack
+test. It would create a client in the `master` realm of whichever stack it runs against, the
+owner's local one included, and the suite's tidy-up knows only the `aira` realm. The console's own
+message for a refused token still says *could not be reached*: it is shown to whoever grants
+access and names nothing, and the log line now carries the status.
+
+---
+
 ## The documents read against the code: what is there, how it runs, what is missing (2026-11-10)
 
 The owner asked for documentation that says what is built, how to get it running and what is still
