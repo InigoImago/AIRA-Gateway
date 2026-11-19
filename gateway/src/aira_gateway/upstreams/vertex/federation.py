@@ -36,7 +36,7 @@ import httpx
 
 from aira_common.tokens import AccessToken
 from aira_gateway.upstreams.diagnosis import from_response, from_transport
-from aira_gateway.upstreams.vertex.auth import SCOPE, CredentialsInvalid
+from aira_gateway.upstreams.vertex.auth import IDENTITY_TIMEOUT, SCOPE, CredentialsInvalid
 
 #: What Google's STS is asked for, per RFC 8693 as AIP-4117 spells it.
 TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -131,7 +131,9 @@ class UrlSubjectToken:
 
     async def fetch(self) -> str:
         try:
-            response = await self.client.get(self.url, headers=self.headers)
+            response = await self.client.get(
+                self.url, headers=self.headers, timeout=IDENTITY_TIMEOUT
+            )
         except httpx.HTTPError as exc:
             found = from_transport(exc)
             raise CredentialsInvalid(
@@ -165,6 +167,7 @@ class ClientCredentialsSubjectToken:
                 self.token_url,
                 data={"grant_type": "client_credentials"},
                 auth=(self.client_id, self.client_secret),
+                timeout=IDENTITY_TIMEOUT,
             )
         except httpx.HTTPError as exc:
             found = from_transport(exc)
@@ -283,7 +286,7 @@ class FederatedAcquirer:
 
     async def _post(self, url: str, what: str, **request: Any) -> dict[str, Any]:
         try:
-            response = await self._client.post(url, **request)
+            response = await self._client.post(url, timeout=IDENTITY_TIMEOUT, **request)
         except httpx.HTTPError as exc:
             found = from_transport(exc)
             raise CredentialsInvalid(
@@ -350,7 +353,10 @@ class MetadataServerAcquirer:
     async def acquire(self, now: float) -> AccessToken:
         try:
             response = await self._client.get(
-                self._url, headers={"Metadata-Flavor": "Google"}, params={"scopes": SCOPE}
+                self._url,
+                headers={"Metadata-Flavor": "Google"},
+                params={"scopes": SCOPE},
+                timeout=IDENTITY_TIMEOUT,
             )
         except httpx.HTTPError as exc:
             found = from_transport(exc)

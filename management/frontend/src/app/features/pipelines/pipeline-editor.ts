@@ -324,16 +324,24 @@ export class PipelineEditor implements OnInit {
     this.update((c) => (c[CHAIN_FIELDS[kind]] = models));
   }
 
+  /**
+   * Store the graph. The builder stays open while the answer is on its way, so the answer settles
+   * only the graph that was sent: an edit made since is newer than the server's copy, is kept, and
+   * is still unsaved — `update` replaces the graph with a copy, so identity says whether one was
+   * made.
+   */
   protected save(): void {
     if (!this.canSave() || this.saving()) return;
+    const sent = this.config();
     this.saving.set(true);
-    this.service.savePipeline(this.slug, this.config()).subscribe({
+    this.service.savePipeline(this.slug, sent).subscribe({
       next: (config) => {
+        this.saving.set(false);
+        this.error.set(null);
+        if (this.config() !== sent) return;
         this.config.set(whole(config));
         this.saved.set(true);
         this.dirty.set(false);
-        this.saving.set(false);
-        this.error.set(null);
       },
       error: (response: unknown) => {
         this.saving.set(false);

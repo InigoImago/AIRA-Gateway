@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+from aiokafka.errors import KafkaError
+from aiokafka.structs import TopicPartition
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aira_common.integration_debug import watch
@@ -28,12 +31,28 @@ from aira_gateway.config import GatewaySettings, configure_worker
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
 from aira_gateway.db.errors import loggable
+from aira_gateway.db.transient import is_transient
 
 _log = get_logger("aira_gateway.consumer")
 
 #: The consumer group without a stage, named once so the `FRD-617` diagnostic reports the group
 #: that subscribed.
 GROUP_ID = CONSUMER_GROUP
+
+#: The pause before trying again what failed for a reason that passes — the database restarting or
+#: failing over, the broker not up yet. Doubled after each failure from the first figure, and never
+#: longer than the second, so a component that comes back is noticed within half a minute however
+#: long it was away, and one that is coming back is not hammered meanwhile.
+RETRY_FIRST_SECONDS = 1.0
+RETRY_LONGEST_SECONDS = 30.0
+
+Sleep = Callable[[float], Awaitable[None]]
+
+
+def retry_delay(failures: int) -> float:
+    """The pause after the ``failures``-th failure in a row (1, 2, …)."""
+    # The exponent is held below where the product could overflow a float on a long outage.
+    return min(RETRY_LONGEST_SECONDS, RETRY_FIRST_SECONDS * 2.0 ** min(failures - 1, 16))
 
 
 def subscriptions(stage: str) -> tuple[str, ...]:
@@ -74,7 +93,7 @@ def event_payload(value: object) -> dict[str, Any]:
 
 
 async def apply_one_message(
-    sessionmaker: async_sessionmaker[AsyncSession], message: Any
+    sessionmaker: async_sessionmaker[AsyncSession], message: Any, *, sleep: Sleep = asyncio.sleep
 ) -> str | None:
     """Apply one configuration event, and **survive it if it cannot be applied**.
 
@@ -82,6 +101,14 @@ async def apply_one_message(
     same message and die again — a poison pill that silently freezes the read-model, so a revoked
     key goes on working. One event that cannot be applied is therefore skipped, **loudly**, with
     the topic, partition and offset somebody needs to go and look at it.
+
+    **A failure of the database's is not the event's.** The database restarting or failing over, a
+    connection the server closed, a deadlock, a timeout (:func:`is_transient`) fail an event that
+    would apply a moment later, and skipping it would lose the change for good: the offset moves
+    on, and a revocation that meets a restart leaves the key working while the console shows it
+    revoked. Such an event is held and tried again, after a pause that grows to
+    :data:`RETRY_LONGEST_SECONDS`, for as long as it takes — nothing behind it on the topic could
+    be applied meanwhile either.
 
     Returns the event type it applied, or ``None`` if it skipped.
     """
@@ -108,26 +135,44 @@ async def apply_one_message(
             "messaging.kafka.partition": getattr(message, "partition", None),
         },
     ) as processing:
-        try:
-            payload = event_payload(message.value)
-            async with sessionmaker() as session:
-                await apply_event(session, event_type, payload)
-        except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down
-            # Marked on the span as well: the `except` keeps the failure from reaching it on its
-            # own, and a green trace beside a red log is read as the green one.
-            processing.failed(exc)
-            _log.error(
-                "config_event_failed",
-                event_type=event_type,
-                topic=topic,
-                partition=getattr(message, "partition", None),
-                offset=getattr(message, "offset", None),
-                # Never the values: a configuration event carries fields logged by name only.
-                error=loggable(exc),
-                error_type=type(exc).__name__,
-            )
-            return None
-    return event_type
+        failures = 0
+        while True:
+            try:
+                payload = event_payload(message.value)
+                async with sessionmaker() as session:
+                    await apply_event(session, event_type, payload)
+            except Exception as exc:  # noqa: BLE001 — see the docstring: never take the consumer down
+                if is_transient(exc):
+                    failures += 1
+                    delay = retry_delay(failures)
+                    _log.warning(
+                        "config_event_retrying",
+                        event_type=event_type,
+                        topic=topic,
+                        partition=getattr(message, "partition", None),
+                        offset=getattr(message, "offset", None),
+                        attempt=failures,
+                        retry_in_seconds=delay,
+                        error=loggable(exc),
+                        error_type=type(exc).__name__,
+                    )
+                    await sleep(delay)
+                    continue
+                # Marked on the span as well: the `except` keeps the failure from reaching it on
+                # its own, and a green trace beside a red log is read as the green one.
+                processing.failed(exc)
+                _log.error(
+                    "config_event_failed",
+                    event_type=event_type,
+                    topic=topic,
+                    partition=getattr(message, "partition", None),
+                    offset=getattr(message, "offset", None),
+                    # Never the values: a configuration event carries fields logged by name only.
+                    error=loggable(exc),
+                    error_type=type(exc).__name__,
+                )
+                return None
+            return event_type
 
 
 async def consume_forever(
@@ -135,6 +180,8 @@ async def consume_forever(
     sessionmaker: async_sessionmaker[AsyncSession],
     target: str = "",
     group: str = GROUP_ID,
+    *,
+    sleep: Sleep = asyncio.sleep,
 ) -> int:
     """Start the consumer, apply everything that arrives, and stop it. Returns messages seen.
 
@@ -142,11 +189,16 @@ async def consume_forever(
     store and broker address are first proven, and the per-message receive line — can be driven
     with a fake broker. ``target`` is the broker address, passed in rather than read off a private
     attribute of the client.
+
+    **An offset is committed here, once its event was applied or deliberately skipped**, and never
+    by a timer (:func:`consumer_options`): a timer commits whatever the client has handed out, which
+    moves past an event :func:`apply_one_message` is still holding, and a restart in that window
+    loses it. A stop before the commit delivers the event again, which every handler takes twice
+    without harm.
     """
-    with watch("kafka", "consumer.start", target=target, group=group):
-        await consumer.start()
     seen = 0
     try:
+        await _start(consumer, target, group, sleep)
         async for message in consumer:
             seen += 1
             # `apply_one_message` swallows its own failures, so `applied` carries the difference.
@@ -157,11 +209,84 @@ async def consume_forever(
                 partition=getattr(message, "partition", None),
                 offset=getattr(message, "offset", None),
             ) as call:
-                applied = await apply_one_message(sessionmaker, message)
+                applied = await apply_one_message(sessionmaker, message, sleep=sleep)
                 call.note(event_type=applied, applied=applied is not None)
+            await _commit(consumer, message)
         return seen
     finally:
+        # Also after a start that failed: a client left open is reported by its finaliser while
+        # the interpreter shuts down, as a traceback about something else entirely.
         await consumer.stop()
+
+
+async def _start(consumer: Any, target: str, group: str, sleep: Sleep) -> None:
+    """``consumer.start()``, **waiting for a broker that is not ready yet** rather than exiting.
+
+    At start the broker is often not up yet — a stack starting together, a broker restarting — or
+    has not got the topics yet. Exiting would make that a traceback and a restart loop, which an
+    orchestrator backs off from for longer each time, so configuration would arrive later than the
+    broker. What aiokafka marks retriable is waited out, one line per attempt; anything else — a
+    refused authorization, a broker it cannot speak to — still ends the process.
+    """
+    failures = 0
+    while True:
+        try:
+            with watch("kafka", "consumer.start", target=target, group=group):
+                await consumer.start()
+            return
+        except KafkaError as exc:
+            if not exc.retriable:
+                raise
+            failures += 1
+            delay = retry_delay(failures)
+            _log.warning(
+                "consumer_waiting_for_kafka",
+                target=target,
+                group=group,
+                attempt=failures,
+                retry_in_seconds=delay,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            await sleep(delay)
+
+
+async def _commit(consumer: Any, message: Any) -> None:
+    """Commit the position after ``message``, whose event was applied or deliberately skipped.
+
+    A commit that fails — the group rebalancing, the broker away for a moment — is said, not
+    raised: the next commit covers this one, and an event delivered again is applied again
+    harmlessly.
+    """
+    position = {TopicPartition(message.topic, message.partition): message.offset + 1}
+    try:
+        await consumer.commit(position)
+    except KafkaError as exc:
+        _log.warning(
+            "config_offset_not_committed",
+            topic=message.topic,
+            partition=message.partition,
+            offset=message.offset,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+
+
+def consumer_options(settings: GatewaySettings) -> dict[str, Any]:
+    """What the configuration consumer is built with, beside its topics."""
+    return {
+        "bootstrap_servers": settings.kafka_bootstrap_servers,
+        "group_id": consumer_group(settings.kafka_stage),
+        "auto_offset_reset": "earliest",
+        # Committed by `consume_forever` once each event is applied or skipped, never on a timer
+        # that moves past an event still being tried again.
+        "enable_auto_commit": False,
+        # No `value_deserializer`: the value is decoded inside `apply_one_message`'s guard, where a
+        # message that is not JSON is skipped by name instead of stopping the consumer.
+        # Authenticated like the relay that publishes: an open broker is a way to write straight
+        # into the read-model this gateway's authorization is read from (`KafkaSecurity`).
+        **settings.kafka_security().client_kwargs(),
+    }
 
 
 async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
@@ -175,20 +300,12 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
     # Alembic lets an older container resurrect a table a migration dropped (`FRD-114`).
     sessionmaker = build_sessionmaker(engine)
 
-    group = consumer_group(settings.kafka_stage)
-    consumer = AIOKafkaConsumer(
-        *subscriptions(settings.kafka_stage),
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id=group,
-        auto_offset_reset="earliest",
-        # No `value_deserializer`: the value is decoded inside `apply_one_message`'s guard, where a
-        # message that is not JSON is skipped by name instead of stopping the consumer.
-        # Authenticated like the relay that publishes: an open broker is a way to write straight
-        # into the read-model this gateway's authorization is read from (`KafkaSecurity`).
-        **settings.kafka_security().client_kwargs(),
-    )
+    options = consumer_options(settings)
+    consumer = AIOKafkaConsumer(*subscriptions(settings.kafka_stage), **options)
     try:
-        await consume_forever(consumer, sessionmaker, settings.kafka_bootstrap_servers, group)
+        await consume_forever(
+            consumer, sessionmaker, settings.kafka_bootstrap_servers, options["group_id"]
+        )
     finally:
         await engine.dispose()
 

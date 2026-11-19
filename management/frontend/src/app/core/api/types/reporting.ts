@@ -157,6 +157,12 @@ export interface UseCaseConsumption {
   reason: string;
   /** The gateway answered, and this use case is not one this caller may see figures for. */
   outOfScope: boolean;
+  /**
+   * Whether a window's spend is unknown outright — every request that ran was unpriced — so it is
+   * drawn as the reporting screen draws it, `—`, and never as `0.00`.
+   */
+  monthSpendUnknown: boolean;
+  todaySpendUnknown: boolean;
 }
 
 /**

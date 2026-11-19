@@ -234,6 +234,26 @@ describe('AccessPanel — granting', () => {
     expect(harness.calls).toContain('grantGroup:uc-a:/ai/kundenservice:admin');
   });
 
+  it('says nothing about matches under the entry just picked', () => {
+    // Picking puts the entry's name in the box and closes the list — which is what an empty answer
+    // looked like, so "Nothing matches “kundenservice”" sat under the group being granted.
+    const harness = setup();
+    harness.type('kunden');
+    vi.advanceTimersByTime(300);
+    harness.fixture.detectChanges();
+
+    harness.click('[data-testid="access-results"] button');
+
+    expect(harness.testid('access-no-match')).toBeNull();
+    expect((harness.testid('access-grant') as HTMLButtonElement).disabled).toBe(false);
+    // A search that does answer empty still says so.
+    const empty = setup({ directory: of({ source: 'keycloak', results: [] }) });
+    empty.type('nobody-here');
+    vi.advanceTimersByTime(300);
+    empty.fixture.detectChanges();
+    expect(empty.testid('access-no-match')?.textContent).toContain('Nothing matches');
+  });
+
   it('will not grant until something is picked', () => {
     // Typing a name is not choosing one: the text in the box may match nothing, and granting to a
     // group that does not exist is silently inert.

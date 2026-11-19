@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from aira_common.logging import get_logger
+
+#: Threads of the checks' own for the one blocking step a TCP check takes: resolving the host's
+#: name. On the event loop's default executor the lookup waits behind whatever else holds those
+#: threads, and a check that times out in that queue reports a reachable database unreachable —
+#: which takes the instance out of rotation. A lookup takes a thread for milliseconds, or for the
+#: resolver's own timeout when DNS is the thing that is down.
+RESOLVER_THREADS = 4
+
+_resolver = ThreadPoolExecutor(max_workers=RESOLVER_THREADS, thread_name_prefix="aira-probe-dns")
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,17 +31,34 @@ class CheckResult:
 
 
 async def tcp_reachable(host: str, port: int, *, timeout: float = 1.0) -> bool:
-    """Return True if a TCP connection to ``host:port`` succeeds within ``timeout``."""
+    """Return True if a TCP connection to ``host:port`` succeeds within ``timeout``.
+
+    The name is resolved on the checks' own threads (:data:`RESOLVER_THREADS`), and each address it
+    resolves to is tried in turn by the event loop, which needs no thread to connect.
+    """
+    loop = asyncio.get_running_loop()
     try:
-        _reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout
-        )
+        async with asyncio.timeout(timeout):
+            addresses = await loop.run_in_executor(
+                _resolver, socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM
+            )
+            for family, _type, _proto, _name, address in addresses:
+                if family not in (socket.AF_INET, socket.AF_INET6):
+                    continue
+                try:
+                    # An address, not a name: nothing is resolved a second time.
+                    _reader, writer = await asyncio.open_connection(
+                        str(address[0]), int(address[1])
+                    )
+                except OSError:
+                    continue
+                writer.close()
+                with contextlib.suppress(OSError):
+                    await writer.wait_closed()
+                return True
     except TimeoutError, OSError:
         return False
-    writer.close()
-    with contextlib.suppress(OSError):
-        await writer.wait_closed()
-    return True
+    return False
 
 
 async def check_tcp(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:

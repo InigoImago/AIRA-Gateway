@@ -182,6 +182,27 @@ def _record(action_name: str, slug: str, actor: Any, before: Any, after: Any) ->
     )
 
 
+def _held(role: RoleDefinition, *, stored: bool) -> StoredRole:
+    """``role``'s row as it stands, locked until the change commits; for IT Steuerung before its
+    first change, the row that change creates. ``stored`` is whether the request found a row.
+
+    Never the copy the request read. Saved, a copy of a role deleted meanwhile is *inserted* again —
+    Django creates a row it no longer finds — so the deleted role's group confers it once more, and
+    the gateway hears of it after the removal; deleted twice, it is recorded and announced twice.
+    A role deleted meanwhile is the `404` a moment later would give.
+    """
+    row = StoredRole.objects.select_for_update().filter(slug=role.slug).first()
+    if row is not None:
+        return row
+    if stored or not role.builtin:
+        raise NotFound("No such role.")
+    # IT Steuerung before anybody changed it: its row is created on the first change, with the set
+    # it holds until then — a change that names no permissions changes none.
+    return StoredRole(
+        slug=role.slug, label=role.label, builtin=True, permissions=_ordered(role.permissions)
+    )
+
+
 class RoleViewSet(viewsets.ViewSet):
     """``/api/v1/roles/`` — the roles, the catalogue they are made of, and their change log."""
 
@@ -297,55 +318,52 @@ class RoleViewSet(viewsets.ViewSet):
         role = self._definition(str(slug))
         if role.fixed:
             raise PermissionDenied(f"{role.label} is fixed and cannot be changed.")
-        row = StoredRole.objects.filter(slug=role.slug).first()
-        if row is None:
-            # IT Steuerung before anybody changed it: its row is created on the first change, with
-            # the set it holds until then — a change that names no permissions changes none.
-            row = StoredRole(
-                slug=role.slug,
-                label=role.label,
-                builtin=True,
-                permissions=_ordered(role.permissions),
-            )
-        before = (
-            _snapshot(row)
-            if row.pk
-            else {
-                "label": role.label,
-                "group_path": "",
-                "permissions": _ordered(role.permissions),
-            }
-        )
+        read = StoredRole.objects.filter(slug=role.slug).first()
+        changes: dict[str, Any] = {}
         if "permissions" in data:
-            row.permissions = _permissions(data.get("permissions"))
+            changes["permissions"] = _permissions(data.get("permissions"))
         if not role.builtin:
             if "label" in data:
-                row.label = _label(data.get("label"))
+                changes["label"] = _label(data.get("label"))
             if "group_path" in data:
-                row.group_path = _verified_group(data.get("group_path"), keep=row.group_path)
+                changes["group_path"] = _verified_group(
+                    data.get("group_path"), keep=read.group_path if read else None
+                )
         elif {"label", "group_path"} & set(data):
             raise ValidationError(
                 "A built-in role keeps its name, and its group comes from AIRA_ROLE_GROUPS."
             )
         try:
             with transaction.atomic():
+                row = _held(role, stored=read is not None)
+                before = (
+                    _snapshot(row)
+                    if row.pk
+                    else {
+                        "label": role.label,
+                        "group_path": "",
+                        "permissions": _ordered(role.permissions),
+                    }
+                )
+                for field, value in changes.items():
+                    setattr(row, field, value)
                 row.save()
                 _record(RoleChange.UPDATED, row.slug, request.user, before, _snapshot(row))
                 emit("role.upserted", _event(row))
         except IntegrityError as exc:
-            if row.builtin:
+            if role.builtin:
                 # A built-in role's group is configuration, so its only unique value is the slug of
                 # the row its first change creates — which a concurrent first change created too.
                 raise ChangedConcurrently() from exc
             raise ValidationError({"group_path": ["That group already confers a role."]}) from exc
-        return Response(_present(self._definition(row.slug)))
+        return Response(_present(self._definition(role.slug)))
 
     def destroy(self, request: Request, slug: str | None = None) -> Response:
         role = self._definition(str(slug))
         if role.builtin:
             raise PermissionDenied(f"{role.label} is built in and cannot be deleted.")
-        row = StoredRole.objects.get(slug=role.slug)
         with transaction.atomic():
+            row = _held(role, stored=True)
             before = _snapshot(row)
             row.delete()
             _record(RoleChange.DELETED, role.slug, request.user, before, None)

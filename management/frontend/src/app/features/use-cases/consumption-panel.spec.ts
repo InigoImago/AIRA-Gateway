@@ -28,6 +28,8 @@ const NOTHING: UseCaseConsumption = {
   partial: false,
   reason: '',
   outOfScope: false,
+  monthSpendUnknown: false,
+  todaySpendUnknown: false,
 };
 
 function setup(consumption: Partial<UseCaseConsumption> = {}) {

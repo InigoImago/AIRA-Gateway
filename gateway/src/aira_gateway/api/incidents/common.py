@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from aira_gateway.api.gemini.errors import GeminiHTTPError
-from aira_gateway.api.serving import json_body
+from aira_gateway.api.serving import ensure_body_is_encodable, json_body
 
 #: One router for the package. Each module registers on it rather than on a router of its own,
 #: because an included router is nested and would hide its routes from `router.routes`.
@@ -16,6 +16,9 @@ router = APIRouter(tags=["incidents"])
 
 async def _body_of(request: Request, *, optional: bool = False) -> dict[str, Any]:
     """The JSON object a caller sent, or a **400** naming what is wrong with it — never a 500.
+
+    Refused too where it holds what nothing downstream can write — half a surrogate pair, which JSON
+    can escape, or `NaN` — before a value is echoed into an answer or a row.
 
     ``optional`` lets an empty body through as ``{}``, for an endpoint that says itself what is
     missing.
@@ -29,4 +32,5 @@ async def _body_of(request: Request, *, optional: bool = False) -> dict[str, Any
         raise GeminiHTTPError(400, "Request body is not valid JSON.", "INVALID_ARGUMENT") from exc
     if not isinstance(body, dict):
         raise GeminiHTTPError(400, "Send one JSON object.", "INVALID_ARGUMENT")
+    ensure_body_is_encodable(body)
     return body

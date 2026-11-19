@@ -356,6 +356,23 @@ def test_a_price_that_is_not_an_amount_is_left_empty() -> None:
     }
 
 
+@pytest.mark.parametrize("stated", ["NaN", "Infinity", "-Infinity"])
+def test_a_price_stated_as_no_number_is_left_empty_and_the_entry_kept(stated: str) -> None:
+    """`json.loads` reads a bare `NaN` and `Infinity`, and comparing `NaN` with anything raises:
+    one entry pricing itself that way stopped the whole live list. Neither is an amount, so the
+    draft has no price there and the rest of it stands."""
+    body = (
+        '{"google-vertex": {"models": {"m": {"name": "Gemini X", '
+        '"modalities": {"input": ["text"], "output": ["text"]}, '
+        '"limit": {"context": 1048576, "output": 65536}, '
+        f'"cost": {{"input": {stated}, "output": 2.5}}}}}}}}}}'
+    )
+
+    (made,) = normalize.drafts(json.loads(body))
+
+    assert (made["name"], made["prices"]["input"], made["prices"]["output"]) == ("m", None, "2.5")
+
+
 # ---- FR-2: shipped by default, live where configured ---------------------------------------------
 
 
@@ -409,6 +426,35 @@ def test_an_unreachable_list_answers_with_the_shipped_copy_and_says_why() -> Non
 
     assert first.entries == snapshot.shipped().entries
     assert "HTTPStatusError" in first.live_error
+    assert again.live_error and len(asked) == 1, "a failure is not repeated on every visit"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _entry(modalities=["text"]),
+        _entry(limit=[1048576, 65536]),
+        _entry(cost={"input": 1, "output": 2, "tiers": [{"tier": "context"}]}),
+        _entry(reasoning_options=[{"type": "effort", "values": 3}]),
+    ],
+    ids=["modalities-a-list", "limit-a-list", "tier-a-word", "effort-values-a-number"],
+)
+def test_a_live_list_in_a_shape_nobody_expected_answers_with_the_shipped_copy(
+    entry: dict[str, Any],
+) -> None:
+    """The list is a third party's, and its shape changes without notice. One entry whose
+    `modalities` or `limit` is a list, whose tier is a word or whose effort `values` a number
+    raised out of the reading as a `TypeError` or an `AttributeError`, and the console's *Add a
+    model* answered `500` — on every visit, since nothing remembered the failure. The live list
+    cannot be had then, as when the request fails: the shipped copy answers, says why, and the
+    list is not asked again for a while."""
+    client, asked = _client_answering(httpx.Response(200, json=_listing(m=entry)))
+
+    first = reference.current("https://mirror.example/api.json", client=client)
+    again = reference.current("https://mirror.example/api.json", client=client)
+
+    assert first.entries == snapshot.shipped().entries
+    assert "could not be read" in first.live_error
     assert again.live_error and len(asked) == 1, "a failure is not repeated on every visit"
 
 

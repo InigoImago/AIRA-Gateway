@@ -5,6 +5,8 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { Me } from '../../core/api/models';
+import { authGuard } from '../../core/auth/auth.guard';
+import { AuthService } from '../../core/auth/auth.service';
 import { landingFor, platformLanding } from './platform-landing';
 import { PlatformPage } from './platform-page';
 
@@ -47,24 +49,42 @@ class ContentReadsStub {}
 @Component({ template: 'roles' })
 class RolesStub {}
 
-/** Where `/platform` lands for this caller, through the real router and the real redirect. */
+/** `/platform` as the console routes it: the guard on the area, the landing as its redirect. */
+function platformRoutes() {
+  return provideRouter([
+    {
+      path: 'platform',
+      canActivate: [authGuard],
+      component: PlatformPage,
+      children: [
+        { path: '', pathMatch: 'full', redirectTo: platformLanding },
+        { path: 'content-reads', component: ContentReadsStub },
+        { path: 'roles', component: RolesStub },
+      ],
+    },
+  ]);
+}
+
+/** A session as the guard reads it, and the logins it starts. */
+function authService(authenticated: boolean, logins: string[] = []) {
+  return {
+    provide: AuthService,
+    useValue: {
+      isAuthenticated: () => authenticated,
+      startupError: signal<string | null>(null),
+      login: (target: string) => logins.push(target),
+    },
+  };
+}
+
+/**
+ * Where `/platform` lands for this caller, through the real router, the real redirect and the
+ * real guard — whose order is the property: a redirect runs before any guard does.
+ */
 async function landing(permissions: string[] | null): Promise<string> {
   TestBed.resetTestingModule();
   TestBed.configureTestingModule({
-    providers: [
-      provideRouter([
-        {
-          path: 'platform',
-          component: PlatformPage,
-          children: [
-            { path: '', pathMatch: 'full', redirectTo: platformLanding },
-            { path: 'content-reads', component: ContentReadsStub },
-            { path: 'roles', component: RolesStub },
-          ],
-        },
-      ]),
-      meService(permissions),
-    ],
+    providers: [platformRoutes(), meService(permissions), authService(true)],
   });
   const harness = await RouterTestingHarness.create();
   await harness.navigateByUrl('/platform');
@@ -115,6 +135,36 @@ describe('PlatformPage (`FRD-622` FR-5, `FRD-614`)', () => {
     // Neither, or an unknown account: the first page, which reports the server's answer.
     expect(await landing([])).toBe('/platform/content-reads');
     expect(await landing(null)).toBe('/platform/content-reads');
+  });
+
+  it('asks /v1/me nothing before a session, and leaves the one login to the guard', async () => {
+    // Asked without a token, `/me` answered 401, and the interceptor counted that as a login of
+    // its own beside the guard's — the second within two minutes is the "we could not sign you
+    // in" card, shown to somebody whose sign-in nothing had refused.
+    const logins: string[] = [];
+    let asked = 0;
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        platformRoutes(),
+        {
+          provide: MeService,
+          useValue: {
+            currency: signal(''),
+            get: () => {
+              asked += 1;
+              return throwError(() => ({ status: 401 }));
+            },
+          },
+        },
+        authService(false, logins),
+      ],
+    });
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/platform');
+
+    expect(asked).toBe(0);
+    expect(logins).toEqual(['/platform/content-reads']);
   });
 
   it('decides the landing from the permissions and nothing else', () => {

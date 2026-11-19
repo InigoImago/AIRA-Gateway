@@ -21,6 +21,7 @@ import { PageFeedback } from '../../core/ui/page-feedback';
 import { saveBlob } from '../../core/ui/save-blob';
 import { BreakdownTable } from './breakdown-table';
 import { InstallationBudgetCard } from './installation-budget-card';
+import { spendUnknown } from './spend';
 
 /** A breakdown of the report. The one on screen is also the one an export downloads. */
 type Breakdown = 'use_case' | 'model' | 'member' | 'outcome';
@@ -82,9 +83,6 @@ const REFUSALS: ReadonlySet<string> = new Set([
  * counts every refusal a second time.
  */
 const FAILURES: ReadonlySet<string> = new Set(['upstream_error', 'internal_error']);
-
-/** The outcome of a request that ran — the only kind that can have a cost to be unknown. */
-const SERVED: ReadonlySet<string> = new Set(['served']);
 
 /**
  * What each headline figure counts, in one sentence, shown on its info button. A figure whose
@@ -195,18 +193,8 @@ export class ReportingPage implements OnInit {
   /** Requests that broke while being served — never one that was refused. */
   protected readonly failed = computed(() => this.outcomes(FAILURES));
 
-  /**
-   * Whether the period's spend is unknown outright (`FRD-626` FR-18): every request that ran was
-   * unpriced and nothing else carried a cost, so `0.00` would be a measurement nobody made.
-   *
-   * Against the requests that **ran**, not all of them: a refusal ran nothing and has no cost to be
-   * unknown, so with one refusal in the period "every request was unpriced" could never hold.
-   */
-  protected readonly spendUnknown = computed(() => {
-    const totals = this.report()?.totals;
-    if (!totals || totals.unpriced_requests === 0 || totals.cost_nanos !== 0) return false;
-    return totals.unpriced_requests >= this.outcomes(SERVED);
-  });
+  /** Whether the period's spend is unknown outright (`spendUnknown`), so `—` rather than `0.00`. */
+  protected readonly spendUnknown = computed(() => spendUnknown(this.report()));
 
   /** The period the figures are for, as a person reads it: first and last day included. */
   protected readonly shownPeriod = computed(() => periodText(this.shown(), this.clock()));

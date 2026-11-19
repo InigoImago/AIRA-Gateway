@@ -24,7 +24,9 @@ export function perMillion(currency: string): string {
  *
  * The shell asks at start-up and every screen reads the same answer: screens that each fetched
  * their own could disagree on one page about what the reader may do, the moment one request failed
- * and another did not. A failure is not kept — the next caller asks again.
+ * and another did not. A failure is not kept — the next caller asks again — and whatever answers
+ * later lands in `me`, which the shell reads, so its navigation follows the account rather than the
+ * first attempt to read it.
  */
 @Injectable({ providedIn: 'root' })
 export class MeService {
@@ -68,9 +70,12 @@ export class MeService {
     return this.pending;
   }
 
-  /** Ask again, for something that changed what `/me` says. */
+  /**
+   * Ask again, for something that changed what `/me` says — a role renamed, a permission granted.
+   * The last answer stays in `me` until the new one arrives: it is still the best knowledge there
+   * is, and dropping it would empty the shell's header and navigation for the round trip.
+   */
   reload(): Observable<Me> {
-    this.me.set(null);
     this.pending = null;
     return this.get();
   }

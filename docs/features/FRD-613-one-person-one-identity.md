@@ -109,7 +109,9 @@ administrator can see and end, rather than on the blanket the sweep in FR-6 cann
 
 **FR-6** — When somebody's access to a use case ends — a membership removed, or the group grant
 they reached it through revoked — every active API key of that use case whose owner no longer holds
-a grant is revoked, and the answer says which.
+a grant is revoked, and the answer says which. A key being issued at that moment is no exception:
+the issuance and the removal each hold the use case, so whichever comes second sees the first — the
+key is revoked with the others, or its issuance is refused.
 
 **FR-7** — Nothing a directory can put in a claim makes a first sign-in fail: a name is bounded to
 its column and validated, an unusable one falls back to the subject, a malformed `groups` claim

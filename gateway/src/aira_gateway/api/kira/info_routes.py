@@ -29,6 +29,7 @@ from aira_gateway.diagnostics import UpstreamProbe
 from aira_gateway.reporting.service import ReportingService
 from aira_gateway.routes.health import may_see_diagnosis
 from aira_gateway.state import clock_of
+from aira_gateway.thinking import resolve as resolve_thinking
 
 router = APIRouter(tags=["kira"], prefix=BASE)
 
@@ -99,11 +100,15 @@ def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | 
     modes and its level words, as the predecessor lists them in one array — and always a default:
     the declared one, else ``auto``, because a request that names none leaves the model to decide,
     which is what ``auto`` means.
+
+    The default is the one a request that names none is **sent** (`resolve`), read through the same
+    guard: a catalogue entry whose `tokens` is not a whole number lists no figure, as it sends none,
+    rather than failing the whole list for every client.
     """
     if not declaration.offers_thinking:
         return None
     minimum, maximum = declaration.thinking_bounds
-    default = declaration.thinking_default
+    default = resolve_thinking(None, declaration)
     return schemas.ThinkingConfig(
         mode=[
             *sorted(str(mode) for mode in declaration.thinking_modes),
@@ -112,8 +117,8 @@ def _thinking_config(declaration: ModelDeclaration) -> schemas.ThinkingConfig | 
         minTokens=minimum,
         maxTokens=maximum,
         defaultThinking=(
-            schemas.ThinkingSetting(mode=str(default.get("mode")), tokens=default.get("tokens"))
-            if default and default.get("mode")
+            schemas.ThinkingSetting(mode=default.mode, tokens=default.tokens)
+            if default is not None
             else schemas.ThinkingSetting(mode=str(ThinkingMode.AUTO))
         ),
     )

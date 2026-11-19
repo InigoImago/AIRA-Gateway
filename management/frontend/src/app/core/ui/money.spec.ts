@@ -1,4 +1,11 @@
-import { GROUP_SEPARATOR, displayAmount, displayCount, nanosOf, storedAmount } from './money';
+import {
+  GROUP_SEPARATOR,
+  ambiguousAmount,
+  displayAmount,
+  displayCount,
+  nanosOf,
+  storedAmount,
+} from './money';
 
 /**
  * The client-side half of `aira_common.money.format_display`.
@@ -100,5 +107,26 @@ describe('storedAmount', () => {
   it('hands back nothing for what is not a plain decimal, so no zero is guessed', () => {
     expect(storedAmount('')).toBeNull();
     expect(storedAmount('20,00')).toBeNull();
+  });
+});
+
+/**
+ * A typed amount the console would read as something its writer did not mean. Either mark is taken
+ * for the decimals, so `5.000` and `5,000` are both five — to a German and to an English reader,
+ * five thousand.
+ */
+describe('ambiguousAmount', () => {
+  it('names both readings of a thousands group, each written the one way it can be read', () => {
+    expect(ambiguousAmount('5.000')).toContain('“5.000” could be 5000 or 5.00');
+    expect(ambiguousAmount('5,000')).toContain('“5,000” could be 5000 or 5.00');
+    expect(ambiguousAmount('1,500')).toContain('could be 1500 or 1.50');
+    // Three significant places stay three plus one: a fourth place can only be decimals.
+    expect(ambiguousAmount(' 999.999 ')).toContain('“999.999” could be 999999 or 999.9990');
+  });
+
+  it('has no question about a figure only one reading fits', () => {
+    for (const typed of ['5', '5000', '0.125', '0,125', '5.00', '5,5', '5.0000', '1000.000', '']) {
+      expect(ambiguousAmount(typed), typed).toBeNull();
+    }
   });
 });

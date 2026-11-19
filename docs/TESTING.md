@@ -90,8 +90,10 @@ prefix, a model its provider no longer serves, a request id it must not read as 
 then runs its terminal interface in a `tmux` pane with the budget plugin installed — from the
 project, and from the release archive unpacked into OpenCode's configuration directory — and the
 test reads the sidebar section and the `/budget` dialog back from the screen. Every OpenCode run
-has a home directory of its own, so nothing of the developer's OpenCode is read or written. Every
-client asks the gateway for its mock model, so none of this reaches a paid one.
+has a home directory of its own, so nothing of the developer's OpenCode is read or written, and a
+temp directory of its own, removed after the test: OpenCode unpacks its native libraries into the
+temp directory on every start and never removes them. Every client asks the gateway for its mock
+model, so none of this reaches a paid one.
 
 **The budget plugin's own tests** run under Bun, installed by `tools/clients` too, because Bun is
 what OpenCode runs plugins on: `tools/clients/opencode-budget-plugin.test.ts` loads the shipped file
@@ -176,6 +178,23 @@ embedding one — so a stack whose endpoints all answer can still hold a catalog
 models in it, and the suite then fails on an embedding model with no failure mentioning a
 download. `demo-ready` blocks until every demo credential and **every** demo model has crossed
 seed → relay → Kafka → gateway, and it is the same target `make showcase` uses.
+
+**Some tests interrupt the stack on purpose**, the way an outage looks from outside: one restarts
+its PostgreSQL, so both planes, the relay and Keycloak lose every connection at once; one pauses
+Keycloak and restarts the gateway under it; one stops the local model. Each waits for the stack to
+answer again before it returns — after a run that was interrupted, `docker unpause` and `docker
+start` on the stack's Keycloak and model containers bring them back. One test makes a client in
+Keycloak's `master` realm, the only test that writes there, and removes it again.
+
+**A second stack beside the first** — its own `AIRA_STACK` and moved `AIRA_PUBLISH_*_PORT` values in
+the `deploy/compose/.env` of its own checkout — is tested from that checkout. Every address the
+suite uses follows that file, and every live test hands the planes' settings the same addresses, so
+a settings object, the migrations' engine or a `manage.py relay` a test starts reaches that stack and
+not the one on the default ports. Exporting the ports for `pytest` changes nothing: a test session
+removes every `AIRA_*` variable. Two sessions from one checkout share the register of what they
+made, so each tidies away the other's work on whichever stack it is pointed at. And the Makefile's
+`docker` lines read `AIRA_STACK` from the shell rather than the file, so export it for `make` on a
+second stack.
 
 `make test-verify` runs one file of the suite, `tests/integration/test_local_model.py`: a real
 model through the whole governed path, asserting what the gateway recorded rather than what the

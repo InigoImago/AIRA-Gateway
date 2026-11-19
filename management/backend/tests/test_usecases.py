@@ -842,19 +842,51 @@ def test_strict_mode_refuses_creating_a_use_case_its_members_could_read(visibili
     assert not UseCase.objects.filter(slug="uc").exists()
 
 
-def test_strict_mode_accepts_oversight_and_leaves_other_fields_writable(captured_events) -> None:
-    """A screen that sends back what it was shown must not be refused for it."""
-    usecase = UseCase.objects.create(slug="uc", name="UC")
-    admin = _administrator("uc-admin", usecase)
+@pytest.mark.parametrize("stored", ["members", "own"])
+def test_strict_mode_accepts_oversight_sent_back_and_keeps_the_stored_choice(
+    captured_events, stored: str
+) -> None:
+    """A screen that sends back what it was shown must not be refused for it — nor have it stored.
 
-    response = _client(admin).patch(
-        f"{BASE}uc/", {"payload_visibility": "oversight", "name": "Renamed"}, format="json"
+    The mode answers `oversight` for every use case, so the console's data-protection panel sends
+    it with every save, a change of the retention period included. Stored, it replaced the use
+    case's own choice, and turning the mode off no longer restored it (`FRD-627` FR-1).
+    """
+    usecase = UseCase.objects.create(slug="uc", name="UC", payload_visibility=stored)
+    admin = _administrator("uc-admin", usecase)
+    client = _client(admin)
+
+    response = client.patch(
+        f"{BASE}uc/",
+        {
+            "store_payloads": True,
+            "payload_visibility": "oversight",
+            "retention_days": 14,
+            "name": "Renamed",
+        },
+        format="json",
     )
 
     assert response.status_code == 200, response.data
-    assert UseCase.objects.get(slug="uc").payload_visibility == "oversight"
+    assert response.json()["payload_visibility"] == "oversight"
+    saved = UseCase.objects.get(slug="uc")
+    assert (saved.name, saved.retention_days, saved.payload_visibility) == ("Renamed", 14, stored)
     upserted = [payload for kind, payload in captured_events if kind == "usecase.upserted"]
-    assert upserted[-1]["payload_visibility"] == "oversight"
+    assert upserted[-1]["payload_visibility"] == stored, "the gateway applies the mode itself"
+    with setting(strict_data_mode=False):
+        assert client.get(f"{BASE}uc/").json()["payload_visibility"] == stored
+
+
+def test_a_use_case_created_as_oversight_in_strict_mode_keeps_it_when_the_mode_is_off() -> None:
+    """A new use case has no earlier choice to keep: `oversight`, sent at its creation, is one."""
+    admin = _user("admin1", "global-admin")
+
+    created = _client(admin).post(
+        BASE, {"slug": "uc", "name": "UC", "payload_visibility": "oversight"}, format="json"
+    )
+
+    assert created.status_code == 201, created.data
+    assert UseCase.objects.get(slug="uc").payload_visibility == "oversight"
 
 
 @pytest.mark.parametrize("stored", ["members", "own"])

@@ -407,6 +407,26 @@ def test_removing_a_released_model_announces_the_use_cases_that_released_it(
     assert announced[0]["allowed_models"] == []
 
 
+def test_removing_a_released_model_holds_the_use_cases_it_announces(row_locks) -> None:
+    """The use cases are read live and announced in one transaction, holding their rows: a
+    retirement arriving between the two waits and follows the announcement. Otherwise the upsert
+    could be the last record of the slug, and a gateway rebuilt from the topics would bring the
+    retired use case back. SQLite takes no row lock; this sees that the lock is asked for."""
+    from aira_management.apps.usecases.models import UseCase
+
+    client = _client(_user("ga-hold", "global-admin"))
+    client.post(BASE, {"name": "m-1", "approved": True}, format="json")
+    for slug in ("uc-a", "uc-b"):
+        UseCase.objects.create(slug=slug, name=slug).allowed_models.set(
+            [Model.objects.get(name="m-1")]
+        )
+    row_locks.clear()
+
+    assert client.delete(f"{BASE}m-1/").status_code == 204
+
+    assert row_locks == ["usecases.UseCase"]
+
+
 # ---- addressing is bounded configuration (`FRD-609`) -----------------------------------------
 
 

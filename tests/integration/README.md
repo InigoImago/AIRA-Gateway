@@ -61,6 +61,25 @@ reports, so a degraded stack shows above the failures it causes.
 `test_diagnostics.py` stops the local model's container on purpose and starts it again in a
 `finally` — after an interrupted run, `docker start aira-ollama` brings it back. A stack started
 without the demo profile has no local model; the tests that need one skip.
+`test_what_a_database_restart_costs.py` restarts the stack's PostgreSQL, so Management, the relay,
+Keycloak and the gateway all lose their connections at once, and
+`test_what_a_hanging_identity_provider_holds_up.py` pauses Keycloak for a few seconds; both wait for
+the stack to answer again before they return. After an interrupted run, `docker unpause
+aira-keycloak` brings Keycloak back. `test_the_directory_account_in_master.py` is the only test that
+writes to Keycloak's `master` realm: it makes a client there and removes it, and a run that died
+first leaves one named `itest-directory-…` that the next run removes.
+
+**A second stack on moved ports** (`AIRA_STACK` and `AIRA_PUBLISH_*_PORT` in its `.env`): the suite
+finds the stack through `tools/stack_addresses.py`, which reads that file, and every live test hands
+the same addresses to the planes' settings, so a `GatewaySettings()`, the migrations' own engine and
+a `manage.py relay` it starts reach this stack and not one on the default ports
+(`test_every_client_the_suite_builds_reaches_this_stack.py`). Exporting the ports for `pytest`
+does nothing: the hermetic `conftest.py` removes every `AIRA_*` variable from a session. Two
+sessions from one checkout share `tests/integration/.artifacts/created.jsonl`, so each tidies
+away the other's work on whichever stack it is pointed at; run a second stack's suite from a
+checkout of its own. The
+Makefile's `docker exec` and `docker inspect` lines read `AIRA_STACK` from the shell, not from the
+`.env`, so export that one for `make` on a second stack.
 `-m "integration and not model_output"` leaves out the few tests that read what a real model
 answered, which a model's drift can fail without a defect anywhere in this repository.
 

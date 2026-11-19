@@ -64,6 +64,9 @@ class FakeConsumer:
     async def stop(self) -> None:
         self.stopped = True
 
+    async def commit(self, offsets: dict[Any, int]) -> None:
+        return None
+
     async def __aiter__(self) -> AsyncIterator[Message]:
         for message in self._messages:
             yield message

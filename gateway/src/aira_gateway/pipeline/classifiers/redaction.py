@@ -10,6 +10,7 @@ redaction.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import (
@@ -27,8 +28,15 @@ from aira_gateway.pipeline.classifiers.prompts import (
     THINKING_OFF,
     DataBoundary,
 )
+from aira_gateway.pipeline.classifiers.unanswered import UNANSWERED, why_unanswered
 from aira_gateway.telemetry import model_call_span
-from aira_gateway.upstreams.base import Upstream, UpstreamError
+from aira_gateway.upstreams.base import Upstream
+
+#: The temperature a redactor is asked at: its most likely rewrite, so one text is redacted the same
+#: way twice. **Only where the model takes one.** A model that samples at its own settings refuses
+#: every temperature but its own (`FRD-145`), and a refused redaction blocks the request — or,
+#: under `on_failure: allow`, sends it unredacted. Such a model is sent none.
+REDACTION_TEMPERATURE = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,11 +79,18 @@ class LlmRedactor:
         model: str,
         instruction: str | None = None,
         thinking: Thinking | None = THINKING_OFF,
+        *,
+        addressing: dict[str, Any] | None = None,
+        fixed_sampling: bool = False,
     ) -> None:
         self._provider = provider
         self._model = model
         self._instruction = instruction or DEFAULT_REDACTION_INSTRUCTION
         self._thinking = thinking
+        #: The catalogue's addressing for the model, which the request carries as a dispatch's does.
+        self._addressing = addressing or {}
+        #: The model samples at its own settings (`ModelDeclaration.fixed_sampling`).
+        self._fixed_sampling = fixed_sampling
 
     async def rewrite(self, text: str) -> Redaction:
         if not text.strip():
@@ -94,14 +109,15 @@ class LlmRedactor:
                             CanonicalMessage(role=Role.USER, text=boundary.wrap(text)),
                         ],
                         max_output_tokens=_redaction_allowance(text),
-                        temperature=0.0,
+                        temperature=None if self._fixed_sampling else REDACTION_TEMPERATURE,
                         thinking=self._thinking,
+                        addressing=self._addressing,
                     )
                 )
-        except UpstreamError as exc:
+        except UNANSWERED as exc:
             return Redaction(
                 None,
-                failure=f"the redactor could not be reached ({exc.message})",
+                failure=f"the redactor could not be reached ({why_unanswered(exc)})",
                 reached=False,
             )
 

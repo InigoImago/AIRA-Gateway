@@ -218,6 +218,25 @@ def _tidied(request: pytest.FixtureRequest) -> None:
         request.getfixturevalue("installation_session")
 
 
+@pytest.fixture(autouse=True)
+def _the_planes_reach_this_stack(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plane a live test builds from its settings reaches the stack under test.
+
+    Every address this layer writes down comes from `stack_addresses`, which follows a stack moved
+    to other ports. A plane's settings do not: their defaults are a stack on today's ports, and the
+    hermetic `conftest.py` removes every `AIRA_*` variable from the session. So `GatewaySettings()`,
+    the migrations' own engine and a `manage.py relay` subprocess reached whatever answered on the
+    defaults — beside a second stack, the first one. Set for each live test, so a subprocess it
+    starts inherits it, and taken away after, so no hermetic test ever sees it.
+    """
+    if request.node.get_closest_marker("integration") is None:
+        return
+    for name, value in stack_addresses.settings_environment().items():
+        monkeypatch.setenv(name, value)
+
+
 KEYCLOAK_URL = stack_addresses.url("keycloak")
 REALM = "aira"
 # A confidential client with a service account, present only in the dev realm. It exists so the

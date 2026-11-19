@@ -24,13 +24,14 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalRerankRequest,
     CanonicalResponse,
+    CanonicalUsage,
     EmbeddingVectors,
     RankedRecords,
     Thinking,
     wire_name,
 )
 from aira_gateway.core.schema import ResponseSchema
-from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, UpstreamModel
+from aira_gateway.upstreams.base import DialectUnsupported, UpstreamError, UpstreamModel, added
 from aira_gateway.upstreams.exchange import sse_payloads
 from aira_gateway.upstreams.gemini_mapping import (
     SAMPLING as GEMINI_SAMPLING,
@@ -172,9 +173,10 @@ class _VertexAdapter:
         )
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
-        """**Failover ends at the first chunk**: the chain is walked while opening, and once a chunk
-        has reached the caller every later failure propagates — a second region would continue half
-        an answer with a different model's first sentence."""
+        """**Failover ends where the answer begins** — at its first chunk that carries something
+        (`regions._open_stream`): the regions are walked while opening, an error the provider
+        sends before its first word included, and once the answer has begun every later failure
+        propagates — a second region would continue half an answer with another first sentence."""
         attempt = self._stream_attempt(request)
         targets = self._targets_for(request.model, request.addressing)
         # Closed with this iterator: a caller that stops reading closes it, and closing it does not
@@ -300,6 +302,10 @@ class VertexGeminiAdapter(_VertexAdapter):
         of one content where the request is **one** embedding (``aggregate``), one call per text
         otherwise. Embeddings take the regional chain too: a batch refused for want of quota is
         exactly what failover is for.
+
+        **A batch that fails part-way was billed for the calls before** — one per text — and what
+        they reported goes with the failure (`UpstreamError.spent`): onto the vectors of the region
+        that then served the whole batch, or onto the row of a batch nothing served.
         """
         wire = wire_name(request.model, request.addressing)
         method = "embedContent" if embeds_content(wire) else "predict"
@@ -316,12 +322,8 @@ class VertexGeminiAdapter(_VertexAdapter):
                 groups = (
                     [request.texts] if request.aggregate else [[text] for text in request.texts]
                 )
-                answers = [
-                    await self._transport.post(url, embed_content_body(request, group))
-                    for group in groups
-                ]
-                values = [embed_content_values(answer) for answer in answers]
-                counts = [embed_content_tokens(answer) for answer in answers]
+                bodies = [embed_content_body(request, group) for group in groups]
+                values_of, tokens_of = embed_content_values, embed_content_tokens
             else:
                 if request.aggregate and request.size > 1:
                     # `:predict` takes one text and no parts, so several cannot be one embedding;
@@ -330,12 +332,18 @@ class VertexGeminiAdapter(_VertexAdapter):
                         f"Model '{request.model}' embeds one text per vector; it cannot embed "
                         f"{request.size} texts as one."
                     )
-                answers = [
-                    await self._transport.post(url, predict_body(request, text))
-                    for text in request.texts
-                ]
-                values = [predict_values(answer) for answer in answers]
-                counts = [predict_tokens(answer) for answer in answers]
+                bodies = [predict_body(request, text) for text in request.texts]
+                values_of, tokens_of = predict_values, predict_tokens
+            values: list[list[float]] = []
+            counts: list[int | None] = []
+            try:
+                for body in bodies:
+                    answer = await self._transport.post(url, body)
+                    counts.append(tokens_of(answer))
+                    values.append(values_of(answer))
+            except UpstreamError as exc:
+                exc.spent = _input_spent(counts)
+                raise
             # Where it was answered and what it cost, for the audit row and the price.
             return EmbeddingVectors(
                 values,
@@ -343,7 +351,11 @@ class VertexGeminiAdapter(_VertexAdapter):
                 input_tokens=None if None in counts else sum(count or 0 for count in counts),
             )
 
-        return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
+        return await _across_regions(
+            self._targets_for(request.model, request.addressing),
+            attempt,
+            spent_with=_vectors_spent_with,
+        )
 
     async def rerank(self, request: CanonicalRerankRequest) -> RankedRecords:
         """Through Google's ranking API (`ranking_mapping`), at the locations the catalogue names,
@@ -404,7 +416,12 @@ class VertexAnthropicAdapter(_VertexAdapter):
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         """The answer whole, read from a stream (class docstring). A failure inside it — the
         provider overloaded before it finished — is a failure of this region, which the next one
-        may serve: nothing of it has reached the caller."""
+        may serve: nothing of it has reached the caller.
+
+        **What the stream had reported goes with its failure** (`UpstreamError.spent`): Claude
+        states the input it charges at `message_start`, and an answer that breaks off after it was
+        billed for that — on its own row where it fails, and on the answer of the region that
+        served where another one was tried first."""
         body, prefix = self._first_body(request)
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
@@ -428,13 +445,17 @@ class VertexAnthropicAdapter(_VertexAdapter):
 
         async def read(url: str, sent: dict[str, object], region: str) -> CanonicalResponse:
             assembler = MessageAssembler()
-            async with (
-                self._transport.stream(url, sent) as response,
-                aclosing(sse_payloads(response, NAME)) as payloads,
-            ):
-                async for payload in payloads:
-                    assembler.feed(payload)
-            data = assembler.message()
+            try:
+                async with (
+                    self._transport.stream(url, sent) as response,
+                    aclosing(sse_payloads(response, NAME)) as payloads,
+                ):
+                    async for payload in payloads:
+                        assembler.feed(payload)
+                data = assembler.message()
+            except UpstreamError as exc:
+                exc.spent = assembler.spent()
+                raise
             # Told whether a schema was asked for, so an answer that is not the document is
             # refused as `SCHEMA_UNSATISFIED` rather than returned as prose.
             answer = anthropic_to_canonical(
@@ -447,7 +468,11 @@ class VertexAnthropicAdapter(_VertexAdapter):
             )
             return answer.model_copy(update={"served_region": region})
 
-        return await _across_regions(self._targets_for(request.model, request.addressing), attempt)
+        return await _across_regions(
+            self._targets_for(request.model, request.addressing),
+            attempt,
+            spent_with=_answer_spent_with,
+        )
 
     def _stream_attempt(self, request: CanonicalRequest) -> StreamAttempt:
         body, prefix = self._first_body(request)
@@ -569,7 +594,7 @@ class VertexOpenModelAdapter(_VertexAdapter):
         region, publisher = self._place(name, addressing)
         url = self._transport.open_models_url(region=region, model=name)
         try:
-            await self._transport.post(url, {"model": f"{publisher}/{name}", "messages": []})
+            await self._transport.post(url, _named({"messages": []}, publisher, name, addressing))
         except UpstreamError as exc:
             if exc.status_code != 400:
                 raise
@@ -580,7 +605,9 @@ class VertexOpenModelAdapter(_VertexAdapter):
 
         async def attempt(region: str, publisher: str) -> CanonicalResponse:
             url = self._transport.open_models_url(region=region, model=request.model)
-            data = await self._transport.post(url, _named(body, publisher, request.model))
+            data = await self._transport.post(
+                url, _named(body, publisher, request.model, request.addressing)
+            )
             # The use case's switch, carried to the mapper: these models send their thinking
             # whether or not anybody asked (`FRD-135` FR-3).
             answer = openai_to_canonical(
@@ -599,7 +626,7 @@ class VertexOpenModelAdapter(_VertexAdapter):
             return await _open_stream(
                 self._transport,
                 url,
-                _named(body, publisher, request.model),
+                _named(body, publisher, request.model, request.addressing),
                 lambda: OpenAIStreamAssembler(include_reasoning=request.include_reasoning).feed,
                 region,
             )
@@ -615,10 +642,36 @@ class VertexOpenModelAdapter(_VertexAdapter):
         return body
 
 
-def _named(body: dict[str, Any], publisher: str, model: str) -> dict[str, Any]:
+def _answer_spent_with(answer: CanonicalResponse, spent: CanonicalUsage) -> CanonicalResponse:
+    """The answer, with what the regions tried before it reported using added to its own usage:
+    one model at one price, every attempt billed."""
+    return answer.model_copy(update={"usage": added(answer.usage, spent)})
+
+
+def _vectors_spent_with(vectors: EmbeddingVectors, spent: CanonicalUsage) -> EmbeddingVectors:
+    """The vectors, with the input the regions tried before them reported added to their own — or
+    still unknown, where the region that served reported none."""
+    tokens = vectors.input_tokens
+    return EmbeddingVectors(
+        vectors,
+        served_region=vectors.served_region,
+        input_tokens=None if tokens is None else tokens + spent.prompt_tokens,
+    )
+
+
+def _input_spent(counts: list[int | None]) -> CanonicalUsage | None:
+    """The input the texts embedded so far reported, or ``None`` where none reported any."""
+    reported = [count for count in counts if count is not None]
+    return CanonicalUsage(prompt_tokens=sum(reported), completion_tokens=0) if reported else None
+
+
+def _named(
+    body: dict[str, Any], publisher: str, model: str, addressing: dict[str, Any] | None
+) -> dict[str, Any]:
     """The body naming the model as this endpoint knows it: ``publisher/model``. A caller names the
-    model alone, and the publisher is the place's — which is where it can differ."""
-    return {**body, "model": f"{publisher}/{model}"}
+    model alone, and the publisher is the place's — which is where it can differ. The model is the
+    catalogue entry's upstream name where it is an alias (`wire_name`, `FRD-146` FR-10)."""
+    return {**body, "model": f"{publisher}/{wire_name(model, addressing)}"}
 
 
 def _thinks(setting: Thinking) -> bool:

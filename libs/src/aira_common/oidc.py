@@ -21,10 +21,12 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import jwt
-from jwt import PyJWK, PyJWKClient
+from jwt import PyJWK, PyJWKClient, PyJWKSet
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from aira_common.integration_debug import watch
 from aira_common.logging import get_logger
@@ -49,6 +51,24 @@ DEFAULT_JWKS_TIMEOUT_SECONDS = 5.0
 #: A rotation publishes its new key before signing with it, so one refetch per interval finds it;
 #: without the bound every forged `kid` is a synchronous request to the identity provider.
 JWKS_REFRESH_INTERVAL_SECONDS = 30.0
+
+#: How long a fetched key set is used before it is fetched again: PyJWT's own default, named here
+#: because the rules below are measured against it.
+JWKS_LIFESPAN_SECONDS = 300.0
+
+#: How long the last key set fetched keeps verifying tokens while a new one **cannot be fetched** —
+#: the provider refusing, hanging, or answering something that is not a key set. Without it every
+#: token is refused the moment the set expires during an outage. Bounded, because a key the provider
+#: withdraws meanwhile — a compromised one — is still accepted until then: an hour outlasts a
+#: restart or a maintenance window and keeps that exposure finite. A set the provider *answers* is
+#: adopted at once, whatever it holds.
+JWKS_STALE_LIMIT_SECONDS = 3600.0
+
+#: After a failed fetch the next one waits this long, doubling with every further failure up to
+#: :data:`JWKS_RETRY_MAX_SECONDS`. Meanwhile a request is answered from the set held, or refused at
+#: once where none is — rather than each one asking the provider again and waiting out the timeout.
+JWKS_RETRY_FIRST_SECONDS = 1.0
+JWKS_RETRY_MAX_SECONDS = 30.0
 
 #: The longest bearer token parsed at all: twice what the shipped proxy forwards in one header
 #: line (nginx's 8 KB default). Anything longer is refused unread, because parsing is where a
@@ -218,14 +238,33 @@ class JwtVerifier:
         return claims
 
 
-class BoundedRefreshJwkClient(PyJWKClient):
-    """A `PyJWKClient` that fetches the key set again for an unknown `kid` at most once per
-    :data:`JWKS_REFRESH_INTERVAL_SECONDS`.
+@dataclass
+class _Fetch:
+    """The one fetch of the key set in flight. A caller with no set to answer from waits for it —
+    no longer than what is left of its timeout — rather than starting another."""
 
-    PyJWT refetches the whole set whenever a token names a key it does not hold: the right answer
-    to a rotation, and a remote call per request to anybody who sends forged `kid`s. Between
-    refetches an unknown `kid` is answered from the cached set — which refuses it, as a rejected
-    token. The set's own expiry (`lifespan`) still refreshes it on schedule.
+    deadline: float
+    done: threading.Event = field(default_factory=threading.Event)
+    keys: PyJWKSet | None = None
+
+
+class BoundedRefreshJwkClient(PyJWKClient):
+    """A `PyJWKClient` for an identity provider that may hang, may be down, and may be probed.
+
+    - **One fetch at a time, and nobody queues behind it.** PyJWT holds a lock across the fetch, so
+      once the cached set expired during an outage each validation fetched in turn and the *n*-th
+      waited *n* timeouts — on threads other work needed too. Here one caller fetches while the
+      others are answered from the set held; only a caller with no set at all waits, for that one
+      fetch and never past its timeout.
+    - **The last set fetched outlives a failed fetch** by :data:`JWKS_STALE_LIMIT_SECONDS`, and the
+      fetch is retried after a backoff rather than by every request. A set the provider answers
+      replaces it at once, whatever it holds — a rotation or a withdrawn key included.
+    - **An unknown `kid` fetches the set again at most once per**
+      :data:`JWKS_REFRESH_INTERVAL_SECONDS`: the right answer to a rotation, and otherwise a request
+      to the provider per forged token. Between refetches it is refused.
+
+    A `kid` the set held does not name is refused, whichever set that is: keeping a set changes how
+    long a key is known, never what a known key proves.
     """
 
     def __init__(
@@ -234,33 +273,164 @@ class BoundedRefreshJwkClient(PyJWKClient):
         *,
         timeout: float,
         refresh_interval: float = JWKS_REFRESH_INTERVAL_SECONDS,
+        lifespan: float = JWKS_LIFESPAN_SECONDS,
+        stale_limit: float = JWKS_STALE_LIMIT_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        # **One bound, and it is this one.** PyJWT applies a refetch cooldown of its own, timed
-        # from every fetch on a clock nobody can move; with both in force a rotated key is refused
-        # for the longer of the two, and the rule here could not be tested. So PyJWT's is off.
-        super().__init__(uri, timeout=timeout, cooldown_duration=0)
+        # PyJWT's cache, its refetch cooldown and the lock it holds across a fetch all stay unused:
+        # the rules above replace them, on one clock a test can move.
+        super().__init__(uri, timeout=timeout, cache_jwk_set=False)
         self._refresh_interval = refresh_interval
+        self._lifespan = lifespan
+        self._stale_limit = stale_limit
         self._clock = clock
+        # Guards the fields below, and is held only to read or change them — never across a fetch.
+        self._state = threading.Lock()
+        self._keys: PyJWKSet | None = None
+        self._fetched_at = 0.0
+        self._fetch: _Fetch | None = None
+        self._backoff = 0.0
+        self._retry_at = -math.inf
         self._refreshed_at: float | None = None
-        # Verification runs on worker threads, and the bound is only a bound if it is shared.
-        self._refresh_lock = threading.Lock()
 
-    def get_signing_keys(self, refresh: bool = False) -> list[PyJWK]:
-        if refresh:
-            with self._refresh_lock:
-                now = self._clock()
-                if (
-                    self._refreshed_at is not None
-                    and now - self._refreshed_at < self._refresh_interval
-                ):
-                    refresh = False
-                else:
-                    self._refreshed_at = now
-        return super().get_signing_keys(refresh)
+    def get_signing_key(self, kid: str) -> PyJWK:
+        """The key ``kid`` names in the set held, which is fetched again for a name it lacks — at
+        most once per refresh interval."""
+        key = self.match_kid(self.get_signing_keys(), kid)
+        if key is None and self._may_refetch():
+            key = self.match_kid(self.get_signing_keys(refresh=True), kid)
+        if key is None:
+            raise PyJWKClientError(f'Unable to find a signing key that matches: "{kid}"')
+        return key
+
+    def _may_refetch(self) -> bool:
+        """Whether an unknown `kid` may have the set fetched now, spending the interval's refetch.
+        Shared by every thread, because a bound kept per thread bounds nothing."""
+        with self._state:
+            now = self._clock()
+            if self._refreshed_at is not None and now - self._refreshed_at < self._refresh_interval:
+                return False
+            self._refreshed_at = now
+            return True
+
+    def get_jwk_set(self, refresh: bool = False) -> PyJWKSet:
+        """The set to verify against: the one held while it is fresh, the provider's otherwise.
+
+        ``refresh`` asks for the provider's set although the one held is fresh — for a `kid` it does
+        not name.
+        """
+        with self._state:
+            now = self._clock()
+            held = self._held(now)
+            if held is not None and not refresh and now - self._fetched_at < self._lifespan:
+                return held
+            fetch = self._fetch
+            if fetch is None and now < self._retry_at:
+                # A fetch failed lately. Until the backoff has passed, the set held answers — or,
+                # with none, the refusal does, at once.
+                if held is not None:
+                    return held
+                raise PyJWKClientConnectionError(
+                    "The key set could not be fetched; the next attempt is in "
+                    f"{self._retry_at - now:.1f}s."
+                )
+            if fetch is not None and held is not None and not refresh:
+                # Somebody is fetching already, and the set held answers meanwhile.
+                return held
+            leads = fetch is None
+            if fetch is None:
+                fetch = self._fetch = _Fetch(deadline=now + self.timeout)
+        if leads:
+            return self._fetch_for(fetch)
+        return self._wait_for(fetch)
+
+    def _held(self, now: float) -> PyJWKSet | None:
+        """The set last fetched, while it is younger than the stale limit."""
+        if self._keys is None or now - self._fetched_at >= self._stale_limit:
+            return None
+        return self._keys
+
+    def _fetch_for(self, fetch: _Fetch) -> PyJWKSet:
+        """Fetch the set for this caller and for everyone waiting on ``fetch``.
+
+        A fetch that brings no answer — refused, timed out, a page that is not a key set — keeps the
+        set held, and a caller holding none is told why. An answer is adopted, even one holding no
+        key anything can verify with: that is the provider's word, and the set held stops counting.
+        """
+        try:
+            answered = self.fetch_data()
+        except Exception as exc:  # noqa: BLE001 - whatever stopped the fetch, the set held stands
+            held = self._settle(fetch, None, dropped=False)
+            if held is None:
+                raise
+            self._report_kept(exc)
+            return held
+        try:
+            keys = PyJWKSet.from_dict(answered)
+        except Exception:
+            # Answered, with no key that can verify anything: adopted, so nothing verifies.
+            self._settle(fetch, None, dropped=True)
+            raise
+        self._settle(fetch, keys, dropped=False)
+        return keys
+
+    def _settle(self, fetch: _Fetch, keys: PyJWKSet | None, *, dropped: bool) -> PyJWKSet | None:
+        """Record how ``fetch`` ended, release whoever waits on it, and return the set now held.
+
+        Settled on every path, or the next caller would find a fetch in flight that never ends.
+        """
+        with self._state:
+            now = self._clock()
+            if keys is not None:
+                self._keys, self._fetched_at = keys, now
+                self._backoff, self._retry_at = 0.0, -math.inf
+            else:
+                self._backoff = min(
+                    max(2 * self._backoff, JWKS_RETRY_FIRST_SECONDS), JWKS_RETRY_MAX_SECONDS
+                )
+                self._retry_at = now + self._backoff
+                if dropped:
+                    self._keys = None
+            self._fetch = None
+            fetch.keys = keys
+            fetch.done.set()
+            return self._held(now)
+
+    def _wait_for(self, fetch: _Fetch) -> PyJWKSet:
+        """The set ``fetch`` brings, waited for no longer than what is left of its timeout — or,
+        when it brings none, the set still held."""
+        fetch.done.wait(max(0.0, fetch.deadline - self._clock()))
+        if fetch.keys is not None:
+            return fetch.keys
+        with self._state:
+            held = self._held(self._clock())
+        if held is None:
+            raise PyJWKClientConnectionError("The key set could not be fetched in time.")
+        return held
+
+    def _report_kept(self, exc: Exception) -> None:
+        """Say that tokens are verified against a kept set, and how much longer they will be."""
+        with self._state:
+            age = self._clock() - self._fetched_at
+            retry = self._backoff
+        _log.warning(
+            "oidc_jwks_unavailable",
+            jwks_uri=self.uri,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            key_set_age_seconds=round(age),
+            retry_in_seconds=retry,
+            detail=(
+                "The identity provider's key set could not be fetched again, so tokens are "
+                f"verified against the one fetched {age:.0f}s ago until it is "
+                f"{self._stale_limit:.0f}s old. A key the provider withdrew since is accepted "
+                "until then; after it, every token is refused until a fetch succeeds."
+            ),
+        )
 
 
 def build_jwks_client(jwks_uri: str, timeout: float = DEFAULT_JWKS_TIMEOUT_SECONDS) -> PyJWKClient:
-    """A caching JWKS client for ``jwks_uri``, with a **bounded** fetch (see
-    :data:`DEFAULT_JWKS_TIMEOUT_SECONDS`) and a bounded refetch for unknown key ids."""
+    """A caching JWKS client for ``jwks_uri``: a **bounded** fetch (see
+    :data:`DEFAULT_JWKS_TIMEOUT_SECONDS`), one at a time, a key set that outlives the provider's
+    outage, and a bounded refetch for unknown key ids (:class:`BoundedRefreshJwkClient`)."""
     return BoundedRefreshJwkClient(jwks_uri, timeout=timeout)

@@ -13,6 +13,10 @@ from aira_gateway.api.gemini import schemas
 ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
 ERROR_DOMAIN = "aira.gateway"
 
+#: What a failure of this gateway's own is called — the same words whether it is answered as a
+#: status or ends a stream whose status went out: its detail is in the log, never in the answer.
+INTERNAL_ERROR_MESSAGE = "Internal error while processing the request."
+
 
 def error_info(reason: str, metadata: dict[str, str] | None = None) -> dict[str, Any]:
     """One `google.rpc.ErrorInfo`: the reason in Google's upper snake case, and its metadata."""
@@ -50,6 +54,11 @@ def gemini_error_response(
     return JSONResponse(
         status_code=code, content=body.model_dump(exclude_none=True), headers=headers
     )
+
+
+def internal_error_response() -> JSONResponse:
+    """A failure of this gateway's own, in Google's envelope (`INTERNAL_ERROR_MESSAGE`)."""
+    return gemini_error_response(500, INTERNAL_ERROR_MESSAGE, "INTERNAL")
 
 
 class GeminiHTTPError(Exception):

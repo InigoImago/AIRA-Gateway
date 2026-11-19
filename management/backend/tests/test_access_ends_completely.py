@@ -400,3 +400,63 @@ def test_an_unknown_owner_is_refused_rather_than_created(usecase: UseCase, boss:
     )
     assert refused.status_code == 400
     assert not get_user_model().objects.filter(username="ghost").exists()
+
+
+# ═══ 4. a key and the end of its access, at the same moment ═════════════════════════════════════
+
+
+@pytest.mark.parametrize("owner", ["ada", ""], ids=["issued-for-her", "issued-by-her"])
+def test_a_key_issued_while_its_owner_is_removed_does_not_outlive_the_removal(
+    usecase: UseCase, boss: Any, monkeypatch: pytest.MonkeyPatch, owner: str
+) -> None:
+    """The removal commits after the issuance checked Ada's grant and before it wrote her key. The
+    removal's sweep had no key to revoke yet, and the issuance — reading its own request's memo,
+    which another request's change cannot clear — did not see the removal: a removed member left
+    holding an active key, which the gateway honours until it expires. Asked again under the use
+    case's lock, from the database, the issuance is refused as it would be a moment later."""
+    from aira_management.apps.usecases.views import api_keys as api_key_views
+
+    ada = _member("ada", usecase)
+    issuer = boss if owner else ada
+    drawn = api_key_views.generate_api_key
+    removed: list[int] = []
+
+    def her_removal_commits_meanwhile() -> tuple[str, str, str]:
+        if not removed:
+            removed.append(_client(boss).delete(f"{BASE}uc-a/members/ada/").status_code)
+        return drawn()
+
+    monkeypatch.setattr(api_key_views, "generate_api_key", her_removal_commits_meanwhile)
+
+    issued = _client(issuer).post(
+        f"{BASE}uc-a/api-keys/", {"label": "k", "owner": owner}, format="json"
+    )
+
+    assert removed == [200]
+    assert issued.status_code in (400, 403), issued.content
+    assert not UseCaseMembership.objects.filter(use_case=usecase, user=ada).exists()
+    assert not ApiKey.objects.filter(owner=ada, is_active=True).exists()
+
+
+def test_issuing_a_key_and_ending_access_hold_the_same_use_case(
+    usecase: UseCase, boss: Any, row_locks: list[str]
+) -> None:
+    """The half of the property above only PostgreSQL can show: issuing a key and each removal that
+    sweeps keys hold the use case's row, so a removal arriving while a key is written waits for it
+    and revokes it, and an issuance arriving during a removal waits and is refused."""
+    ada = _member("ada", usecase)
+    admin = _client(boss)
+    granted = admin.post(f"{BASE}uc-a/groups/", {"group_path": "/team"}, format="json")
+    assert granted.status_code == 201, granted.content
+    steps = {
+        "issue": lambda: _client(ada).post(f"{BASE}uc-a/api-keys/", {"label": "k"}, format="json"),
+        "remove a member": lambda: admin.delete(f"{BASE}uc-a/members/ada/"),
+        "revoke a group": lambda: admin.delete(f"{BASE}uc-a/groups/revoke/?group_path=/team"),
+    }
+    held: dict[str, int] = {}
+    for step, act in steps.items():
+        row_locks.clear()
+        assert act().status_code in (200, 201), step
+        held[step] = row_locks.count("usecases.UseCase")
+
+    assert held == dict.fromkeys(steps, 1)

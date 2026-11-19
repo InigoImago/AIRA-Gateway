@@ -285,6 +285,15 @@ address it reads, in the clear — give it `https://` as well.
   more is a second lifetime for every token, not a tolerance;
 - at most 16 KiB — a longer credential is refused with `401` before it is parsed.
 
+**When the JWKS URI does not answer.** Both planes fetch the key set again every five minutes, one
+request at a time, and a token naming a key the set lacks makes them fetch it at most once every
+thirty seconds. A fetch that brings no answer — refused, timed out after five seconds, or a page
+that is not a key set — leaves the last set fetched verifying for **up to an hour**, and is retried
+after one second, doubling to thirty, rather than by every request. A key withdrawn from the set
+while the URI does not answer is therefore accepted until that hour is over; whatever key set the
+URI *does* answer replaces the kept one at once, an empty one included. A failed fetch is logged as
+`oidc_jwks_unavailable` at `WARNING`, with the age of the set kept where one is.
+
 A provider other than Keycloak signs people in on those terms, with `AIRA_OIDC_JWKS_URI` set and a
 `groups` claim of full paths. What it does not get is the directory: those lookups use Keycloak's
 admin API, with the realm read from `/realms/<name>` in the issuer — so no directory search, no
@@ -657,8 +666,8 @@ from them. Without a stage the names are the ones above.
   (40 seconds), stops at that event and exits with *publishing stopped at event … on `<topic>`*;
   the outbox is one queue across the nine topics, so that event and every later change on every
   topic stay pending, and each run tries again. The consumer does not start without all of its
-  topics and restarts in a loop, applying nothing. Neither `/readyz` notices, and the console shows
-  every change as saved. A missing `Write` ACL stops the relay the same way, at once.
+  topics: it waits for them, one `consumer_waiting_for_kafka` line per attempt, applying nothing.
+  Neither `/readyz` notices, and the console shows every change as saved. A missing `Write` ACL stops the relay the same way, at once.
   `make kafka-topics` creates the topics in this repository's own broker and
   `make kafka-topics-external` in yours (`PLAINTEXT` only), both idempotently, and both create
   exactly the topics the code publishes to.
@@ -897,6 +906,7 @@ one), cache tokens count as input, and there are no embeddings.
 - **Sampling.** The same models answer `400` to `top_k`, to a `temperature` other than 1 and to a
   `top_p` below 0.99. Their catalogue entry says *fixed sampling*, and the gateway sends them no
   request that sets one: it moves on to the next model in the chain, or refuses naming the control.
+  A PII redactor on such a model asks it at its own settings.
 - **Structured output** takes the formats Anthropic lists (`date-time`, `date`, `time`,
   `duration`, `email`, `hostname`, `uri`, `ipv4`, `ipv6`, `uuid`). A number's width (`int32`,
   `double`) is left out of the schema it is sent. A constraint it cannot take — a length, a
@@ -2041,8 +2051,10 @@ Some calls are not what that suggests:
 
 - The exchange that renews the gateway's Google token — with `oauth2.googleapis.com` for a
   service-account key; with your Keycloak, `sts.googleapis.com` and `iamcredentials.googleapis.com`
-  without a key; with the metadata server on Google Cloud — runs inside whichever model call finds
-  the token due, about every 48 minutes, and is then stamped as that model access.
+  without a key; with the metadata server on Google Cloud — is started by whichever model call
+  finds the token due, about every 48 minutes, and is then stamped as that model access. It runs
+  beside that call rather than in its way: the token in hand is still valid, and is what the calls
+  meanwhile are sent with.
 - An operator's reachability check (`:check`), the model list and the billing account's prices a
   catalogue editor asks for, and the count of a stream whose vendor never reported its usage
   (`:countTokens`, `AIRA_COUNT_CANCELLED_STREAMS`, on by default) carry no `aira.*` attributes, and
@@ -2271,8 +2283,10 @@ which is why its own timeout defaults to 300 seconds (`AIRA_OLLAMA_TIMEOUT_SECON
 OpenAI-compatible server); Vertex and Foundry wait 120 (`AIRA_VERTEX_TIMEOUT_SECONDS`,
 `AIRA_FOUNDRY_TIMEOUT_SECONDS`), AI Studio 120 with no setting. Each is how long the gateway waits
 for the next byte — for an answer that is not streamed, the whole answer; every Claude request goes
-as a stream — and opening a connection is given up after 10 seconds. The shipped console proxy
-allows 310 seconds on `/gw`.
+as a stream — and opening a connection is given up after 10 seconds. A call that renews the
+gateway's Google token is given 10 seconds whatever these say: an identity service that has not
+answered in seconds is down, and while the token in hand is valid nobody waits for it. The shipped
+console proxy allows 310 seconds on `/gw`.
 
 **A stream needs no longer read timeout than its keepalive.** A model reading a large context or
 thinking says nothing for minutes; a streamed answer therefore sends its status within

@@ -49,12 +49,17 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable, MutableMapping
+from types import ModuleType
+from typing import Any
 
 import pytest
+import structlog
 from opentelemetry import trace
 from opentelemetry._logs import _internal as logs_internal
 from opentelemetry.metrics import _internal as metrics_internal
 from opentelemetry.sdk._logs import LoggingHandler
+from structlog.testing import LogCapture, ReturnLogger
 
 from aira_common.config import BaseAiraSettings
 
@@ -86,6 +91,35 @@ def _no_ambient_configuration() -> None:
     """
     for name in [key for key in os.environ if key.startswith(("AIRA_", "VAULT_"))]:
         del os.environ[name]
+
+
+@pytest.fixture
+def lines_logged_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[ModuleType], list[MutableMapping[str, Any]]]:
+    """``lines_logged_by(module)``: every line ``module._log`` writes for the rest of the test, as
+    `structlog.testing.capture_logs` records them — whatever logging an earlier test configured.
+
+    `capture_logs` reaches only a logger bound to the configuration of the moment, and
+    `configure_logging` caches each logger on first use. A module's logger first used before
+    another test configured logging again keeps the processors and the level of then, so
+    `capture_logs` handed its test an empty list, and the test passed or failed by what had run
+    before it — a test asserting a value is *absent* from the lines passing on nothing at all. The
+    module gets a capturing logger of its own instead, put back after the test.
+    """
+
+    def capture(module: ModuleType) -> list[MutableMapping[str, Any]]:
+        captured = LogCapture()
+        logger = structlog.wrap_logger(
+            ReturnLogger(),
+            processors=[captured],
+            wrapper_class=structlog.BoundLogger,
+            cache_logger_on_first_use=False,
+        )
+        monkeypatch.setattr(module, "_log", logger)
+        return captured.entries
+
+    return capture
 
 
 #: The three global slots `configure_observability` writes, as (module, value attribute, set-once

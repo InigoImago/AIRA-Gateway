@@ -39,7 +39,13 @@ Kafka, Gateway holds read-models" architecture and removes any synchronous coupl
   see the note under §2.*
 - **FR-2 Producer**: reliable publish from Management (outbox table + relay, or transactional
   producer) so events are never lost on commit.
-- **FR-3 Consumer**: idempotent Gateway consumer writing read-model rows; ordered per key.
+- **FR-3 Consumer**: idempotent Gateway consumer writing read-model rows; ordered per key. *As
+  built:* the consumer commits a partition's offset itself, once the event was applied or skipped,
+  never on a timer; an event the database could not take at the moment — a restart, a failover, a
+  connection it closed, a deadlock, a timeout, told apart by type and SQLSTATE — is held and tried
+  again with a pause doubling from 1 to 30 seconds until it applies (`config_event_retrying`), and
+  only an event the database refuses for what it carries is skipped. At start, a broker that is not
+  reachable or has not got the topics yet is waited for (`consumer_waiting_for_kafka`).
 - **FR-4 Propagation**: use-case membership changes reflect into the Gateway's authorization data
   (and/or Keycloak groups) so `/uc/<slug>` authorization stays correct.
 - **FR-5 Observability**: consumer lag + apply errors are metered; trace context propagated.

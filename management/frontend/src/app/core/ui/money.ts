@@ -19,6 +19,13 @@ const NANOS_PER_UNIT_DIGITS = 9;
 const ESCALATION = [4, 6, 9];
 
 /**
+ * `5.000` and `5,000`: one to three digits, a point or a comma, exactly three more. A thousands
+ * group in one convention and three decimals in the other. A whole part of zero is no thousand, so
+ * `0.125` is a decimal however it is read.
+ */
+const THOUSANDS_OR_DECIMALS = /^([1-9]\d{0,2})[.,](\d{3})$/;
+
+/**
  * An amount in nano-units as a decimal string.
  *
  * Rounded half-up at `places`, like an invoice — then at more places if, and only if, that would
@@ -97,6 +104,30 @@ export function storedAmount(amount: string): string | null {
   if (nanos === null) return null;
   const significant = (amount.trim().split('.')[1] ?? '').replace(/0+$/, '').length;
   return displayAmount(nanos, Math.min(NANOS_PER_UNIT_DIGITS, Math.max(2, significant)));
+}
+
+/**
+ * Why a typed amount cannot be taken as one amount — or `null` when it can.
+ *
+ * The console takes a comma as the decimal mark as readily as a point, because half of Europe
+ * writes `250,50`. That reads `5.000` as five and `5,000` as five too, which is what neither a
+ * German nor an English reader meant by them: a spend limit saved a thousand times too small stops
+ * a use case after five euros, and a price a thousand times too small books a thousandth of what
+ * was spent. So the question goes back to the person, with both readings written the one way each
+ * can be read.
+ */
+export function ambiguousAmount(typed: string): string | null {
+  const text = typed.trim();
+  const match = THOUSANDS_OR_DECIMALS.exec(text);
+  if (!match) return null;
+  const [, whole, group] = match;
+  const decimal = storedAmount(`${whole}.${group}`) ?? `${whole}.${group}`;
+  // Three places would be the same question again; a fourth can only be decimals.
+  const asDecimal = /\.\d{3}$/.test(decimal) ? `${decimal}0` : decimal;
+  return (
+    `“${text}” could be ${whole}${group} or ${asDecimal}. Type the one you mean — a point or a ` +
+    'comma here marks decimals, never thousands.'
+  );
 }
 
 /** U+202F NARROW NO-BREAK SPACE, between every group of three digits (`displayCount`). */

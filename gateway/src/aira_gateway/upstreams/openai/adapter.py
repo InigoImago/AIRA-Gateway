@@ -20,6 +20,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalResponse,
     EmbeddingVectors,
+    wire_name,
 )
 from aira_gateway.core.schema import ResponseSchema
 from aira_gateway.upstreams.base import (
@@ -159,12 +160,14 @@ class OpenAIAdapter:
         entries = [entry for entry in listing.get("data") or [] if isinstance(entry, dict)]
         if not model or not self._routes.names_models():
             return f"{len(entries)} model(s) listed" if entries else "endpoint answered"
-        if model not in {str(entry.get("id")) for entry in entries}:
+        # Looked for under the name the server knows, where the catalogue entry is an alias of it.
+        listed = wire_name(model, addressing)
+        if listed not in {str(entry.get("id")) for entry in entries}:
             raise ModelNotListed(
                 f"The endpoint answered, and its listing of {len(entries)} model(s) does not "
-                f"include '{model}'."
+                f"include '{listed}'."
             )
-        return f"{model} is listed"
+        return f"{listed} is listed"
 
     def schema_refusal(self, schema: ResponseSchema) -> str | None:
         """Why this platform cannot take ``schema`` strict, or ``None`` (`ADR-0012` §3).
@@ -178,14 +181,14 @@ class OpenAIAdapter:
         return strict_schema_refusal(schema)
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
-        body = self._named(self._body(request), request.model)
+        body = self._named(self._body(request), request)
         data = await self._transport.post(self._routes.chat(request.model), body)
         # The use case's switch, carried to the mapper: this dialect returns reasoning whether or
         # not it was asked for (`FRD-135` FR-3).
         return openai_to_canonical(data, request.model, include_reasoning=request.include_reasoning)
 
     async def stream_generate(self, request: CanonicalRequest) -> AsyncIterator[CanonicalChunk]:
-        body = self._named(self._body(request, stream=True), request.model)
+        body = self._named(self._body(request, stream=True), request)
         # Tool calls arrive in fragments and are assembled across the stream: assembling is
         # stateful, and the per-chunk mapper is not (`FRD-131` FR-6).
         assembler = StreamAssembler(include_reasoning=request.include_reasoning)
@@ -205,7 +208,7 @@ class OpenAIAdapter:
                 f"Model '{request.model}' embeds one text per vector; it cannot embed "
                 f"{request.size} texts as one."
             )
-        body = self._named(canonical_to_openai_embedding(request), request.model)
+        body = self._named(canonical_to_openai_embedding(request), request)
         data = await self._transport.post(self._routes.embed(request.model), body)
         return embedding_values(data)
 
@@ -219,13 +222,16 @@ class OpenAIAdapter:
             request, stream=stream, output_cap_field=self._routes.output_cap_field()
         )
 
-    def _named(self, body: dict[str, Any], model: str) -> dict[str, Any]:
+    def _named(
+        self, body: dict[str, Any], request: CanonicalRequest | CanonicalEmbeddingRequest
+    ) -> dict[str, Any]:
         """Set the body's model field the way the *platform* wants it (`FRD-120` §5.1).
 
         The dialect always writes one and a platform that addresses by path takes it out; doing it
-        here keeps the dialect platform-free.
+        here keeps the dialect platform-free. The name is the one the server knows: the catalogue
+        entry's upstream model where the entry is an alias of it (`wire_name`, `FRD-146` FR-10).
         """
-        named = self._routes.body_model(model)
+        named = self._routes.body_model(wire_name(request.model, request.addressing))
         if named is None:
             body.pop("model", None)
         else:

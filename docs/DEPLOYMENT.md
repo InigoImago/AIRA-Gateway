@@ -364,8 +364,9 @@ lengthening.
 
 **Nothing is refused.** The gateway queues and slows: no 429, no 503, latency climbing and the
 99th percentile climbing faster. It looks exactly like a slow model. The first internal sign is the
-audit queue saturating — `request_log_queue_full` in the gateway's log, after which rows are
-written on the request path as designed backpressure. That log line is currently
+audit queue saturating — `request_log_queue_full` in the gateway's log, once it holds
+`AIRA_LOG_QUEUE_SIZE` rows or 64 MiB of their bodies, after which rows are written on the request
+path as designed backpressure. That log line is currently
 the **only** exposure of it; there is no metric.
 
 Memory is not a constraint: 300 concurrent streamed answers held a one-worker instance at 152 MB,
@@ -997,7 +998,7 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_REDIS_URL`                     | `redis://localhost:6379/0`          | Shared counter store for rate-limit buckets and budget reservations. **Set this whenever more than one gateway process runs**: without it each process keeps its own counters, so N processes allow N × the configured rate and a budget can be overshot. Empty disables it — see the degradation table below. With Redis Sentinel set `AIRA_REDIS_SENTINELS` and `AIRA_REDIS_SENTINEL_SERVICE` instead, which replace it ([CONFIGURATION.md](CONFIGURATION.md)). |
 | `AIRA_ENFORCE_RATE_LIMITS`           | `true`                              | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way.                                                                                                                                                                                                           |
 | `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                              | Tokens assumed for a request whose output nothing bounds — no cap from the caller, and neither a default nor a maximum in the catalogue — used to reserve budget before the real usage is known. A model with a declared maximum reserves that instead. Corrected the moment the response arrives.                                  |
-| `AIRA_LOG_QUEUE_SIZE`                | `512`                               | Request-log rows buffered off the request path. A full queue writes inline rather than dropping. **`0` writes every row synchronously** — choose it if a request must be durably logged before its response goes out.                                                                                                       |
+| `AIRA_LOG_QUEUE_SIZE`                | `512`                               | Request-log rows buffered off the request path, holding at most 64 MiB of request and response bodies whatever the number. A full queue writes inline rather than dropping. **`0` writes every row synchronously** — choose it if a request must be durably logged before its response goes out.                                                                                                       |
 | `AIRA_TRUST_FORWARDED_FOR`           | `false`                             | Honour `X-Forwarded-For` for the recorded source IP, read `AIRA_TRUSTED_PROXY_HOPS` entries from the right (§3.7)                                                                                                                                                                                                          |
 | `AIRA_MAX_REQUEST_BYTES`             | `8388608` (8 MiB)                   | Hard ceiling on a request body; larger bodies get 413 before being buffered                                                                                                                                                                                                                                                 |
 | `AIRA_GOOGLE_API_KEY`                | `''`                                | Registers Google AI Studio when set — and stops the gateway at start-up unless `AIRA_ALLOWED_REGIONS` names `global`                                                                                                                                                                                                       |
@@ -1035,8 +1036,15 @@ Deliberate, not accidental — a cache outage must not become a product outage:
 | Rate limiting      | falls back to a **per-instance** bucket            | Still bounded, but N instances allow N × the limit until Redis returns. Not fail-open: Redis being down is exactly when a runaway caller does the most damage. |
 | Budget enforcement | falls back to the **Postgres** read-then-book path | Still enforced, but concurrent requests stop seeing each other's reservations, so a limit can be overshot by requests in flight.                               |
 
-Both log a warning, and `/readyz` reports `degraded: true`. Postgres remains the system of record
-for budget usage in every case, so a Redis restart costs the in-flight reservations and never the
+`/readyz` reports `degraded: true`. The log says so where the state changes, not on every request:
+`counters_unavailable` and `budget_reservation_degraded` (warnings) when Redis goes away,
+`counters_available` and `budget_reservation_recovered` when it is back. Without Redis configured
+nothing is logged per request — that is a setting, and `/readyz` already reports it. A budget
+correction Redis could not take — a request that finished while it was away — is held by the
+instance and sent before its next reservation (`budget_corrections_resent` once they are all
+sent), so a short outage leaves no reservation behind; a warning, `budget_corrections_dropped`,
+says when an outage outgrew what one instance holds. Postgres remains the system of record for
+budget usage in every case, so a Redis restart costs the in-flight reservations and never the
 period's accounting.
 
 **Production Redis**: the reference stack runs it without authentication or TLS, which is fine on
@@ -1437,11 +1445,15 @@ relay and the consumer have run after the upgrade, and the old one until then.
 A new topic in a release is created before the release's code runs (§3.3); the topic step is
 idempotent, and it creates every topic that release's code uses.
 
-**A stopping gateway waits five seconds for its requests**, then cuts short the streams it is still
-reading for callers who left, books what they used and writes their rows, and closes. The image
-starts uvicorn with `--timeout-graceful-shutdown 5`, inside Docker's default of ten seconds before
+**A stopping gateway waits five seconds for its requests**, then cuts short every request still
+running — a model's answer usually takes longer, so on a deploy that is most streams — and the
+streams it is still reading for callers who left. It then waits up to three seconds more while each
+of those books what it used — counted at the vendor where the vendor had not said yet — and hands
+over its row, and only then writes the queued rows and closes. The image starts uvicorn with
+`--timeout-graceful-shutdown 5`, so all of this fits inside Docker's default of ten seconds before
 it kills the process; an orchestrator with a shorter grace period than that loses the rows of the
-requests still running when it kills.
+requests still running when it kills. A stream cut this way is recorded as one its caller left
+(`499`), with what was used until then.
 
 ---
 

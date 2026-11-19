@@ -27,6 +27,7 @@ import { can, strictData as strictDataOf } from '../../core/auth/roles';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { Preset, windowFor } from '../../core/ui/periods';
 import { UsageChart } from '../../core/ui/charts/usage-chart';
+import { spendUnknown } from '../reporting/spend';
 import { AboutPanel } from './about-panel';
 import { AccessPanel } from './access-panel';
 import { ApiKeysPanel } from './api-keys-panel';
@@ -106,6 +107,18 @@ export class UseCaseDetail implements OnInit {
   protected readonly loading = signal(true);
   /** The server answered 404: no such use case, or none this caller may see. */
   protected readonly missing = signal(false);
+  /**
+   * What the page's own loads reported for a 404 from Management — the fact the "no such use case"
+   * panel states once, so the banner does not state it again for each load. Anything else stays
+   * news: the Requests and Warnings tabs read the gateway, and are where the panel sends a member
+   * Management does not know.
+   */
+  private readonly explained = signal<ReadonlySet<string>>(new Set());
+  /** The page's banner: the last failure, unless the panel above already says it. */
+  protected readonly banner = computed(() => {
+    const message = this.feedback.error();
+    return message && this.missing() && this.explained().has(message) ? null : message;
+  });
   protected readonly tab = signal<Tab>('overview');
   protected readonly onOverview = computed(() => this.tab() === 'overview');
 
@@ -150,6 +163,8 @@ export class UseCaseDetail implements OnInit {
    */
   protected readonly monthFailed = signal(false);
   protected readonly todayFailed = signal(false);
+  private readonly monthSpendUnknown = signal(false);
+  private readonly todaySpendUnknown = signal(false);
   private readonly consumptionReason = signal('');
   protected readonly consumptionOutOfScope = signal(false);
 
@@ -201,6 +216,8 @@ export class UseCaseDetail implements OnInit {
       partial: failed && (month !== null || today !== null),
       reason: this.consumptionReason(),
       outOfScope: this.consumptionOutOfScope(),
+      monthSpendUnknown: this.monthSpendUnknown(),
+      todaySpendUnknown: this.todaySpendUnknown(),
     };
   });
 
@@ -332,7 +349,7 @@ export class UseCaseDetail implements OnInit {
       },
       error: (response: unknown) => {
         this.missing.set((response as { status?: number } | null)?.status === 404);
-        this.feedback.fail(response, 'Could not load this use case.');
+        this.failLoad(response, 'Could not load this use case.');
         this.loading.set(false);
       },
     });
@@ -349,6 +366,22 @@ export class UseCaseDetail implements OnInit {
   }
 
   /**
+   * Report a failed load of something Management keeps for this use case. A 404 is the fact the
+   * "no such use case" panel states, so it is noted as said — and it does not take the one banner
+   * from a failure that is news, whichever of the two answered last.
+   */
+  private failLoad(response: unknown, fallback: string): void {
+    if ((response as { status?: number } | null)?.status !== 404) {
+      this.feedback.fail(response, fallback);
+      return;
+    }
+    const message = errorMessage(response, fallback);
+    this.explained.update((seen) => new Set(seen).add(message));
+    const shown = this.feedback.error();
+    if (!shown || this.explained().has(shown)) this.feedback.fail(response, fallback);
+  }
+
+  /**
    * After a grant changed. The keys too: removing a member or revoking a group revokes the keys
    * of whoever loses access (`FRD-613`), and the keys tab would otherwise list them as active.
    */
@@ -361,21 +394,21 @@ export class UseCaseDetail implements OnInit {
   protected reloadMembers(): void {
     this.service.members(this.slug()).subscribe({
       next: (members) => this.members.set(members),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the members.'),
+      error: (response: unknown) => this.failLoad(response, 'Could not load the members.'),
     });
   }
 
   protected loadKeys(): void {
     this.service.apiKeys(this.slug()).subscribe({
       next: (keys) => this.apiKeys.set(keys),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the API keys.'),
+      error: (response: unknown) => this.failLoad(response, 'Could not load the API keys.'),
     });
   }
 
   protected loadRateLimits(): void {
     this.service.rateLimits(this.slug()).subscribe({
       next: (limits) => this.rateLimits.set(limits),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the rate limits.'),
+      error: (response: unknown) => this.failLoad(response, 'Could not load the rate limits.'),
     });
   }
 
@@ -389,7 +422,7 @@ export class UseCaseDetail implements OnInit {
       error: (response: unknown) => {
         this.rules.set(null);
         this.rulesFailed.set(true);
-        this.feedback.fail(response, 'Could not load the anomaly rules of this use case.');
+        this.failLoad(response, 'Could not load the anomaly rules of this use case.');
       },
     });
   }
@@ -409,7 +442,7 @@ export class UseCaseDetail implements OnInit {
   protected loadBudgets(): void {
     this.service.budgets(this.slug()).subscribe({
       next: (budgets) => this.budgets.set(budgets),
-      error: (response: unknown) => this.feedback.fail(response, 'Could not load the budgets.'),
+      error: (response: unknown) => this.failLoad(response, 'Could not load the budgets.'),
     });
     this.service.budgetUsage(this.slug()).subscribe({
       next: ({ usage, enforced }) => {
@@ -447,6 +480,7 @@ export class UseCaseDetail implements OnInit {
     this.consumptionReason.set('');
     const load = (preset: 'this-month' | 'today', into: (row: ReportRow | null) => void) => {
       const failed = preset === 'today' ? this.todayFailed : this.monthFailed;
+      const unknown = preset === 'today' ? this.todaySpendUnknown : this.monthSpendUnknown;
       const { from, to } = windowFor(preset, new Date(), this.clock());
       this.service.useCaseReport(this.slug(), from, to).subscribe({
         next: (report) => {
@@ -455,11 +489,13 @@ export class UseCaseDetail implements OnInit {
           this.consumptionOutOfScope.set(report.in_scope === false);
           this.peopleLimited.set(report.people_limited === true);
           into(report.in_scope === false ? null : report.totals);
+          unknown.set(report.in_scope !== false && spendUnknown(report));
           const people = report.in_scope === false ? [] : (report.by_person ?? []);
           (preset === 'today' ? this.peopleToday : this.peopleMonth).set(people);
         },
         error: (response: unknown) => {
           into(null);
+          unknown.set(false);
           failed.set(true);
           this.consumptionReason.set(errorMessage(response, 'The gateway could not be reached.'));
         },

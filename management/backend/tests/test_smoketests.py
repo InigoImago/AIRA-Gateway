@@ -1121,3 +1121,75 @@ def test_a_question_placed_on_purpose_keeps_its_place() -> None:
     assert placed.data["position"] == 7
     assert taken.status_code == 400
     assert "position" in taken.data["error"]["details"]
+
+
+# ---- moving a question ---------------------------------------------------------------------------
+
+
+def test_moving_a_question_onto_a_taken_position_is_refused_by_name() -> None:
+    """No validator stood in front of the constraint — DRF builds none for one with a condition —
+    so a move onto a position another live question holds reached the database and answered
+    `500`. Refused under `position`, saying why; a question's own position and a retired one's
+    are free."""
+    from aira_management.apps.smoketests.serializers import POSITION_TAKEN
+
+    author = _client(_user("author", "it-security"))
+    Case.objects.create(topic="one", prompt="?", position=1)
+    second = Case.objects.create(topic="two", prompt="?", position=2)
+    Case.objects.create(topic="gone", prompt="?", position=3, retired=True)
+
+    taken = author.patch(f"{CASES}{second.pk}/", {"position": 1}, format="json")
+    kept = author.patch(f"{CASES}{second.pk}/", {"position": 2, "topic": "two!"}, format="json")
+    freed = author.patch(f"{CASES}{second.pk}/", {"position": 3}, format="json")
+
+    assert taken.status_code == 400, taken.content
+    assert taken.data["error"]["details"] == {"position": [POSITION_TAKEN]}
+    assert (kept.status_code, freed.status_code) == (200, 200), (kept.data, freed.data)
+    assert Case.objects.get(pk=second.pk).position == 3
+
+
+def test_a_position_taken_while_a_question_is_moved_is_refused_by_name(monkeypatch) -> None:
+    """Another author's question lands on the position between this move's check and its save.
+    The constraint decides, and the answer names the field rather than being a server error."""
+    from aira_management.apps.smoketests.serializers import TestCaseSerializer
+
+    author = _client(_user("author", "it-security"))
+    moved = Case.objects.create(topic="one", prompt="?", position=1)
+    saving = TestCaseSerializer.save
+
+    def another_author_places_a_question_first(serializer, **kwargs):
+        Case.objects.create(topic="theirs", prompt="?", position=5)
+        return saving(serializer, **kwargs)
+
+    monkeypatch.setattr(TestCaseSerializer, "save", another_author_places_a_question_first)
+
+    response = author.patch(f"{CASES}{moved.pk}/", {"position": 5}, format="json")
+
+    assert response.status_code == 400, response.content
+    assert "position" in response.data["error"]["details"]
+    assert Case.objects.get(pk=moved.pk).position == 1
+
+
+def test_a_question_deleted_while_it_is_edited_stays_deleted(monkeypatch, row_locks) -> None:
+    """The edit is saved onto the question as it stands, held until it commits: the copy it read,
+    saved, would be *inserted* again — Django creates a row it no longer finds."""
+    from aira_management.apps.smoketests.views.catalogue import TestCaseViewSet
+
+    author = _client(_user("author", "it-security"))
+    question = Case.objects.create(topic="one", prompt="?", position=1)
+    edited = Case.objects.create(topic="two", prompt="?", position=2)
+    row_locks.clear()
+    assert author.patch(f"{CASES}{edited.pk}/", {"topic": "Two"}, format="json").status_code == 200
+    assert row_locks == ["smoketests.TestCase"]
+    updating = TestCaseViewSet.perform_update
+
+    def another_author_deletes_it_first(view, serializer) -> None:
+        Case.objects.filter(pk=question.pk).delete()
+        updating(view, serializer)
+
+    monkeypatch.setattr(TestCaseViewSet, "perform_update", another_author_deletes_it_first)
+
+    response = author.patch(f"{CASES}{question.pk}/", {"topic": "One"}, format="json")
+
+    assert response.status_code == 404, response.content
+    assert not Case.objects.filter(pk=question.pk).exists()

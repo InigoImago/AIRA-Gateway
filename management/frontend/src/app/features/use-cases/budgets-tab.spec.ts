@@ -725,6 +725,81 @@ describe('BudgetsTab — limits that are not limits', () => {
 });
 
 /**
+ * A spend limit is read one way or not at all. The field takes a comma as the decimal mark, so
+ * `5.000` — five thousand to a German reader — and `5,000` — five thousand to an English one —
+ * were both saved as five, under "Budget saved.", and an enforced budget then stopped the use case
+ * after five euros. The window now asks instead, and says what a figure it took will be stored as.
+ */
+describe('BudgetsTab — a spend limit means one amount', () => {
+  async function typeCost(value: string) {
+    const harness = setup({ currency: 'EUR' });
+    harness.click('add-budget');
+    // `ngModel` inside a `<form>` registers on a microtask.
+    await Promise.resolve();
+    const field = harness.fixture.nativeElement.querySelector('#budget-cost') as HTMLInputElement;
+    field.value = value;
+    field.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+    const window = harness.testid('budget-editor') as HTMLElement;
+    const add = window.querySelector('button[type="submit"]') as HTMLButtonElement;
+    return { harness, window, add };
+  }
+
+  it('asks which amount "5.000" and "5,000" are, and saves neither as five', async () => {
+    for (const typed of ['5.000', '5,000']) {
+      const { harness, window, add } = await typeCost(typed);
+
+      expect(window.textContent).toContain(`“${typed}” could be 5000 or 5.00`);
+      expect(window.textContent).toContain('never thousands');
+      expect(add.disabled).toBe(true);
+      (window.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit'));
+      expect(harness.calls.filter((call) => call.startsWith('create:'))).toEqual([]);
+    }
+  });
+
+  it('writes a decimal reading of three places so that it cannot be read twice', async () => {
+    const { window } = await typeCost('12,345');
+    expect(window.textContent).toContain('“12,345” could be 12345 or 12.3450');
+  });
+
+  it('says what the amount will be stored as, before it is saved', async () => {
+    const comma = await typeCost('250,5');
+    expect(comma.harness.testid('budget-cost-reading')?.textContent).toContain(
+      'Will be saved as 250.50 EUR.',
+    );
+    comma.add.click();
+    comma.harness.fixture.detectChanges();
+    expect(comma.harness.calls).toContain('create:use_case::250.5:null:true');
+
+    const thousands = await typeCost('5000');
+    expect(thousands.harness.testid('budget-cost-reading')?.textContent).toContain(
+      'Will be saved as 5000.00 EUR.',
+    );
+  });
+
+  it('takes a figure only one reading fits as it is written', async () => {
+    // A zero whole part is no thousand; four places or a fourth whole digit is no thousands group.
+    for (const [typed, sent] of [
+      ['0,125', '0.125'],
+      ['5.0000', '5.0000'],
+      ['5000.000', '5000.000'],
+    ]) {
+      const { harness, add } = await typeCost(typed);
+      expect(add.disabled).toBe(false);
+      add.click();
+      harness.fixture.detectChanges();
+      expect(harness.calls).toContain(`create:use_case::${sent}:null:true`);
+    }
+  });
+
+  it('says nothing about a reading while the field holds no amount', async () => {
+    const { harness } = await typeCost('viel');
+    expect(harness.testid('budget-cost-reading')).toBeNull();
+    expect((await typeCost('5.000')).harness.testid('budget-cost-reading')).toBeNull();
+  });
+});
+
+/**
  * "+ Add budget" for a scope and period that already have one replaces it — and a limit left empty
  * in the window is cleared on it. It used to say "Budget saved."
  */

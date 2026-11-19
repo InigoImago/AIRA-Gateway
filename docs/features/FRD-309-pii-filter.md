@@ -46,12 +46,17 @@ trusts.
 
 - **FR-1** A `pii_filter` step, configured with a model, an instruction, a notice and a failure
   policy. Every field optional except that a model must resolve.
-- **FR-2 The rewritten prompt is what is dispatched.** Only the last user message's text; its
-  attachments and tool parts are kept. **A stated blind spot**: a chat client resends the whole
-  conversation every turn, and its own copy of earlier turns was never redacted — so from the
-  second turn on, what was typed earlier reaches the model and the stored payload as typed, while
-  the step records `unchanged` or `redacted` for the last message only. Redacting every turn is a
-  redactor call per turn on every request — a cost and latency decision, not made here.
+- **FR-2 The rewritten prompt is what is dispatched.** Only the last user message's text — in a
+  request with no user message, the last message's, which is the one the injection filter reads
+  there — and the message read is the message written. Each text part is its own redactor call,
+  checked on its own (FR-4), and its rewrite goes back where the part stood: the attachments and
+  tool parts are kept in their places, two parts are never joined into one, and a Claude turn's
+  tool result stays in front of its text, as Anthropic requires. **A stated blind spot**: a chat
+  client resends the whole conversation every turn, and its own copy of earlier turns was never
+  redacted — so from the second turn on, what was typed earlier reaches the model and the stored
+  payload as typed, while the step records `unchanged` or `redacted` for the last message only.
+  Redacting every turn is a redactor call per turn on every request — a cost and latency decision,
+  not made here.
 - **FR-3 The rewritten prompt is what is stored.** `request_logs.request_payload` carries the
   rewritten body; where the substitution cannot be applied the payload is **dropped**, never kept.
   Both halves of that, since 2026-08-27: a body whose text cannot be matched is dropped
@@ -93,7 +98,10 @@ trusts.
 - **FR-11 A batch leaves one decision and one priced row.** The decision carries `texts` and
   `changed` — counts about the request's shape, never its content, which is what admits them to
   `SAFE_DECISION_KEYS`. The *N* calls are summed into one `pipeline:pii_filter` row: the same
-  figure of money either way, and a request whose own row is not buried under 256 others.
+  figure of money either way, and a request whose own row is not buried under 256 others. The row
+  is booked as the *N* requests it stands for, one per call (`FRD-125` FR-9b), as the caller's own
+  batch is booked one per text: sending the texts together weighs on a request budget what sending
+  them one by one would.
 
 ## 4. Design
 

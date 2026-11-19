@@ -164,10 +164,15 @@ An access token lives about an hour. Fetching lazily on expiry makes one request
 and, under load, makes *many* requests discover the expiry at once and all fetch.
 
 One token holder per project (not per adapter — the credential is shared), refreshing at ~80% of
-lifetime, with concurrent refreshes collapsed into one in-flight attempt. A failed refresh keeps
-serving the still-valid token and retries with backoff; only an expired token with a failing
-refresh produces FR-9. The clock is injectable, because "refreshes before expiry" is otherwise a
-property testable only by waiting an hour.
+lifetime, with concurrent refreshes collapsed into one in-flight attempt. **The refresh runs
+behind the requests**: while the held token is valid, every request is sent with it and the
+successor is fetched in the background, so an identity provider that is slow to answer holds up no
+request; only a request with no valid token waits — for the fetch already in flight. A failed
+refresh keeps serving the still-valid token, is logged, and retries with backoff; only an expired
+token with a failing refresh produces FR-9. Each call to an identity service — Google's token
+endpoint, its STS and impersonation, an OIDC provider, the metadata server — has its own time
+limit of seconds, not the model calls' minutes it shares a client with. The clock is injectable,
+because "refreshes before expiry" is otherwise a property testable only by waiting an hour.
 
 ### 5.3 Model naming has an `@` in it
 
@@ -286,9 +291,10 @@ observation (§10).
   multi-region, and both publishers with their respective methods; the bearer header set; upstream
   status codes passed through as they already are.
 - **Unit (token holder)** — refreshes before expiry against an injected clock; concurrent callers
-  produce **one** fetch; a failed refresh with a valid token keeps serving; an expired token with a
-  failing refresh raises `UpstreamError`, not a client error. The single-flight property written to
-  fail first against a naive implementation.
+  produce **one** fetch; a due refresh holds up no request while the token is valid, and a caller
+  who leaves does not cancel the fetch others wait for; a failed refresh with a valid token keeps
+  serving; an expired token with a failing refresh raises `UpstreamError`, not a client error. The
+  single-flight property written to fail first against a naive implementation.
 - **Unit (registry)** — a duplicate model name across providers **refuses to start**, naming both.
 - **Unit (residency)** — a model configured in a disallowed region **refuses to start**, naming
   both. Written to fail first against a warning-only implementation.

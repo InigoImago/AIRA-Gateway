@@ -129,7 +129,10 @@ budget tab and in the catalog.
 - **Management**: only a Global Administrator writes prices; half-priced models refused; prices
   published as strings; cost limits accepted and published.
 - **Frontend**: spend limit validation (including a comma as decimal separator), the bar computed
-  from nano-units, the unpriced warning, and the catalog screen (read-only for non-admins).
+  from nano-units, the unpriced warning, and the catalog screen (read-only for non-admins). A
+  typed spend limit or price that one convention reads as thousands and the other as decimals —
+  `5.000`, `5,000` — is asked about with both readings rather than saved as five, and the budget
+  windows say what a limit will be stored as before it is saved.
 - **Acceptance** (verified against the live stack): price `mock-1` at 1.00 / 10.00 per 1M, send
   three requests of 5 input and 8 output tokens each → each priced at exactly 85 000 nanos,
   accumulated to exactly 255 000; lower the limit below that and the next request is refused with

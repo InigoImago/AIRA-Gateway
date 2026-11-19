@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from aira_gateway.audit import ModelCall
 from aira_gateway.core.canonical import Thinking
@@ -12,8 +13,9 @@ from aira_gateway.pipeline.classifiers.prompts import (
     THINKING_OFF,
     classifier_request,
 )
+from aira_gateway.pipeline.classifiers.unanswered import UNANSWERED
 from aira_gateway.telemetry import model_call_span
-from aira_gateway.upstreams.base import Upstream, UpstreamError
+from aira_gateway.upstreams.base import Upstream
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,11 +49,14 @@ class LlmCategoryRouter:
         model: str,
         categories: list[dict[str, str]],
         thinking: Thinking | None = THINKING_OFF,
+        *,
+        addressing: dict[str, Any] | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
         self._categories = categories
         self._thinking = thinking
+        self._addressing = addressing
 
     async def classify_text(self, text: str) -> Routing:
         """The category, what asking for it cost, and what the model said."""
@@ -63,11 +68,12 @@ class LlmCategoryRouter:
             ROUTER_INSTRUCTION.format(categories=listing),
             text,
             self._thinking,
+            self._addressing,
         )
         try:
             with model_call_span(self._model, purpose="pipeline"):
                 response = await self._provider.generate(request)
-        except UpstreamError:
+        except UNANSWERED:
             return Routing(None, reached=False)
         call = ModelCall(step="model_route", model=self._model, usage=response.usage)
         return Routing(self._matched(response.text), call, response.text)

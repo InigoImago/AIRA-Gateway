@@ -110,6 +110,10 @@ class ModelCall:
     step: str
     model: str
     usage: CanonicalUsage
+    #: How many model calls this record stands for: one, or every call a step made over a batch
+    #: and summed into one row (`FRD-309` FR-11). Each reached a model, and a request budget counts
+    #: each as the request it was (`FRD-125` FR-9b) — as the caller's batch counts every text.
+    requests: int = 1
 
 
 @dataclass

@@ -1,11 +1,14 @@
 """Running steps over a payload that is only text — an embedding's batch (FRD-113, FRD-309).
 
 A batch is **one step over many texts**: one decision, one billed call and one outcome for the
-request, however many texts it held.
+request, however many texts it held. The texts are asked a bounded handful at a time
+(`each_in_order`), which is also how a redactor asks about the text parts of one message.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from aira_gateway.audit import APPLIED_ACTIONS, ModelCall
@@ -19,10 +22,36 @@ from aira_gateway.pipeline.engine.outcomes import StepEvaluation
 #: and what is stored, which is the same question for a text being embedded.
 TEXT_ONLY_STEPS = frozenset({StepType.PII_FILTER})
 
-#: How many texts of a batch are redacted at once. Each text is its own call, because a redaction is
-#: checked per text (`FRD-309` FR-4): sequential makes a large batch unusable, unbounded opens as
-#: many upstream connections as a caller asks for. Tune `AIRA_MAX_EMBEDDING_BATCH` first.
+#: How many texts of a batch — or text parts of one message — are redacted at once. Each text is its
+#: own call, because a redaction is checked per text (`FRD-309` FR-4): sequential makes a large
+#: batch unusable, unbounded opens as many upstream connections as a caller asks for. Tune
+#: `AIRA_MAX_EMBEDDING_BATCH` first.
 REDACTIONS_AT_ONCE = 8
+
+
+async def each_in_order[T, R](
+    items: Sequence[T], work: Callable[[T], Awaitable[R]], *, at_once: int = REDACTIONS_AT_ONCE
+) -> list[R]:
+    """``work`` over every item, at most ``at_once`` at a time, the answers **in the items' order**
+    — a rewrite applied to the wrong text is silent.
+
+    **One unit**: the first item that raises ends the others, because the request they belong to
+    has failed and a call still running would be spent on an answer nobody sends. The failure is
+    raised as itself rather than inside a group, so a caller handles exactly what one item asked
+    alone would have raised.
+    """
+    limit = asyncio.Semaphore(at_once)
+
+    async def bounded(item: T) -> R:
+        async with limit:
+            return await work(item)
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(bounded(item)) for item in items]
+    except BaseExceptionGroup as failed:
+        raise failed.exceptions[0] from None
+    return [task.result() for task in tasks]
 
 
 def _one_message(text: str, model: str) -> CanonicalRequest:
@@ -37,13 +66,20 @@ def _summed(step: str, calls: list[ModelCall]) -> list[ModelCall]:
     summed usage prices the same — **every** usage figure, because cache reads, cache writes and
     reasoning are priced apart (`FRD-133`, `FRD-135`). **Per model**, because a step's chain can
     answer different texts with different models (`FRD-302` FR-7), and a row names the model whose
-    price it carries.
+    price it carries. And the request count exact: the row stands for every call it sums, so a
+    batch's calls weigh on a request budget what the same texts sent one by one would.
     """
     by_model: dict[str, list[ModelCall]] = {}
     for call in calls:
         by_model.setdefault(call.model, []).append(call)
     return [
-        ModelCall(step=step, model=model, usage=_total(made)) for model, made in by_model.items()
+        ModelCall(
+            step=step,
+            model=model,
+            usage=_total(made),
+            requests=sum(call.requests for call in made),
+        )
+        for model, made in by_model.items()
     ]
 
 
@@ -82,7 +118,7 @@ def _over_the_batch(
     changed. The keys are the generation path's, with `texts` and `changed` added."""
     if not evaluations or notable is None or notable.decision is None:
         return None
-    changed = sum(1 for evaluation in evaluations if evaluation.rewrote is not None)
+    changed = sum(1 for evaluation in evaluations if evaluation.rewrites)
     return {
         **notable.decision,
         "step": str(step.type),

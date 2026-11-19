@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from aira_management.config.runtime import get_settings
 from django.core.cache import cache
+from django.db.models.query import QuerySet
 
 from aira_common.roles import CONFIGURABLE_ROLES
 
@@ -100,3 +101,22 @@ def role_claims(*roles: str) -> dict[str, Any]:
             "case is an object grant — give the user one instead."
         )
     return {"groups": [GROUP_FOR[role] for role in roles]}
+
+
+@pytest.fixture
+def row_locks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The models whose rows the code asked the database to lock (`select_for_update`), in order.
+
+    SQLite takes no row lock — Django leaves the clause out there — so this suite cannot watch two
+    requests wait for each other. It can see that the lock is asked for, which is the half of the
+    property the code controls; PostgreSQL does the waiting.
+    """
+    locked: list[str] = []
+    asked = QuerySet.select_for_update
+
+    def recorded(queryset: QuerySet[Any], *args: Any, **kwargs: Any) -> QuerySet[Any]:
+        locked.append(queryset.model._meta.label)
+        return asked(queryset, *args, **kwargs)
+
+    monkeypatch.setattr(QuerySet, "select_for_update", recorded)
+    return locked

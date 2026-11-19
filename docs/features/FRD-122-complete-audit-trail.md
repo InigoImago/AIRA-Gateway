@@ -94,7 +94,8 @@ way. A request budgeted without the atomic guarantee is indistinguishable from o
   route, it is recorded without attribution — source address and size, no identity
   (`record_oversized` in `middleware.py`). A defect before dispatch (an unhandled exception) answers
   500 and writes no row either — it is logged as `unhandled_error`; one inside the post-dispatch
-  sequence writes a `500`/`internal_error` row (`api/serving/accounting.py`).
+  sequence — a stream's included, from the moment its chain is opened — writes a
+  `500`/`internal_error` row (`api/serving/accounting.py`).
 - **FR-2 Outcome reason is a small closed vocabulary**, not free text: `served`, `rate_limited`,
   `budget_exceeded`, `blocked_by_pipeline`, `model_not_found`, `invalid_request`,
   `upstream_error`, `no_capable_model` (`ADR-0012` §3). A closed set is what makes it groupable in

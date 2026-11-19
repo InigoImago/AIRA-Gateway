@@ -2,9 +2,9 @@
 
 Two forms of one chain. :func:`dispatch_with_fallback` tries ``[model, *fallback_models]`` in order
 and returns the first finished response; :func:`stream_with_fallback` tries the same candidates and
-returns the first one that has **produced a chunk**, with that chunk already in hand. Both report
-the position of the candidate that answered, so the audit trail can say a substitution happened
-(`FRD-122` FR-3), and both report who was passed over and why.
+returns the first one whose answer **has begun**, with what it said so far already in hand. Both
+report the position of the candidate that answered, so the audit trail can say a substitution
+happened (`FRD-122` FR-3), and both report who was passed over and why.
 
 **A chain must not degrade a request silently.** A fallback that cannot read the attachment,
 enforce the schema, or serve from a permitted region does not fail — it answers fluently from less
@@ -33,6 +33,7 @@ what a region, a media type or a default is.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +54,7 @@ from aira_gateway.upstreams.base import (
     ProviderRegistry,
     Upstream,
     UpstreamError,
+    read_opening,
 )
 
 _log = get_logger("aira_gateway.pipeline")
@@ -166,10 +168,11 @@ class Dispatched:
 
 @dataclass(frozen=True, slots=True)
 class Streaming:
-    """A stream that has already produced its first chunk, and what it took to get there.
+    """A stream whose answer has begun — or that ended without one — and what it took to get there.
 
-    ``chunks`` begins with that chunk: the surface iterates it exactly as it iterated the adapter's
-    own iterator before the chain existed, and cannot tell that one chunk was pulled early.
+    ``chunks`` begins with what was read to find that out: the surface iterates it exactly as it
+    iterated the adapter's own iterator before the chain existed, and cannot tell that those chunks
+    were pulled early.
     """
 
     model: str
@@ -355,16 +358,20 @@ async def stream_with_fallback(
 ) -> Streaming:
     """The chain for a streamed request, opened rather than awaited (`ADR-0032`, `FRD-302` FR-6).
 
-    **The first chunk is the test.** A streaming adapter issues its HTTP request on the first
-    ``__anext__``, not when the iterator is built — so pulling one chunk is the moment a candidate
-    has proven it can serve, and the last moment at which replacing it is invisible to the caller.
-    A candidate that fails before that chunk is passed over like any other; one that produced it
-    owns the rest of the answer, because text from two models spliced into one answer is worse
-    than the failure it would be hiding.
+    **The first chunk that carries something is the test** (`read_opening`). A streaming adapter
+    issues its HTTP request on the first ``__anext__``, not when the iterator is built, and a
+    preamble — the OpenAI dialect's empty role delta, a running usage figure — gives the caller
+    nothing: so the first chunk with text, thinking, a call, speech or a finish is the moment a
+    candidate has proven it can serve, and the last moment at which replacing it is invisible to
+    the caller. A candidate that fails before it is passed over like any other, an error sent
+    right after its preamble included; one that produced it owns the rest of the answer, because
+    text from two models spliced into one answer is worse than the failure it would be hiding.
 
-    An upstream whose stream ends with **no chunk at all** has answered. The chain stops there: a
-    stream with a finish reason and no text is how a vendor's own safety filter refuses, and
-    retrying that down the chain pays three models to refuse the same request three times.
+    An upstream whose stream **ends** before then — with no chunk at all, or a preamble only — has
+    answered. The chain stops there: a stream with a finish reason and no text is how a vendor's
+    own safety filter refuses, and retrying that down the chain pays three models to refuse the
+    same request three times. (A `200` that holds no event at all is no answer, and fails before
+    it gets here: `exchange.sse_payloads`.)
     """
     skipped: list[Skipped] = []
     failed: list[Attempted] = []
@@ -376,15 +383,13 @@ async def stream_with_fallback(
     ):
         chunks: AsyncIterator[CanonicalChunk] | None = None
         try:
-            # Per attempt and **around the first chunk**, which is where the HTTP request is made,
-            # so each tried model leaves its own model-access record (`FRD-619`). Entered and left
-            # in one context: an entered context manager handed to the surface's generator would
-            # reset its contextvar token in a context that never created it.
+            # Per attempt and **around the opening**, where the HTTP request is made, so each
+            # tried model leaves its own model-access record (`FRD-619`). Entered and left in one
+            # context: an entered context manager handed to the surface's generator would reset
+            # its contextvar token in a context that never created it.
             with model_call_span(model, purpose="serve"):
                 chunks = provider.stream_generate(addressed)
-                first = await anext(chunks)
-        except StopAsyncIteration:
-            return Streaming(model, index, _nothing(), skipped, failed, provider, addressed)
+                opening = await read_opening(chunks)
         except UpstreamError as exc:
             last_error = exc
             failed.append(Attempted(model, _why(exc)))
@@ -400,12 +405,12 @@ async def stream_with_fallback(
             return Streaming(
                 model,
                 index,
-                _rejoined(first, chunks, model),
+                _Rejoined(opening, chunks, model),
                 skipped,
                 failed,
                 provider,
                 addressed,
-                first.served_region or "",
+                (opening[0].served_region or "") if opening else "",
             )
 
     if last_error is not None:
@@ -427,30 +432,43 @@ def _nothing_could_serve(
     return NoCapableModel(skipped)
 
 
-async def _rejoined(
-    first: CanonicalChunk, rest: AsyncIterator[CanonicalChunk], model: str
-) -> AsyncIterator[CanonicalChunk]:
-    """The chunk that proved the candidate, followed by everything after it.
+class _Rejoined:
+    """The chunks that proved the candidate — or all it said, where it ended without beginning an
+    answer — followed by everything after them.
 
-    **The `finally` is load-bearing, and it was missing.** A caller that hangs up mid-answer closes
-    the iterator it is reading — which is this wrapper, not the adapter's. Closing an async
-    generator does not close the one it was iterating: `async for` has no such contract, so the
-    upstream's response stayed open until the garbage collector reached it. Before the chain
-    existed the surface iterated the adapter directly and a disconnect released it, so inserting a
-    wrapper quietly took that away. It is given back here, where the wrapper knows what it wrapped.
+    **Closing it closes the adapter's stream, read or not.** A caller that hangs up closes the
+    iterator it is reading — which is this wrapper, not the adapter's — and nothing closes the
+    adapter's for it: `async for` has no such contract, so the upstream's response stayed open
+    until the garbage collector reached it. A class rather than an async generator, because a
+    generator closed **before its first read** runs none of its body, its `finally` included —
+    and the chain has already read the adapter's opening, so its response is open by then: a
+    caller gone while the headers were on their way left it open.
     """
-    try:
-        yield first
-        async for chunk in rest:
-            yield chunk
-    finally:
-        await _closed(rest, model)
 
+    def __init__(
+        self, opening: list[CanonicalChunk], rest: AsyncIterator[CanonicalChunk], model: str
+    ) -> None:
+        self._opening = deque(opening)
+        self._rest = rest
+        self._model = model
+        self._closed = False
 
-async def _nothing() -> AsyncIterator[CanonicalChunk]:
-    """An upstream that answered with no chunks — an answer, and the end of the chain."""
-    return
-    yield  # pragma: no cover — unreachable, and what makes this an async generator
+    def __aiter__(self) -> _Rejoined:
+        return self
+
+    async def __anext__(self) -> CanonicalChunk:
+        if self._closed:
+            raise StopAsyncIteration
+        if self._opening:
+            return self._opening.popleft()
+        return await anext(self._rest)
+
+    async def aclose(self) -> None:
+        """Release the adapter's stream, once; a stream already read to its end has nothing left."""
+        if not self._closed:
+            self._closed = True
+            self._opening.clear()
+            await _closed(self._rest, self._model)
 
 
 async def _closed(chunks: AsyncIterator[CanonicalChunk] | None, model: str) -> None:

@@ -83,7 +83,12 @@ export class SecurityRulesPanel {
     if (this.openRule() !== id) this.editing.set(null);
   }
 
+  /**
+   * Open the window afresh: an earlier failure on the page is not this window's outcome, and the
+   * window says its own refusal where the reader is — the page's banner is behind the backdrop.
+   */
   protected startCreate(): void {
+    this.feedback.clear();
     this.editing.set(null);
     this.draft.set(NEW_RULE);
   }

@@ -24,13 +24,20 @@ body the proxy in front would have let through is still bounded when there is no
 `\u0000` anywhere in a document — a pipeline instruction, a declaration, a key — is a `DataError`
 at the save, a `500` for a value the caller sent. Refused here, once, for every body; the path and
 query string are refused by `apps.api.middleware`.
+
+**Nor a lone surrogate.** JSON can escape half of a UTF-16 pair on its own (`\\ud800`) and the
+decoder hands it over, but it is not a character, and no UTF-8 text — which is what both databases
+are handed — can carry it: the driver raises `UnicodeEncodeError` at the first query that names it,
+a lookup by name included, before any field validator has run. Refused here for the same reason
+as a NUL.
 """
 
 from __future__ import annotations
 
 import codecs
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 from django.conf import settings
@@ -43,6 +50,16 @@ NUL = "\x00"
 
 #: The refusal of a body carrying U+0000, which no column of this plane can store.
 NUL_REFUSAL = "The JSON body contains a NUL character (\\u0000), which no stored value can hold."
+
+#: Half of a UTF-16 surrogate pair standing alone. A whole pair is decoded into the one character it
+#: encodes, so a code point in this range left in a decoded string is always alone.
+LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+#: The refusal of a body carrying one, which no column of this plane can store either.
+SURROGATE_REFUSAL = (
+    "The JSON body contains a lone surrogate (an escape such as \\ud800 without its pair), which "
+    "is not a character and which no stored value can hold."
+)
 
 # The codec names `codecs.lookup` normalises the Unicode encodings to.
 JSON_ENCODINGS = frozenset(
@@ -98,11 +115,23 @@ class BoundedJSONParser(JSONParser):
             raise ParseError(f"JSON parse error - {exc}") from exc
         if holds_nul(document):
             raise ParseError(NUL_REFUSAL)
+        if holds_a_lone_surrogate(document):
+            raise ParseError(SURROGATE_REFUSAL)
         return document
 
 
 def holds_nul(document: Any) -> bool:
-    """Whether any string in ``document`` — a value or a key — contains U+0000.
+    """Whether any string in ``document`` — a value or a key — contains U+0000."""
+    return any(NUL in text for text in _strings(document))
+
+
+def holds_a_lone_surrogate(document: Any) -> bool:
+    """Whether any string in ``document`` — a value or a key — holds half a surrogate pair."""
+    return any(not text.isascii() and LONE_SURROGATE.search(text) for text in _strings(document))
+
+
+def _strings(document: Any) -> Iterator[str]:
+    """Every string in ``document``, keys included.
 
     A walk with an explicit stack: the depth is already bounded, and a walk that cannot recurse
     cannot be the next `RecursionError`.
@@ -111,11 +140,9 @@ def holds_nul(document: Any) -> bool:
     while pending:
         value = pending.pop()
         if isinstance(value, str):
-            if NUL in value:
-                return True
+            yield value
         elif isinstance(value, dict):
             pending.extend(value.keys())
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
-    return False

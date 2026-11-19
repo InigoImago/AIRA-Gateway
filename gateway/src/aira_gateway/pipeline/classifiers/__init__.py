@@ -4,6 +4,7 @@
     injection   the injection filter's verdict — heuristic patterns or an LLM
     routing     the router's category
     redaction   the PII filter's rewrite, checked before it is trusted
+    unanswered  what a call to a step's model can end in without an answer
 
 Every LLM classifier returns the `ModelCall` it made together with its answer, so a step can bill
 what it spent even when it goes on to block (`FRD-125`).
@@ -34,8 +35,13 @@ from aira_gateway.pipeline.classifiers.prompts import (
     DataBoundary,
     classifier_request,
 )
-from aira_gateway.pipeline.classifiers.redaction import LlmRedactor, Redaction
+from aira_gateway.pipeline.classifiers.redaction import (
+    REDACTION_TEMPERATURE,
+    LlmRedactor,
+    Redaction,
+)
 from aira_gateway.pipeline.classifiers.routing import LlmCategoryRouter, Routing
+from aira_gateway.pipeline.classifiers.unanswered import UNANSWERED, why_unanswered
 
 __all__ = [
     "BUILTIN_INJECTION_PATTERNS",
@@ -49,9 +55,11 @@ __all__ = [
     "MAX_REDACTION_OUTPUT_TOKENS",
     "MAX_SCANNED_CHARS",
     "REDACTION_OUTPUT_HEADROOM",
+    "REDACTION_TEMPERATURE",
     "ROUTER_INSTRUCTION",
     "THINKING_CLASSIFIER_OUTPUT_TOKENS",
     "THINKING_OFF",
+    "UNANSWERED",
     "Classification",
     "DataBoundary",
     "HeuristicInjectionClassifier",
@@ -63,4 +71,5 @@ __all__ = [
     "Routing",
     "Verdict",
     "classifier_request",
+    "why_unanswered",
 ]

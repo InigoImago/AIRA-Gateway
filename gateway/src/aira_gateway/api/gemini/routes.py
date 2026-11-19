@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
 from aira_gateway.api.gemini import schemas
-from aira_gateway.api.gemini.errors import GeminiHTTPError
+from aira_gateway.api.gemini.errors import GeminiHTTPError, internal_error_response
 from aira_gateway.api.gemini.errors import gemini_error_response as _error
 from aira_gateway.api.gemini.mapping import (
     canonical_to_gemini,
@@ -77,6 +77,15 @@ GENERATION_METHODS = frozenset({"generateContent", "streamGenerateContent"})
 #: JavaScript twin skips a bare line from 1.21 (September 2025) and stalls on one before that.
 KEEPALIVE = "\n"
 
+#: The characters JSON writes as they are and a line reader ends a line at. Python's `splitlines`,
+#: which httpx's `iter_lines` and so the `google-genai` SDK read a stream with, splits at these
+#: three as well as at the control characters JSON always escapes — so an answer holding one, as
+#: text pasted from a word processor or a PDF often does, broke the SDK mid-stream. Google escapes
+#: them; so does this surface, as JSON's own escapes, which decode to the same text.
+LINE_BREAKS_JSON_KEEPS = str.maketrans(
+    {"\u0085": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"}
+)
+
 
 # == model listing ================================================================================
 
@@ -128,7 +137,7 @@ async def generate(resource: str, request: Request) -> Response:
     trail = AuditTrail(operation=method or "unknown", requested_model=model, api="gemini")
     started = time.monotonic()
     try:
-        return await _generate(resource, request, trail)
+        return await _generate(resource, request, trail, started)
     except REFUSALS as exc:
         response = refusal_response(exc, request)
         await record_refusal(request, trail, exc, status=response.status_code, started=started)
@@ -144,7 +153,9 @@ def split_resource(resource: str) -> tuple[str, str, str]:
     return (model, separator, method) if separator else ("", "", resource)
 
 
-async def _generate(resource: str, request: Request, trail: AuditTrail) -> Response:
+async def _generate(resource: str, request: Request, trail: AuditTrail, started: float) -> Response:
+    """Parse the verb and hand it to the shared layer. ``started`` is the route's own, so a row's
+    latency counts the whole request — the way to dispatch, pipeline included — as on KIRA's."""
     model, separator, method = split_resource(resource)
     if not separator:
         raise GeminiHTTPError(
@@ -183,9 +194,9 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
     )
     headers = deprecation_headers(prepared.declaration)
     if prepared.canonical is None:
-        return await _embed(request, model, method, prepared, trail, headers)
+        return await _embed(request, model, method, prepared, trail, headers, started)
     if method == "generateContent":
-        return await _generate_content(request, prepared, trail, headers)
+        return await _generate_content(request, prepared, trail, headers, started)
     asked = prepared.asked
     assert asked is not None
     return await _stream_response(
@@ -194,16 +205,20 @@ async def _generate(resource: str, request: Request, trail: AuditTrail) -> Respo
         prepared,
         trail,
         sse=request.query_params.get("alt") == "sse",
+        started=started,
         headers=headers,
     )
 
 
 async def _generate_content(
-    request: Request, prepared: Prepared, trail: AuditTrail, headers: dict[str, str]
+    request: Request,
+    prepared: Prepared,
+    trail: AuditTrail,
+    headers: dict[str, str],
+    started: float,
 ) -> Response:
     canonical, asked = prepared.canonical, prepared.asked
     assert canonical is not None and asked is not None
-    started = time.monotonic()
     async with accounting(
         request, trail, prepared, api="gemini", operation="generateContent", started=started
     ) as acct:
@@ -229,8 +244,11 @@ async def _generate_content(
         payload = canonical_to_gemini(answer).model_dump(exclude_none=True)
         # Stored without the model's signatures: state the caller needs, not what was said.
         stored = without_signatures(payload)
+        # Built before it counts as served: an answer that cannot be written is the `500` its
+        # caller gets, and the row says so.
+        response = JSONResponse(payload, headers=headers)
         acct.served(answer.model, answer.usage, stored, [call.name for call in answer.tool_calls])
-    return JSONResponse(payload, headers=headers)
+    return response
 
 
 async def _embed(
@@ -240,10 +258,10 @@ async def _embed(
     prepared: Prepared,
     trail: AuditTrail,
     headers: dict[str, str],
+    started: float,
 ) -> Response:
     embed_request = prepared.embed
     assert embed_request is not None
-    started = time.monotonic()
     async with accounting(
         request, trail, prepared, api="gemini", operation=method, started=started
     ) as acct:
@@ -260,7 +278,10 @@ async def _embed(
         )
         # Booked as the model that gave the vectors, which for a fallback is not the one named.
         acct.embedded(trail.served_model, units=embed_request.size, vectors=vectors)
-    return JSONResponse(payload, headers=headers)
+        # Booked, then built: vectors that cannot be written — a value JSON has no word for — are
+        # the `500` the caller gets, and the row says so, with what the vendor billed for them.
+        response = JSONResponse(payload, headers=headers)
+    return response
 
 
 async def _stream_response(
@@ -270,6 +291,7 @@ async def _stream_response(
     trail: AuditTrail,
     *,
     sse: bool,
+    started: float,
     headers: dict[str, str] | None = None,
 ) -> StreamingResponse:
     """Stream chunks as SSE (`?alt=sse`, the google-genai SDK) or as a JSON array (Gemini REST).
@@ -289,28 +311,18 @@ async def _stream_response(
     then begins anyway, the chain goes on looking for its first chunk — falling back as before —
     and the stream sends `KEEPALIVE` whenever it has been quiet for that long, before the first
     chunk and after it. A refusal that comes after that is the stream's last element, like a
-    failure after the first chunk.
+    failure after the first chunk — and so is a failure of this gateway's own, with the envelope
+    it would have had as a status, rather than a connection cut mid-body.
+
+    **Accounted for from the moment the chain is opened** (`StreamAccounting.dispatching`): from
+    there a model is being called, so a request that ends before its response exists — refused,
+    failed, or cut short by a stopping server — settles its reservation and leaves its row.
     """
     quiet = keepalive_seconds(request)
-    # Before the chain is opened: the wait for a candidate's first chunk is time this request
-    # took, and a `started` taken after it would report every stream as faster than it was.
-    started = time.monotonic()
-    # The caller's request, fitted to each candidate in turn (`fitting`), as on `generateContent`.
-    opening = Opening(
-        stream_with_fallback(
-            providers_of(request),
-            asked,
-            prepared.fallbacks,
-            permits=await requirements_for(request, asked),
-            routing_of=await declared_routing(request),
-            fit=fitting(request),
-        )
-    )
     stream = StreamAccounting(
         request,
         trail,
         prepared,
-        await opening.within(quiet) or opening,
         api="gemini",
         operation="streamGenerateContent",
         started=started,
@@ -331,30 +343,60 @@ async def _stream_response(
                         yield KEEPALIVE
                         continue
                     assert isinstance(chunk, CanonicalChunk)
-                    payload = chunk_to_gemini(stream.take(chunk), stream.model).model_dump_json(
-                        exclude_none=True
+                    payload = on_one_line(
+                        chunk_to_gemini(stream.take(chunk), stream.model).model_dump_json(
+                            exclude_none=True
+                        )
                     )
                     if sse:
                         yield f"data: {payload}\n\n"
                     else:
                         yield f"{separator}{payload}"
                         separator = ","
-            except REFUSALS as exc:
+            except Exception as exc:
                 stream.broke_off(exc)
-                # The same envelope the refusal boundary renders, as the stream's last element.
-                element = bytes(refusal_response(exc, request).body).decode()
+                # The envelope it would have had as a status — the refusal boundary's, or the one
+                # an unexpected failure is answered with — as the stream's last element.
+                element = on_one_line(bytes(_error_response(exc, request).body).decode())
                 yield f"data: {element}\n\n" if sse else f"{separator}{element}"
             if not sse:
                 yield "]"
             stream.delivered()
 
-    media_type = "text/event-stream" if sse else "application/json"
-    return AccountedStream(
-        stream,
-        generate_chunks(),
-        media_type=media_type,
-        headers={**(headers or {}), **STREAM_HEADERS},
-    )
+    async with stream.dispatching():
+        # The caller's request, fitted to each candidate in turn (`fitting`), as on
+        # `generateContent`.
+        opening = Opening(
+            stream_with_fallback(
+                providers_of(request),
+                asked,
+                prepared.fallbacks,
+                permits=await requirements_for(request, asked),
+                routing_of=await declared_routing(request),
+                fit=fitting(request),
+            )
+        )
+        stream.reads(await opening.within(quiet) or opening)
+        media_type = "text/event-stream" if sse else "application/json"
+        return AccountedStream(
+            stream,
+            generate_chunks(),
+            media_type=media_type,
+            headers={**(headers or {}), **STREAM_HEADERS},
+        )
+
+
+def _error_response(exc: Exception, request: Request) -> JSONResponse:
+    """The answer a failure gets in Google's envelope: a refusal's own, or the one every unexpected
+    failure of this gateway is answered with."""
+    if isinstance(exc, REFUSALS):
+        return refusal_response(exc, request)
+    return internal_error_response()
+
+
+def on_one_line(element: str) -> str:
+    """A streamed element as JSON a line reader keeps on one line (`LINE_BREAKS_JSON_KEEPS`)."""
+    return element.translate(LINE_BREAKS_JSON_KEEPS)
 
 
 # == parsing ======================================================================================
@@ -387,18 +429,23 @@ def _first_error(exc: ValidationError) -> str:
 
 
 def _embedding_request(model: str, method: str, body: dict[str, Any]) -> CanonicalEmbeddingRequest:
-    entries = (
-        [_validated(schemas.EmbedContentRequest, body)]
-        if method == "embedContent"
-        else _validated(schemas.BatchEmbedContentsRequest, body).requests
-    )
-    # The URL chooses the model. An entry naming a different one is refused rather than ignored,
-    # or the caller would get another model's vector under a 200 (`FRD-124`).
-    for entry in entries:
-        if not schemas.names_the_same_model(entry.model, model):
+    if method == "embedContent":
+        entries = [_validated(schemas.EmbedContentRequest, body)]
+        named = [entries[0].model]
+    else:
+        batch = _validated(schemas.BatchEmbedContentsRequest, body)
+        entries = batch.requests
+        # The batch's own `model` as well as each entry's: Google's batch request carries the
+        # model once for the whole — the field the URL fills — and once per entry, which must
+        # match it. A body that says another model in either place has misread which one serves.
+        named = [batch.model, *(entry.model for entry in entries)]
+    # The URL chooses the model. A body naming a different one is refused rather than ignored, or
+    # the caller would get another model's vector under a 200 (`FRD-124`).
+    for name in named:
+        if not schemas.names_the_same_model(name, model):
             raise GeminiHTTPError(
                 400,
-                f"An embedding request names model '{entry.model}' while the URL addresses "
+                f"An embedding request names model '{name}' while the URL addresses "
                 f"'{model}'. The URL decides which model serves a request; remove the field "
                 "or address the model you meant.",
                 "INVALID_ARGUMENT",

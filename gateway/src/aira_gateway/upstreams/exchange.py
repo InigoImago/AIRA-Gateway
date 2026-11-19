@@ -13,7 +13,8 @@ once, and a transport only names itself:
     opened_stream   a streamed request, judged before it is read; a refusal is read for its
                     reason and closed
     sse_payloads    each `data:` payload of a stream, parsed; a stream that breaks while it is
-                    read is an `UpstreamError`, not whatever the HTTP library or the parser raised
+                    read, and a 200 that holds no event at all, is an `UpstreamError`, not
+                    whatever the HTTP library or the parser raised — or an empty answer
 
 Every failure becomes an `UpstreamError` because that is what the dispatch chain moves on for and
 what both surfaces render as the upstream's fault (`serving.REFUSALS`). Anything else escapes as a
@@ -23,6 +24,7 @@ what both surfaces render as the upstream's fault (`serving.REFUSALS`). Anything
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Any
@@ -44,6 +46,13 @@ CONNECT_TIMEOUT_SECONDS = 10.0
 #: proxy's maintenance page) or a stream event that does not parse. A bad answer from the server
 #: behind the gateway — and one regional failover moves on for, like any other 5xx.
 BAD_ANSWER = 502
+
+#: Where a server-sent-event stream ends a line: CR, LF or CRLF, as the SSE format defines it, and
+#: nowhere else. `str.splitlines` — and httpx's line reader, which uses it — also ends a line at
+#: U+0085, U+2028, U+2029 and four control characters, which JSON leaves unescaped inside a
+#: string: an answer quoting text copied out of a PDF would be cut into half an event that does not
+#: parse.
+SSE_LINE_BREAK = re.compile(r"\r\n|\r|\n")
 
 
 def timeout(seconds: float) -> httpx.Timeout:
@@ -224,13 +233,24 @@ async def sse_payloads(response: httpx.Response, name: str) -> AsyncGenerator[di
     vendor repeats the event type inside the payload), and OpenAI's ``[DONE]`` sentinel is the end
     of the stream rather than an event. A connection that breaks while the stream is read, and a
     payload that does not parse, are the upstream's failure and say so.
+
+    **A body without a single event is no answer.** Every vendor's stream says something, its own
+    refusals included — Gemini a chunk per event, Anthropic `message_start`, the OpenAI dialect a
+    finish and its ``[DONE]`` — so a `200` holding no `data:` event is not an event stream at all:
+    a proxy's block page, a web page behind a wrong base URL, a server that ignored `stream: true`
+    and sent its whole answer as one JSON object. The upstream's failure, like a `200` that is not
+    JSON, and one the chain moves on for — not an empty answer recorded as served.
     """
+    events = 0
     try:
-        async for line in response.aiter_lines():
+        async for line in sse_lines(response):
             if not line.startswith("data:"):
                 continue
             payload = line[len("data:") :].strip()
-            if not payload or payload == "[DONE]":
+            if not payload:
+                continue
+            events += 1
+            if payload == "[DONE]":
                 continue
             try:
                 parsed = json.loads(payload)
@@ -242,3 +262,28 @@ async def sse_payloads(response: httpx.Response, name: str) -> AsyncGenerator[di
                 yield parsed
     except httpx.HTTPError as exc:
         raise unreachable(exc, name) from exc
+    if not events:
+        raise UpstreamError(f"{name} answered with a body that is not an event stream.", BAD_ANSWER)
+
+
+async def sse_lines(response: httpx.Response) -> AsyncGenerator[str]:
+    """The lines of a streamed body, each ended where the SSE format ends one (`SSE_LINE_BREAK`).
+
+    A CR that ends one read may be the first half of a CRLF the next read completes: it ends its
+    line at once, and an LF arriving first in the next read is not a second, empty line. A last
+    line without an ending is still a line.
+    """
+    unfinished: list[str] = []
+    after_cr = False
+    async for read in response.aiter_text():
+        if not read:
+            continue
+        text = read[1:] if after_cr and read.startswith("\n") else read
+        after_cr = text.endswith("\r")
+        *ended, rest = SSE_LINE_BREAK.split(text)
+        for line in ended:
+            yield "".join(unfinished) + line
+            unfinished = []
+        unfinished.append(rest)
+    if "".join(unfinished):
+        yield "".join(unfinished)

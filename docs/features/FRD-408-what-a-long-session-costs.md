@@ -105,6 +105,11 @@ per million tokens. Google's $1 per 1 000 queries typed as `1` is a thousand tim
     the row keeps its failure status;
   - with none reported and an error the vendor sent, nothing is booked and nothing sent again.
   `AIRA_COUNT_CANCELLED_STREAMS=false` switches the second look off here as well.
+  The same holds for an answer read **as** a stream for a caller who did not stream — every Claude
+  request on Vertex: what Claude reported before the break goes with the failure
+  (`UpstreamError.spent`) and is booked `partial` on the refusal's row, or added to the answer of
+  the region that served where another was tried first. An embedding batch sent one text per call
+  carries what the texts before the failing one reported, the same way.
 - **FR-7 One reading of Claude's usage.** Both of Claude's readers fold an event's usage into the
   running totals by one function (`take_usage`), which takes a count only as a number.
 - **FR-8 A reranker's unit.** The model editor says, for a model that declares `rerank`, that its

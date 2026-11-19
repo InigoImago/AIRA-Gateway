@@ -605,6 +605,39 @@ async def test_a_person_filter_narrows_the_whole_report_and_not_only_the_chart(
     assert report["totals"]["cost"] == "3.00"
     assert [row["key"] for row in report["by_person"]] == ["erika"]
     assert sum(point["cost_nanos"] for point in report["series"]["points"]) == to_nanos("3.00")
+    # Every breakdown adds up to the totals beside it — the split by credential subject too, which
+    # a reader who may see people was shown for the whole use case.
+    for split in ("by_use_case", "by_model", "by_member", "by_outcome", "by_person"):
+        assert sum(to_nanos(row["cost"]) for row in report[split]) == to_nanos("3.00"), split
+    assert [row["key"] for row in report["by_member"]] == ["erika"]
+
+
+def test_the_member_csv_of_a_report_narrowed_to_a_person_is_that_persons_only() -> None:
+    """Through the endpoint, as a Global Administrator — who sees people under strict data mode,
+    so nothing but ``person`` narrows the split — in JSON and in the CSV of ``breakdown=member``,
+    which renders exactly that split."""
+    admin = Principal(subject="root", method="oidc", roles=("global-admin",), username="root")
+    app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    app.dependency_overrides[require_principal] = lambda: admin
+    with TestClient(app) as client:
+        for subject, cost in (("erika", to_nanos("3.00")), ("hans", to_nanos("99.00"))):
+
+            async def seed(subject: str = subject, cost: int = cost) -> None:
+                await _logged_as(
+                    app.state.db_sessionmaker, subject=subject, username=subject, cost=cost
+                )
+
+            client.portal.call(seed)  # type: ignore[attr-defined]
+        window = "from=2026-08-01&to=2026-09-01&use_case=uc&person=erika"
+        body = client.get(f"/v1beta/reporting?{window}").json()
+        csv = client.get(
+            f"/v1beta/reporting?{window}&breakdown=member", headers={"Accept": "text/csv"}
+        ).text
+
+    assert body["totals"]["cost"] == "3.00"
+    assert [row["key"] for row in body["by_member"]] == ["erika"]
+    assert "erika" in csv
+    assert "hans" not in csv
 
 
 async def test_a_report_with_no_person_is_about_everybody(sessionmaker) -> None:

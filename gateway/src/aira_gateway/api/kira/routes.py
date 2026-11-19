@@ -118,13 +118,16 @@ async def chat(request: Request, principal: Principal = Depends(require_principa
             check_structured_result(canonical, answer)
             check_answered(answer)
             payload = to_chat_response(answer).model_dump()
+            # Built before it counts as served: an answer that cannot be written is the `500` its
+            # caller gets, and the row says so.
+            response = JSONResponse(payload, headers=surface_headers(request))
             acct.served(
                 answer.model,
                 answer.usage,
                 stored(payload),
                 [call.name for call in answer.tool_calls],
             )
-        return JSONResponse(payload, headers=surface_headers(request))
+        return response
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
 
@@ -142,34 +145,26 @@ async def streaming_chat(
     chain with nothing left to offer is still a status rather than a stream that stops — for as
     long as `AIRA_STREAM_KEEPALIVE_SECONDS` (`ADR-0046`). A chain still looking after that does
     not hold the caller without a byte: the response begins, the chain goes on, and a refusal it
-    ends in is a stream without `completed`.
+    ends in is a stream without `completed` — as is a failure of this gateway's own after the
+    status went out, rather than a connection cut mid-body.
+
+    Accounted for from the moment the chain is opened (`StreamAccounting.dispatching`): from there
+    a model is being called, so a request that ends before its response exists — refused, failed,
+    or cut short by a stopping server — settles its reservation and leaves its row.
     """
     started = time.monotonic()
     trail = AuditTrail(operation="streaming-chat", api="kira")
     quiet = keepalive_seconds(request)
     try:
         prepared = await _prepare(request, principal, trail)
-        asked = prepared.asked
-        assert asked is not None
-        opening = Opening(
-            stream_with_fallback(
-                providers_of(request),
-                asked,
-                prepared.fallbacks,
-                permits=await requirements_for(request, asked),
-                routing_of=await declared_routing(request),
-                fit=fitting(request),
-            )
-        )
-        streamed = await opening.within(quiet) or opening
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
-
+    asked = prepared.asked
+    assert asked is not None
     stream = StreamAccounting(
         request,
         trail,
         prepared,
-        streamed,
         api="kira",
         operation="streaming-chat",
         started=started,
@@ -194,9 +189,10 @@ async def streaming_chat(
                         # `completed` alone.
                         continue
                     yield f"data: {json.dumps(update_event(led))}\n\n"
-            except KIRA_REFUSALS as exc:
+            except Exception as exc:
                 # The status is already sent: the stream ends without `completed`, which is how a
-                # client of this contract learns that the answer is not whole.
+                # client of this contract learns that the answer is not whole — whether a refusal
+                # ended it or a failure of this gateway's own.
                 stream.broke_off(exc)
                 return
 
@@ -225,12 +221,28 @@ async def streaming_chat(
             stream.delivered(stored(event["data"]))
             yield f"data: {json.dumps(event)}\n\n"
 
-    return AccountedStream(
-        stream,
-        events(),
-        media_type="text/event-stream",
-        headers={**surface_headers(request), **STREAM_HEADERS},
-    )
+    try:
+        async with stream.dispatching():
+            opening = Opening(
+                stream_with_fallback(
+                    providers_of(request),
+                    asked,
+                    prepared.fallbacks,
+                    permits=await requirements_for(request, asked),
+                    routing_of=await declared_routing(request),
+                    fit=fitting(request),
+                )
+            )
+            streamed = await opening.within(quiet) or opening
+            stream.reads(streamed)
+            return AccountedStream(
+                stream,
+                events(),
+                media_type="text/event-stream",
+                headers={**surface_headers(request), **STREAM_HEADERS},
+            )
+    except KIRA_REFUSALS as exc:
+        return await _refused(request, trail, exc, started=started)
 
 
 @router.post("/embed")
@@ -283,7 +295,10 @@ async def embed(request: Request, principal: Principal = Depends(require_princip
             payload = schemas.EmbeddingResponse(vector=vectors[0] if vectors else []).model_dump()
             # Booked as the model that gave the vector, which for a fallback is not the one named.
             acct.embedded(trail.served_model, units=embed_request.size, vectors=vectors)
-        return JSONResponse(payload, headers=surface_headers(request))
+            # Booked, then built: a vector that cannot be written is the `500` the caller gets,
+            # and the row says so, with what the vendor billed for it.
+            response = JSONResponse(payload, headers=surface_headers(request))
+        return response
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
 
@@ -310,7 +325,10 @@ async def rerank(request: Request, principal: Principal = Depends(require_princi
             ranked = await rank(request, prepared, trail)
             payload = to_rerank_response(ranked).model_dump()
             acct.ranked(trail.served_model, units=prepared.rerank.units, records=ranked)
-        return JSONResponse(payload, headers=surface_headers(request))
+            # Booked, then built: a score that cannot be written is the `500` the caller gets,
+            # and the row says so, with what the ranking cost.
+            response = JSONResponse(payload, headers=surface_headers(request))
+        return response
     except KIRA_REFUSALS as exc:
         return await _refused(request, trail, exc, started=started)
 

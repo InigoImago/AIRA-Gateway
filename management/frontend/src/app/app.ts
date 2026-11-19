@@ -1,8 +1,7 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { errorMessage } from './core/api/error-message';
 import { MeService } from './core/api/me.service';
-import { Me } from './core/api/models';
 import { AuthService } from './core/auth/auth.service';
 import { PrivacyGate } from './core/privacy/privacy-gate';
 import { InstallationClock } from './core/ui/clock';
@@ -24,7 +23,12 @@ export class App implements OnInit {
   protected readonly clock = inject(InstallationClock).zone;
 
   protected readonly title = signal('AIRA Gateway');
-  protected readonly me = signal<Me | null>(null);
+  /**
+   * The account as the console knows it now — the shared answer, not a copy taken at start-up: a
+   * screen that reads `/me` after the shell's own read failed, or a role renamed and read again,
+   * changes what the header and the navigation show.
+   */
+  protected readonly me = this.meService.me;
 
   /** The issuer the console could not reach at startup, or `null` (`AuthService.startupError`). */
   protected readonly startupError = this.auth.startupError;
@@ -35,24 +39,24 @@ export class App implements OnInit {
   /** Whether a sign-in is under way, which the shell covers (`AuthService.signingIn`). */
   protected readonly signingIn = this.auth.signingIn;
 
+  /** Why the shell's own read of `/me` failed, or `null`. */
+  private readonly accountFailure = signal<string | null>(null);
+
   /**
    * Why the console could not load your account, or `null` when it could.
    *
    * Everything role-shaped in the shell — the username, the role chips, Logout, the incident and
    * oversight navigation — comes from `/me`, so a failure that removes controls has to say so. This
-   * is the shell: there is no page below it to carry the message.
+   * is the shell: there is no page below it to carry the message. Taken down as soon as any screen
+   * has read the account.
    */
-  protected readonly accountError = signal<string | null>(null);
+  protected readonly accountError = computed(() => (this.me() ? null : this.accountFailure()));
 
   ngOnInit(): void {
     if (this.auth.isAuthenticated()) {
       this.meService.get().subscribe({
-        next: (me) => {
-          this.me.set(me);
-          this.accountError.set(null);
-        },
         error: (error: unknown) =>
-          this.accountError.set(errorMessage(error, 'Your account could not be loaded.')),
+          this.accountFailure.set(errorMessage(error, 'Your account could not be loaded.')),
       });
     }
   }

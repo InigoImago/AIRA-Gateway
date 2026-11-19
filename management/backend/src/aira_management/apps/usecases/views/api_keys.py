@@ -27,7 +27,9 @@ from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseMembership
 from aira_management.apps.usecases.views.base import UseCaseViewBase
 from aira_management.apps.usecases.views.grants import _admit, _revoke_key
+from aira_management.apps.usecases.views.lifecycle import held_live
 from aira_management.apps.usecases.views.payloads import _api_key_payload
+from aira_management.memo import forget
 
 #: How many fresh prefixes issuance draws before giving up. A prefix is 32 random bits and unique,
 #: so a collision is rare and two in a row rarer still; the bound keeps "rare" from being a loop.
@@ -90,6 +92,10 @@ class ApiKeysMixin(UseCaseViewBase):
             )
         return owner, caller.get_username()
 
+    def _may_issue(self, usecase: UseCase) -> None:
+        if not self._is_member(usecase):
+            raise PermissionDenied("Only members of this use case may issue API keys.")
+
     @action(detail=True, methods=["get", "post"], url_path="api-keys")
     def api_keys(self, request: Request, slug: str | None = None) -> Response:
         """List keys, or issue one bound to this use case."""
@@ -100,12 +106,10 @@ class ApiKeysMixin(UseCaseViewBase):
                 ApiKeySerializer(keys, many=True, context={"viewer": request.user}).data
             )
 
-        if not self._is_member(usecase):
-            raise PermissionDenied("Only members of this use case may issue API keys.")
+        self._may_issue(usecase)
         payload = IssueApiKeySerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         label = payload.validated_data["label"]
-        owner, issued_by = self._resolve_owner(usecase, payload.validated_data["owner"])
         # Always a date: the serializer fills in the default and refuses anything past the maximum.
         days = payload.validated_data["expires_in_days"]
         expires_at = timezone.now() + timedelta(days=days)
@@ -113,6 +117,18 @@ class ApiKeysMixin(UseCaseViewBase):
             full, prefix, key_hash = generate_api_key()
             try:
                 with transaction.atomic():
+                    # **Who may issue, and for whom, asked holding the use case, of the grants as
+                    # they stand now.** A removal that committed after a check made before this
+                    # transaction swept the use case's keys before this one existed, so a key
+                    # written on that check's strength would outlive the access it rests on
+                    # (`FRD-613`). Removals take the same lock: one that comes later waits for
+                    # this key and revokes it, one that came first is seen here. The request's memo
+                    # is forgotten first, because another request's change of access cannot clear
+                    # it.
+                    usecase = held_live(usecase)
+                    forget()
+                    self._may_issue(usecase)
+                    owner, issued_by = self._resolve_owner(usecase, payload.validated_data["owner"])
                     if not holds_a_grant(owner, usecase):
                         # Only somebody who may manage every use case gets here (`is_member`'s
                         # blanket, the Global Administrator's): issuing is open to them without a

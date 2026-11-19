@@ -31,6 +31,7 @@ from aira_management.apps.usecases.views.grants import (
     _revoke,
     _revoke_keys_without_access,
 )
+from aira_management.apps.usecases.views.lifecycle import held_live
 from aira_management.rbac import django_group_name
 
 
@@ -71,6 +72,9 @@ class MembersMixin(UseCaseViewBase):
             raise PermissionDenied("You cannot manage members of this use case.")
         user = _resolve_user(username or "")
         with transaction.atomic():
+            # Held while the keys are swept, so a key being issued on this access is either
+            # written before and revoked below, or refused after (`ApiKeysMixin.api_keys`).
+            usecase = held_live(usecase)
             UseCaseMembership.objects.filter(use_case=usecase, user=user).delete()
             _revoke(user, usecase)
             # **The name as it is stored, not as it was typed**: the gateway keys
@@ -123,6 +127,8 @@ class MembersMixin(UseCaseViewBase):
             raise ValidationError({"group_path": [f"'{path}' is not granted on this use case."]})
 
         with transaction.atomic():
+            # Held while the keys are swept, as for a member's removal above.
+            usecase = held_live(usecase)
             grant.delete()
             group = Group.objects.filter(name=django_group_name(path)).first()
             if group is not None:

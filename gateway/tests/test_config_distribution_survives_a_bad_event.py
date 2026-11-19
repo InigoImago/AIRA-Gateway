@@ -3,7 +3,7 @@
 The consumer loop called `apply_event` straight out of `async for`, so any failure left the loop,
 stopped the consumer and ended the process. Every handler indexes its payload — `payload["slug"]`,
 `payload["prefix"]`, `payload["username"]` — so a single malformed event was enough: a field
-renamed by a newer Management, a truncated value, a database that blinked.
+renamed by a newer Management, a truncated value.
 
 **The consequence is worse than the crash, and it is silent.** The container restarts, reads the
 same message and dies again — a poison pill — while the gateway goes on serving perfectly from a
@@ -12,14 +12,12 @@ budget never arrives, a deleted use case still answers. Nothing on any screen sa
 configuration stopped flowing; the only symptom is a container's restart count, which is the one
 place nobody is looking during an incident.
 
-And the opposite outcome is available too. Offsets are auto-committed on a timer, so the commit
-can move past the bad message before the crash, in which case the event is simply lost. Which of
-the two happens is a race between a timer and an exception.
-
 The rule this file pins is therefore not "nothing fails" but **"a failure is contained and named"**:
 the bad event is skipped with its topic, partition and offset, and every event after it is still
 applied. Stopping the world for one malformed row is not the safer choice for a component whose
-job is to deliver revocations.
+job is to deliver revocations. A skip is final — the offset moves past it — so it is kept for what
+the event carries: a database that blinked fails an event through no fault of its own, and that
+event is held until it applies (`test_a_configuration_event_survives_a_database_restart.py`).
 """
 
 from __future__ import annotations
@@ -131,6 +129,9 @@ class _Broker:
         self._messages = messages
 
     async def start(self) -> None:
+        return None
+
+    async def commit(self, offsets: dict[Any, int]) -> None:
         return None
 
     async def stop(self) -> None:

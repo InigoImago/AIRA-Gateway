@@ -60,14 +60,18 @@ def _split(model_id: str, fixed: str | None) -> tuple[str, str]:
 
 
 def _price(value: Any) -> str | None:
-    """A per-million price as the catalog stores it — a decimal string — or nothing."""
+    """A per-million price as the catalog stores it — a decimal string — or nothing.
+
+    A list stating `NaN` or `Infinity` states no price: neither is an amount, and comparing `NaN`
+    with anything raises rather than answering.
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
         amount = Decimal(str(value))
     except InvalidOperation:
         return None
-    if amount < 0:
+    if not amount.is_finite() or amount < 0:
         return None
     return format(amount.normalize(), "f")
 

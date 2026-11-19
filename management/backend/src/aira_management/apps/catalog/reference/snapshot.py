@@ -109,7 +109,12 @@ def current(url: str, *, client: httpx.Client | None = None) -> Reference:
             return _shipped_because(_failed[1])
         try:
             _live = _fetch(url, client)
-        except (httpx.HTTPError, ValueError) as exc:
+        except Exception as exc:
+            # **Any failure, not only a failed request.** Reading the answer walks a third party's
+            # JSON in whatever shape it has today, and an entry of a type nobody expected fails
+            # there — as a `TypeError`, an `AttributeError`, an `ArithmeticError` — as surely as a
+            # timeout fails the request: the live list cannot be had either way, so the shipped
+            # copy answers, and the pause below spares the next visits the same failure.
             # The type, never the text: an HTTP client's message carries the address it called.
             reason = (
                 f"{url} could not be read ({type(exc).__name__}); this is the copy shipped with "

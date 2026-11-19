@@ -6,7 +6,10 @@ Wraps the shared :class:`aira_common.oidc.JwtVerifier` and maps verified claims 
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import jwt
@@ -27,6 +30,17 @@ from aira_gateway.config import GatewaySettings
 #: Bounds on claims that reach stored fields.
 _MAX_USERNAME = 150
 _MAX_CLIENT = 64
+
+#: The threads token validation runs on, and nothing else does. Validation may wait for the
+#: identity provider — a key-set fetch, bounded by its timeout — and on the event loop's default
+#: executor that wait would hold a thread the audit writer and a mail delivery need as well, and on
+#: the standard loop every name resolution. Four: one fetch runs at a time per issuer, and the rest
+#: verify a signature, which takes well under a millisecond.
+VALIDATION_THREADS = 4
+
+_validation_threads = ThreadPoolExecutor(
+    max_workers=VALIDATION_THREADS, thread_name_prefix="aira-token-validation"
+)
 
 
 class OidcValidator:
@@ -123,6 +137,18 @@ class OidcValidator:
             groups=tuple(groups),
             roles=roles_from_groups(groups, self._role_groups),
         )
+
+
+async def validate_off_the_loop(validator: OidcValidator, token: str) -> Principal | None:
+    """``validator.validate(token)`` on the validation threads, never on the event loop.
+
+    In the caller's context, as `asyncio.to_thread` would run it, so a line the validation logs
+    carries the request's trace.
+    """
+    context = contextvars.copy_context()
+    return await asyncio.get_running_loop().run_in_executor(
+        _validation_threads, context.run, validator.validate, token
+    )
 
 
 def build_oidc_validator(settings: GatewaySettings) -> OidcValidator | None:

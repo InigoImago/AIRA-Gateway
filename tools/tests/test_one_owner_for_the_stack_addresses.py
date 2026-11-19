@@ -292,6 +292,24 @@ def test_the_owner_follows_every_name_compose_consults(monkeypatch) -> None:
     assert stack_addresses.port("gateway") == 17001, "the outer name wins when both are set"
 
 
+def test_a_planes_settings_are_handed_the_moved_addresses_too(monkeypatch) -> None:
+    """The live suite hands a plane's settings these, because the settings' defaults are a stack on
+    today's ports and a test session runs with every `AIRA_*` variable removed: unmoved, a
+    `GatewaySettings()` or a `manage.py relay` there reached whichever stack answered on the
+    defaults. Moved, every one of them follows."""
+    monkeypatch.setenv("AIRA_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("AIRA_PUBLISH_POSTGRES_PORT", "15432")
+    monkeypatch.setenv("AIRA_PUBLISH_KAFKA_PORT", "39092")
+    monkeypatch.setenv("AIRA_PUBLISH_REDIS_PORT", "16379")
+
+    assert stack_addresses.settings_environment() == {
+        "AIRA_POSTGRES_HOST": "127.0.0.1",
+        "AIRA_POSTGRES_PORT": "15432",
+        "AIRA_KAFKA_BOOTSTRAP_SERVERS": "127.0.0.1:39092",
+        "AIRA_REDIS_URL": "redis://127.0.0.1:16379/0",
+    }
+
+
 def test_a_service_with_no_legacy_name_still_resolves(monkeypatch) -> None:
     """The nested form exists for three services only; the other eleven have one name. A chain
     walker that assumed two would drop them, which is the mirror of the bug above."""

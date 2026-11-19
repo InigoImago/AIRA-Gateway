@@ -132,6 +132,9 @@
             placeholder="e.g. 250.00"
             autocomplete="off"
           />
+          @if (costReading(); as reading) {
+            <span class="field__hint" data-testid="budget-cost-reading">{{ reading }}</span>
+          }
         </div>
         <div class="field">
           <label for="budget-tokens">Token limit</label>

@@ -26,7 +26,9 @@ class StepEvaluation:
     #: For the audit trail, or `None` where there is nothing to record. Separate from `detail`:
     #: what a reader may see and what is kept durably are different questions (`FRD-122` §5.3).
     decision: dict[str, Any] | None = None
-    call: ModelCall | None = None
+    #: The model calls the step made, whatever it then decided (`FRD-125`): none, one, or one per
+    #: text part a redactor rewrote.
+    calls: tuple[ModelCall, ...] = ()
     #: The request as this step leaves it; `None` where the step changed nothing.
     request: CanonicalRequest | None = None
     #: Set where the step refuses; `run` raises it, `dry_run` reports it.
@@ -34,9 +36,9 @@ class StepEvaluation:
     #: A sentence the caller is owed about their request having been changed (`FRD-309`). Carried
     #: out rather than applied: the pipeline runs before dispatch, so there is no answer yet.
     notice: str | None = None
-    #: ``(before, after)`` where this step rewrote the caller's text, so the stored request can be
-    #: the rewritten one as well as the dispatched one.
-    rewrote: tuple[str, str] | None = None
+    #: ``(before, after)`` for each text this step rewrote, so the stored request can be the
+    #: rewritten one as well as the dispatched one.
+    rewrites: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass

@@ -80,6 +80,10 @@ def accumulate(
 
     ``cost_nanos`` of ``None`` means the model had no price on file; it is counted under
     ``unpriced_requests`` rather than as zero (`FRD-403`).
+
+    It returns the row as this statement left it. The row stays locked until the commit, so that is
+    the row as the commit leaves it too — which the shared counter reads to tell whether a reading
+    of Postgres came before this booking or after it (`ledger`).
     """
     unpriced = requests if cost_nanos is None else 0
     values = {
@@ -103,4 +107,4 @@ def accumulate(
             "cost_nanos": columns.cost_nanos + (cost_nanos or 0),
             "unpriced_requests": columns.unpriced_requests + unpriced,
         },
-    )
+    ).returning(columns.tokens, columns.requests, columns.cost_nanos)

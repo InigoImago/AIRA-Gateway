@@ -34,6 +34,10 @@ interface List {
 function setup(
   options: {
     list?: Observable<UseCase[]>;
+    /** One answer per load of the list, in order; then `list`. */
+    lists?: Observable<UseCase[]>[];
+    /** `/v1/me` fails the first time it is asked, and answers after that. */
+    meFailsFirst?: boolean;
     create?: Observable<UseCase>;
     roles?: string[];
     permissions?: string[];
@@ -44,6 +48,8 @@ function setup(
   const created: Partial<UseCase>[] = [];
   const navigated: unknown[][] = [];
   const queries: { query: string; page: number }[] = [];
+  const lists = [...(options.lists ?? [])];
+  let meAsked = 0;
   TestBed.configureTestingModule({
     imports: [UseCaseList],
     providers: [
@@ -53,14 +59,16 @@ function setup(
         useValue: {
           currency: signal(''),
           get: () =>
-            of({
-              username: 'u',
-              // A real caller: `use-case-admin` is not a role any more (`ADR-0017`), and a
-              // harness whose default nobody can hold is a harness testing a different product.
-              roles: options.roles ?? ['global-admin'],
-              permissions: options.permissions ?? ['usecase.create'],
-              use_cases: [],
-            } as unknown as Me),
+            meAsked++ === 0 && options.meFailsFirst
+              ? throwError(() => ({ status: 503 }))
+              : of({
+                  username: 'u',
+                  // A real caller: `use-case-admin` is not a role any more (`ADR-0017`), and a
+                  // harness whose default nobody can hold is a harness testing a different product.
+                  roles: options.roles ?? ['global-admin'],
+                  permissions: options.permissions ?? ['usecase.create'],
+                  use_cases: [],
+                } as unknown as Me),
         },
       },
       {
@@ -73,7 +81,7 @@ function setup(
            */
           listPage: (query: string, page: number) => {
             queries.push({ query, page });
-            const source = options.list ?? of([DEMO]);
+            const source = lists.shift() ?? options.list ?? of([DEMO]);
             return source.pipe(
               map((rows: UseCase[]) => {
                 const matching = query
@@ -180,6 +188,33 @@ describe('UseCaseList', () => {
     expect(component.error()).toBe('Failed to load use cases.');
     expect(text()).toContain('Failed to load use cases.');
     expect(component.loading()).toBe(false);
+  });
+
+  it('says a failed load is no answer about what exists, and offers to ask again', () => {
+    /** "No use cases yet. Use New use case above…" under "Failed to load use cases." — or, for a
+     *  session without a role, the advice to sign out and in again — is a statement about an
+     *  installation nobody read. */
+    const failing = { status: 503 };
+    for (const roles of [['global-admin'], []]) {
+      const { text, testid } = setup({ open: false, roles, list: throwError(() => failing) });
+      expect(text()).toContain('Failed to load use cases.');
+      expect(testid('use-case-list-failed')?.textContent).toContain('could not be loaded');
+      expect(text()).not.toContain('No use cases yet');
+      expect(testid('no-role')).toBeNull();
+    }
+
+    const { text, click, testid } = setup({
+      open: false,
+      meFailsFirst: true,
+      lists: [throwError(() => failing)],
+    });
+    click('[data-testid="use-case-retry"]');
+
+    expect(text()).toContain('Demo');
+    expect(text()).not.toContain('Failed to load use cases.');
+    expect(testid('use-case-list-failed')).toBeNull();
+    // The account is asked again with it: what this reader may do was unread for the same reason.
+    expect(text()).toContain('+ New use case');
   });
 
   it('rejects a slug that the server would reject anyway', () => {

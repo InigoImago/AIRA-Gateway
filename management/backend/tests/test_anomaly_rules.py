@@ -716,3 +716,44 @@ def test_a_global_rule_is_deleted_by_whoever_may_author_one(captured_events) -> 
 
     assert not AnomalyRule.objects.filter(pk=rule_id).exists()
     assert ("anomaly_rule.deleted", {"id": rule_id}) in captured_events
+
+
+def test_a_rule_edit_racing_its_deletion_does_not_bring_the_rule_back(
+    captured_events, monkeypatch
+) -> None:
+    """The deletion commits after the edit read the rule. Saved, the copy it read was *inserted*
+    again — Django creates a row it no longer finds — so a removed rule came back, and the gateway,
+    told after its deletion, applied it once more: a control acting that nobody keeps any more."""
+    from aira_management.apps.anomalies.views import AnomalyRuleViewSet
+
+    sec = _client(_user("edit-sec", "it-security"))
+    rule_id = sec.post(GLOBAL, _rule(name="everywhere"), format="json").json()["id"]
+    guarded = AnomalyRuleViewSet._guard
+    deleted: list[int] = []
+
+    def a_colleague_deletes_it_first(view, rule) -> None:
+        guarded(view, rule)
+        if not deleted:  # the colleague's own request passes this guard too
+            deleted.append(rule_id)
+            colleague = _client(_user("other-sec", "it-security"))
+            assert colleague.delete(f"{GLOBAL}{rule_id}/").status_code == 204
+
+    monkeypatch.setattr(AnomalyRuleViewSet, "_guard", a_colleague_deletes_it_first)
+    captured_events.clear()
+
+    response = sec.patch(f"{GLOBAL}{rule_id}/", {"threshold": 60}, format="json")
+
+    assert response.status_code == 404, response.content
+    assert not AnomalyRule.objects.filter(pk=rule_id).exists()
+    assert [kind for kind, _ in captured_events] == ["anomaly_rule.deleted"]
+
+
+def test_a_rule_edit_holds_the_rule_until_it_is_saved(row_locks) -> None:
+    """The half of the property above only PostgreSQL can show: the deletion waits for the edit."""
+    sec = _client(_user("lock-sec", "it-security"))
+    rule_id = sec.post(GLOBAL, _rule(name="everywhere"), format="json").json()["id"]
+    row_locks.clear()
+
+    assert sec.patch(f"{GLOBAL}{rule_id}/", {"threshold": 60}, format="json").status_code == 200
+
+    assert row_locks.count("anomalies.AnomalyRule") == 1

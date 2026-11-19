@@ -26,6 +26,12 @@ class MailUndeliverable(RuntimeError):
     """The relay could not be reached, or did not take the mail. Said without any address."""
 
 
+class RelayUnavailable(MailUndeliverable):
+    """No relay answered — none listening, or the connection dropped — so no mail goes through it
+    now, to anybody. Told apart from a relay that answered and refused one mail, because every
+    recipient after this one would only wait for the same timeout."""
+
+
 class Relay(Protocol):
     """Where a composed mail goes. The SMTP relay in production, a recorder in a test."""
 
@@ -61,8 +67,15 @@ class SmtpRelay:
                 if self.username:
                     client.login(self.username, self.password)
                 refused = client.send_message(message)
-        except (OSError, smtplib.SMTPException) as exc:
+        except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as exc:
+            raise RelayUnavailable(reason(exc)) from exc
+        except smtplib.SMTPException as exc:
+            # A relay that answered, and said no to this mail: a recipient, the content, a login.
+            # Before `OSError`, which every `SMTPException` also is.
             raise MailUndeliverable(reason(exc)) from exc
+        except OSError as exc:
+            # Nothing answered: no relay listening, a timeout, a name that does not resolve.
+            raise RelayUnavailable(reason(exc)) from exc
         if refused:
             raise MailUndeliverable("the relay refused the recipient")
 

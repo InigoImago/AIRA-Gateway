@@ -260,9 +260,17 @@ issuer, audience or expiry problem stays `oidc_token_rejected` at `INFO`. Two di
 on those two lines.
 
 `build_jwks_client` takes a timeout, defaulting to **5 seconds** rather than PyJWT's 30, and
-`resolve_principal` runs the whole validation through `asyncio.to_thread`. Both halves are needed:
-the timeout bounds how long a hung provider can hold a worker thread, and the thread is what keeps
-it off the event loop at all.
+`resolve_principal` runs the whole validation on a pool of four threads of its own
+(`validate_off_the_loop`). Both halves are needed: the timeout bounds how long a hung provider can
+hold a worker thread, and the thread is what keeps it off the event loop at all. The pool is its
+own rather than the loop's default executor because the audit writer and mail share that one: a
+validation waiting for the provider there delayed audit rows, and API-key requests with them once
+the writer wrote inline.
+
+The client fetches **one key set at a time** and nobody queues behind the fetch — PyJWT holds a
+lock across it, so the *n*-th validation of an outage waited *n* timeouts. A fetch that brings no
+answer keeps the last set fetched for up to an hour (`JWKS_STALE_LIMIT_SECONDS`) and is retried
+after a backoff rather than by every request; a set the provider answers is adopted at once.
 
 **A malformed token stays a `401`, and that took a fix.** Splitting the fetch out of `verify`
 narrowed what the fetch's own `except` covers, and `PyJWKClient` parses a token to find its `kid`

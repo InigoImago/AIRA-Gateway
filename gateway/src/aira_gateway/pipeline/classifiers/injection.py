@@ -12,7 +12,7 @@ import functools
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from aira_common.logging import get_logger
 from aira_common.patterns import MAX_PATTERN_LENGTH, MAX_PATTERNS, catastrophic_reason
@@ -23,8 +23,9 @@ from aira_gateway.pipeline.classifiers.prompts import (
     THINKING_OFF,
     classifier_request,
 )
+from aira_gateway.pipeline.classifiers.unanswered import UNANSWERED
 from aira_gateway.telemetry import model_call_span
-from aira_gateway.upstreams.base import Upstream, UpstreamError
+from aira_gateway.upstreams.base import Upstream
 
 _log = get_logger("aira_gateway.pipeline")
 
@@ -181,19 +182,23 @@ class LlmInjectionClassifier:
         model: str,
         instruction: str | None = None,
         thinking: Thinking | None = THINKING_OFF,
+        *,
+        addressing: dict[str, Any] | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
         self._instruction = instruction or DEFAULT_INJECTION_INSTRUCTION
         self._thinking = thinking
+        self._addressing = addressing
 
     async def classify_text(self, text: str) -> Classification:
+        request = classifier_request(
+            self._model, self._instruction, text, self._thinking, self._addressing
+        )
         try:
             with model_call_span(self._model, purpose="pipeline"):
-                response = await self._provider.generate(
-                    classifier_request(self._model, self._instruction, text, self._thinking)
-                )
-        except UpstreamError:
+                response = await self._provider.generate(request)
+        except UNANSWERED:
             # No call to report: nothing was served, and no vendor here bills a failed call. The
             # verdict is still undetermined — a step whose chain is exhausted decides on it.
             return Classification(Verdict.UNDETERMINED, reached=False)

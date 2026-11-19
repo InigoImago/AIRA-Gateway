@@ -64,7 +64,9 @@ as a refusal.
   console checkbox, model event, read model) says a model takes no `top_k` and no `temperature` or
   `top_p` other than 1. The reference list fills it from models.dev's `temperature: false`. A
   request that sets one skips such a model by name (`SamplingAccepted`); temperature 1 and top_p 1
-  ask for nothing and pass — KIRA sends `temperature: 1` on every request.
+  ask for nothing and pass — KIRA sends `temperature: 1` on every request. A pipeline step's own
+  call sets none for such a model: the PII redactor, which asks other models for temperature 0,
+  asks it at its own settings.
 - **FR-4 — content Anthropic accepts.** Empty and whitespace text blocks, and turns left with no
   block, are left out; at the surface, a turn that was only thoughts is left out whole. Images go as
   `image` (JPEG, PNG, GIF, WebP), PDF and plain text as `document`; any other type is refused by name.

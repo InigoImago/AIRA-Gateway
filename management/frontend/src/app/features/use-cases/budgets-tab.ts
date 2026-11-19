@@ -8,13 +8,16 @@ import { Modal } from '../../core/ui/modal';
 import { Budget, BudgetScope, BudgetUsage, Membership } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
-import { displayCount, nanosOf, storedAmount } from '../../core/ui/money';
+import { ambiguousAmount, displayCount, nanosOf, storedAmount } from '../../core/ui/money';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { ANOTHER_MEMBER } from '../../core/ui/withheld';
 import { bindsEachMember, hierarchyRank, scopeLabel } from './limit-scope';
 
 /** The scopes a use case's own budget form offers; the installation's is set on reporting. */
 type UseCaseBudgetScope = Exclude<BudgetScope, 'installation'>;
+
+/** A spend limit as typed: an amount with up to six decimals, either separator. */
+const AMOUNT = /^\d+([.,]\d{1,6})?$/;
 
 /** A budget the gateway has never counted: nothing has been spent, and that is known. */
 const NO_USAGE: BudgetUsage = {
@@ -97,6 +100,19 @@ export class BudgetsTab {
   /** Kept as text: a spend limit must not round-trip through a JS number. */
   protected readonly budgetCost = signal('');
 
+  /**
+   * The spend limit as it will be stored, said under the field before it is saved: `250,5` is
+   * `250.50`, and the person sees which mark was taken for the decimals while they can still change
+   * it. Empty while the field holds no amount, or one that could be read two ways — the window's
+   * error says why.
+   */
+  protected readonly costReading = computed(() => {
+    const typed = this.budgetCost().trim();
+    if (!AMOUNT.test(typed) || ambiguousAmount(typed)) return '';
+    const unit = this.currency();
+    return `Will be saved as ${storedAmount(typed.replace(',', '.'))}${unit ? ` ${unit}` : ''}.`;
+  });
+
   /** The budgets in the order the gateway applies them, so the page reads top-down as it decides. */
   protected readonly ordered = computed(() =>
     [...this.budgets()].sort(
@@ -138,9 +154,11 @@ export class BudgetsTab {
       return 'Name the person this budget is for, by their username.';
     }
     const cost = this.budgetCost().trim();
-    if (cost && !/^\d+([.,]\d{1,6})?$/.test(cost)) {
+    if (cost && !AMOUNT.test(cost)) {
       return 'The spend limit must be an amount, e.g. 250 or 250.00.';
     }
+    const ambiguous = cost ? ambiguousAmount(cost) : null;
+    if (ambiguous) return ambiguous;
     // Checked here because the browser's `min` is inert in an Angular form (`novalidate`), and the
     // server accepts 0: a budget of 0 requests refuses every request, which nobody sets on purpose.
     if (!isWholeAtLeastOne(this.budgetTokens())) {

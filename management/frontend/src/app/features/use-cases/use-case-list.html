@@ -56,7 +56,15 @@
         </p>
       }
     } @else {
-      @if (!view.total()) {
+      @if (!view.total() && error()) {
+        <!-- Not the empty state, nor "no match": both are claims about a list nobody read. -->
+        <p class="empty" data-testid="use-case-list-failed">
+          The use cases could not be loaded, so this says nothing about which exist.
+          <button type="button" class="btn btn--sm" data-testid="use-case-retry" (click)="reload()">
+            Try again
+          </button>
+        </p>
+      } @else if (!view.total()) {
         <p class="empty" data-testid="use-case-no-match">
           No use case matches “{{ view.query() }}”.
         </p>

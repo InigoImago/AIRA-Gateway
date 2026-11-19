@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { tap } from 'rxjs';
 import { errorMessage } from '../../core/api/error-message';
 import { MeService } from '../../core/api/me.service';
 import { Me, UseCase } from '../../core/api/models';
@@ -30,7 +31,8 @@ export class UseCaseList implements OnInit {
    * from a log line has only the second.
    */
   protected readonly view = new ServerTableView<UseCase>(
-    (query, page) => this.service.listPage(query, page),
+    // A page that answers takes down the banner a failed one raised: it no longer holds.
+    (query, page) => this.service.listPage(query, page).pipe(tap(() => this.error.set(null))),
     (response) => this.error.set(errorMessage(response, 'Failed to load use cases.')),
   );
   protected readonly useCases = this.view.rows;
@@ -59,9 +61,12 @@ export class UseCaseList implements OnInit {
    */
   protected readonly hasNoRole = computed(() => this.me() !== null && !this.me()?.roles?.length);
 
-  /** Nothing at all — as opposed to nothing matching, which the search says in its own words. */
+  /**
+   * Nothing at all — as opposed to nothing matching, which the search says in its own words, and
+   * to a list that could not be read, which says nothing about what exists.
+   */
   protected readonly isEmpty = computed(
-    () => !this.loading() && this.view.total() === 0 && !this.view.filtered(),
+    () => !this.loading() && !this.error() && this.view.total() === 0 && !this.view.filtered(),
   );
 
   /** Why the form cannot be submitted yet — shown inline instead of failing silently. */
@@ -87,8 +92,13 @@ export class UseCaseList implements OnInit {
   }
 
   ngOnInit(): void {
-    this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
+    this.loadMe();
     this.view.start();
+  }
+
+  /** Quiet: the shell's header says why the account could not be read. */
+  private loadMe(): void {
+    this.meService.get().subscribe({ next: (me) => this.me.set(me), error: () => undefined });
   }
 
   protected openCreate(): void {
@@ -108,9 +118,14 @@ export class UseCaseList implements OnInit {
     this.createError.set(null);
   }
 
+  /**
+   * Ask again, after a load that failed — the account too, if it was not read: what this reader may
+   * do was unread for the same reason, and a list without it offers no "New use case".
+   */
   protected reload(): void {
     this.error.set(null);
     this.view.reload();
+    if (!this.me()) this.loadMe();
   }
 
   protected create(): void {

@@ -149,6 +149,11 @@ The list is re-rendered from a signal keyed by row id, so Angular reuses the DOM
 refresh that rebuilt the table would scroll the reader to the top every few seconds — which is the
 behaviour that makes people close a live view and reload manually instead.
 
+Nor may a refresh undo a decision. One that set out before a stop or a restore answered read the
+list of what is stopped as it was; when it lands, its findings are shown and that list is not — the
+list read after the decision stands. Otherwise a lifted stop is listed as in force again until the
+next tick, a new one vanishes, and a second Stop on the list without it creates a duplicate.
+
 ### 4.4 What a member may see is what the server says
 
 The same rule as `FRD-206`: the screen renders the kill switch only when the server would accept it,

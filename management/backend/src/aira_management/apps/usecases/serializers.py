@@ -133,6 +133,18 @@ class UseCaseSerializer(serializers.ModelSerializer[UseCase]):
             )
         return visibility
 
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Under strict data mode a change keeps the stored visibility (`FRD-627` FR-1).
+
+        The mode answers `oversight` for every use case, so a client sending that back — the
+        console does with every save of the data-protection panel, a retention change included —
+        has not chosen it, and storing it would replace the choice that turning the mode off is
+        promised to restore. A new use case has no choice to keep and stores what it was sent.
+        """
+        if self.instance is not None and get_settings().strict_data_mode:
+            attrs.pop("payload_visibility", None)
+        return attrs
+
     def to_representation(self, instance: UseCase) -> dict[str, Any]:
         """The **effective** visibility: what the gateway enforces, not what is stored.
 

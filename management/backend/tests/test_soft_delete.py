@@ -33,6 +33,7 @@ from aira_management.apps.usecases.models import (
 from aira_management.apps.usecases.views import _grant
 from aira_management.apps.usecases.views.lifecycle import retire
 from aira_management.apps.usecases.views.payloads import _snapshot
+from aira_management.apps.usecases.views.viewset import UseCaseViewSet
 from aira_management.rbac import sync_user_roles
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -375,6 +376,67 @@ def test_retiring_through_two_stale_copies_keeps_the_first_author_and_announces_
 
     assert UseCase.objects.get(pk=usecase.pk).deleted_by == "first"
     assert [kind for kind, _payload in captured_events].count("usecase.deleted") == 1
+
+
+def test_an_edit_racing_a_retirement_does_not_bring_the_use_case_back(
+    captured_events, monkeypatch
+) -> None:
+    """Two administrators at once, or a save and a delete in two tabs: the retirement commits
+    after the edit read the use case and before it saved. Saved whole, the copy it read wrote
+    `deleted_at = NULL` back — live again on the console and the record of who retired it erased,
+    while the gateway kept its tombstone and refused all of it; and the upsert, then the last record
+    of the slug, would bring it back there on a rebuild. The edit is refused as it would be a moment
+    later, and nothing about the use case is announced after its retirement."""
+    usecase, admin = _made()
+    saving = UseCaseViewSet.perform_update
+
+    def another_administrator_retires_it_first(view, serializer) -> None:
+        assert retire(UseCase.objects.get(pk=usecase.pk), by="other-admin") is True
+        saving(view, serializer)
+
+    monkeypatch.setattr(UseCaseViewSet, "perform_update", another_administrator_retires_it_first)
+    captured_events.clear()
+
+    response = _client(admin).patch(f"{BASE}uc/", {"name": "Renamed"}, format="json")
+
+    assert response.status_code == 404, response.content
+    row = UseCase.objects.get(pk=usecase.pk)
+    assert (row.name, row.deleted_by) == ("UC", "other-admin") and row.deleted_at is not None
+    assert [kind for kind, _ in captured_events if kind.startswith("usecase.")] == [
+        "usecase.deleted"
+    ]
+
+
+def test_an_edit_holds_the_use_case_until_it_is_saved(row_locks) -> None:
+    """The half of the property above only PostgreSQL can show: the edit reads the row it saves
+    onto under a lock, so a retirement arriving between the two waits for the edit and follows it,
+    rather than being undone by it."""
+    usecase, admin = _made()
+    row_locks.clear()
+
+    renamed = _client(admin).patch(f"{BASE}uc/", {"name": "Renamed"}, format="json")
+
+    assert renamed.status_code == 200, renamed.content
+    assert row_locks.count("usecases.UseCase") == 1
+
+
+def test_the_retirement_announces_the_use_case_as_it_stands_not_as_it_was_read(
+    captured_events,
+) -> None:
+    """A gateway rebuilt from the topics writes the tombstone from this event. An edit that
+    committed after the retiring request read the row is in the row, and has to be in the event too,
+    or the rebuilt tombstone keeps the retention period the edit replaced."""
+    usecase, admin = _made()
+    read_before_the_edit = UseCase.objects.get(pk=usecase.pk)
+    edited = _client(admin).patch(f"{BASE}uc/", {"retention_days": 30}, format="json")
+    assert edited.status_code == 200, edited.content
+    captured_events.clear()
+
+    assert retire(read_before_the_edit, by="admin") is True
+
+    deleted = [payload for kind, payload in captured_events if kind == "usecase.deleted"]
+    assert [payload["retention_days"] for payload in deleted] == [30]
+    assert deleted == [_snapshot(UseCase.objects.get(pk=usecase.pk))]
 
 
 def test_a_purge_removes_the_object_permissions_that_named_the_use_case() -> None:

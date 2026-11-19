@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from guardian.models import GroupObjectPermission, UserObjectPermission
 
@@ -20,6 +21,22 @@ from aira_management.apps.usecases.events import emit
 from aira_management.apps.usecases.models import UseCase, UseCaseGroupGrant, UseCaseMembership
 from aira_management.apps.usecases.views.grants import _revoke_key
 from aira_management.apps.usecases.views.payloads import _snapshot
+
+
+def held_live(usecase: UseCase) -> UseCase:
+    """``usecase`` as it stands now, its row locked until the transaction ends — or the `404` a
+    request arriving a moment later would get, because it was retired meanwhile.
+
+    For every change that reads a use case and then writes on the strength of what it read. Saved
+    whole, the copy a request read writes back `deleted_at = NULL` over a retirement that committed
+    in between: the use case is live again here while the gateway keeps its tombstone, and on a
+    rebuild of the gateway from the topics the upsert, being the last record of the slug, brings it
+    back there too. A key issued on a grant read before its removal committed is one the removal's
+    sweep never saw. Holding the row makes a retirement, or a removal that takes the same lock,
+    wait for the change, and the change for them: they happen one after the other, and the second
+    sees the first. Called inside the change's transaction.
+    """
+    return get_object_or_404(UseCase.objects.live().select_for_update(), pk=usecase.pk)
 
 
 def end_access(usecase: UseCase) -> None:
@@ -67,9 +84,11 @@ def retire(usecase: UseCase, *, by: str) -> bool:
     The event carries the use case **as it stood**, not its slug alone. It shares the slug's key
     with `usecase.upserted` on a compacted topic, so it is the last record of the use case that
     compaction keeps, and a gateway rebuilding its read-model from the topic writes the tombstone —
-    the retention promise with it — from this event (`FRD-204` FR-6). Then each child is ended on
-    its own key (:func:`end_access`), so that a purge, which replaces this record, leaves nothing
-    on the topics a replay could grant from.
+    the retention promise with it — from this event (`FRD-204` FR-6). As it stands in the
+    database, not as this request read it: an edit that committed in between is in the row, and a
+    tombstone written from the older copy would keep, say, the retention the edit replaced. Then
+    each child is ended on its own key (:func:`end_access`), so that a purge, which replaces this
+    record, leaves nothing on the topics a replay could grant from.
     """
     with transaction.atomic():
         moment = timezone.now()
@@ -79,10 +98,9 @@ def retire(usecase: UseCase, *, by: str) -> bool:
             .update(deleted_at=moment, deleted_by=by, updated_at=moment)
         )
         if changed:
+            usecase.refresh_from_db()
             emit("usecase.deleted", _snapshot(usecase))
             end_access(usecase)
-    if changed:
-        usecase.deleted_at, usecase.deleted_by = moment, by
     return bool(changed)
 
 

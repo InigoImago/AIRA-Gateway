@@ -185,7 +185,17 @@ class _CountingRunner:
         return await registered(keys=list(keys), args=list(args))
 
     async def counters(self) -> list[dict[str, str]]:
-        return [await self.client.hgetall(key) for key in await self.client.keys("budget:*")]
+        """Each budget counter's figures — not what the ledger keeps beside a counter."""
+        figures = ("tokens", "requests", "cost")
+        return [
+            {
+                name: value
+                for name, value in (await self.client.hgetall(key)).items()
+                if name in figures
+            }
+            for key in await self.client.keys("budget:*")
+            if not key.endswith((":open", ":booked"))
+        ]
 
     async def close(self) -> None:
         await self.client.aclose()

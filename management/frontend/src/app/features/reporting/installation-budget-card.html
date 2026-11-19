@@ -33,7 +33,7 @@
         <button
           type="button"
           class="btn btn--sm btn--primary"
-          (click)="showForm.set(true)"
+          (click)="openForm()"
           data-testid="add-installation-budget"
         >
           + Set a limit
@@ -52,6 +52,7 @@
       [open]="showForm() && canManage()"
       title="Set the installation's spend limit"
       testid="installation-budget-editor"
+      [error]="feedback.error()"
       (closed)="showForm.set(false)"
     >
       <div modal-body>
@@ -83,6 +84,9 @@
               placeholder="e.g. 20.00"
               autocomplete="off"
             />
+            @if (costReading(); as reading) {
+              <span class="field__hint" data-testid="installation-cost-reading">{{ reading }}</span>
+            }
           </div>
           <div class="field">
             <label for="installation-tokens">Token limit</label>

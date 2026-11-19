@@ -19,6 +19,7 @@ from aira_gateway.core.canonical import (
     CanonicalRequest,
     CanonicalRerankRequest,
     CanonicalResponse,
+    CanonicalUsage,
     RankedRecords,
 )
 from aira_gateway.technical import provider_facts
@@ -82,6 +83,12 @@ class UpstreamError(Exception):
     ``facts`` is what the answer stated about itself in codes — its status, reason word, the
     provider's request id, `Retry-After`, the host — for the request's technical record
     (`technical.provider_facts`, `FRD-630`). Never a sentence: those stay in ``message``.
+
+    ``spent`` is what the provider had **reported using** before the call failed: a Claude answer
+    read as a stream says its input at `message_start` and breaks off later, an embedding batch
+    sent one text per call fails at its tenth. The vendor bills it, so it is booked — a running
+    total, short of what the vendor may count in the end, and booked as the floor it is.
+    ``None`` where nothing was reported, which is not zero.
     """
 
     def __init__(
@@ -92,6 +99,7 @@ class UpstreamError(Exception):
         *,
         gateway_status: int | None = None,
         facts: dict[str, Any] | None = None,
+        spent: CanonicalUsage | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -99,6 +107,16 @@ class UpstreamError(Exception):
         self.diagnosis = diagnosis
         self.gateway_status = gateway_status
         self.facts: dict[str, Any] = facts if facts is not None else {}
+        self.spent = spent
+
+
+def added(first: CanonicalUsage | None, second: CanonicalUsage | None) -> CanonicalUsage | None:
+    """Two reports of what was used, as one: every count summed — ``None`` where neither said
+    anything, which is not zero."""
+    if first is None or second is None:
+        return first if second is None else second
+    counts = CanonicalUsage.model_fields
+    return CanonicalUsage(**{name: getattr(first, name) + getattr(second, name) for name in counts})
 
 
 class DialectUnsupported(Exception):
@@ -197,6 +215,50 @@ def _stream_failure_status(details: dict[str, Any]) -> int:
         if isinstance(word, str) and word in _STREAM_FAILURE_STATUS:
             return _STREAM_FAILURE_STATUS[word]
     return _STREAM_FAILURE_DEFAULT
+
+
+# == where a stream's answer begins ===============================================================
+
+
+def carries_something(chunk: CanonicalChunk) -> bool:
+    """Whether ``chunk`` is part of the answer rather than its preamble: text, thinking, a function
+    call, speech, or a finish — with whatever usage it reports.
+
+    A preamble only says that an answer is coming: the OpenAI dialect's empty role delta, a running
+    usage figure, a chunk whose thinking the use case does not show. A candidate that fails after
+    one has given the caller nothing — its answer has not begun — so it is passed over as one that
+    failed before it (`read_opening`).
+    """
+    return bool(chunk.text_delta or chunk.reasoning_delta or chunk.tool_calls) or (
+        chunk.audio_delta is not None or chunk.finish_reason is not None
+    )
+
+
+async def read_opening(chunks: AsyncIterator[CanonicalChunk]) -> list[CanonicalChunk]:
+    """Read ``chunks`` up to the first that carries something (`carries_something`), and return
+    what was read: the preamble as one chunk, then that first one.
+
+    A failure before it is raised here, where the regional failover and the chain can still move
+    on, for nothing has reached the caller. A stream that **ends** first has answered with what it
+    said — nothing, or a preamble — and is returned as such: retrying an answer down a chain pays
+    every model to give it. The stream is left open for the rest of the answer.
+
+    The preamble is held as one chunk, its usage the latest — every dialect's usage is a running
+    total, the last one seen the answer's — so a model that thinks for minutes without showing it
+    holds one chunk here, not one per thought.
+    """
+    preamble: CanonicalChunk | None = None
+    while True:
+        try:
+            chunk = await anext(chunks)
+        except StopAsyncIteration:
+            return [] if preamble is None else [preamble]
+        if carries_something(chunk):
+            return [chunk] if preamble is None else [preamble, chunk]
+        if preamble is None:
+            preamble = chunk
+        elif chunk.usage is not None:
+            preamble = preamble.model_copy(update={"usage": chunk.usage})
 
 
 # == what an upstream describes ===================================================================

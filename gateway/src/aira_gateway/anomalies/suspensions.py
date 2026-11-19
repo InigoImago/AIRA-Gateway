@@ -89,17 +89,26 @@ class SuspensionService:
         self._clock = clock
         self._cached: list[AccessSuspension] = []
         self._loaded_at: float | None = None
+        #: How many invalidations there have been: a load that saw one arrive while it was reading
+        #: may predate the decision it announced.
+        self._invalidations = 0
 
     def invalidate(self) -> None:
         """Drop the cache — used after writing one, so the writer sees its own decision."""
         self._loaded_at = None
+        self._invalidations += 1
 
     async def active(self) -> list[AccessSuspension]:
         now = self._clock()
         if self._loaded_at is None or now - self._loaded_at >= CACHE_TTL_SECONDS:
+            invalidations = self._invalidations
             async with self._sessionmaker() as session:
                 self._cached = await _load(session)
-            self._loaded_at = now
+            # Trusted only if nothing was written while it was read: a suspension written and
+            # announced meanwhile may be missing from it, and a stale load stamped fresh would
+            # serve the stopped caller until the cache lapsed.
+            if invalidations == self._invalidations:
+                self._loaded_at = now
         moment = datetime.now(UTC)
         # Expiry is applied on read, not by a sweeper: a row that has run out stops refusing the
         # moment it does.

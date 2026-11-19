@@ -101,6 +101,8 @@ interface Overrides {
   budgetUsagePerCall?: Observable<{ usage: BudgetUsage[]; enforced?: boolean }>[];
   /** The newest findings, which the Warnings badge counts. */
   anomalies?: Observable<AnomalyPage>;
+  /** What the Requests tab reads from the gateway. */
+  traces?: Observable<unknown>;
   /** The use case's anomaly rules, which the Rules badge counts. */
   useCaseRules?: Observable<AnomalyRule[]>;
   /**
@@ -180,7 +182,7 @@ function setup(overrides: Overrides = {}, confirmAnswer = true, queryTab: string
     anomalies: () =>
       overrides.anomalies ?? of({ events: [], next_cursor: null, scope: 'use_cases' }),
     suspensions: () => of({ suspensions: [] }),
-    traces: () => of({ traces: [], next_cursor: null, scope: 'use_cases' }),
+    traces: () => overrides.traces ?? of({ traces: [], next_cursor: null, scope: 'use_cases' }),
     get: () => overrides.get ?? of(USE_CASE),
     update: (_s: string, changes: Partial<UseCase>) => {
       calls.push(`update:${JSON.stringify(changes)}`);
@@ -392,6 +394,46 @@ describe('UseCaseDetail', () => {
     // The tabs stay: a gateway-only member still has requests and warnings to read there.
     expect(html().querySelector('[role="tablist"]')).not.toBeNull();
     expect(text()).not.toContain('No UseCase matches');
+  });
+
+  it('still reports what fails after Management said it has no such use case', () => {
+    /** Said once, in its own panel, rather than once per load — but only the failures that say the
+     *  same thing. The Requests and Warnings tabs read the gateway, and are what the panel sends a
+     *  gateway-only member to: their failures were hidden too, under "No requests match". */
+    const gone = 'No UseCase matches the given query.';
+    const { html, text } = setup(
+      {
+        get: httpError(404, gone),
+        members: httpError(404, gone),
+        budgets: httpError(404, gone),
+        traces: httpError(503, 'The gateway is restarting.'),
+      },
+      true,
+      'traces',
+    );
+
+    expect(html().querySelector('[data-testid="use-case-missing"]')).not.toBeNull();
+    expect(html().querySelector('[role="alert"]')?.textContent).toContain(
+      'The gateway is restarting.',
+    );
+    expect(text()).not.toContain(gone);
+  });
+
+  it('keeps that failure on the banner when a 404 from Management answers after it', () => {
+    const gone = 'No UseCase matches the given query.';
+    const members = new Subject<Membership[]>();
+    const { fixture, html } = setup(
+      { get: httpError(404, gone), members, traces: httpError(503, 'The gateway is restarting.') },
+      true,
+      'traces',
+    );
+
+    members.error({ status: 404, error: { error: { code: 'x', message: gone } } });
+    fixture.detectChanges();
+
+    expect(html().querySelector('[role="alert"]')?.textContent).toContain(
+      'The gateway is restarting.',
+    );
   });
 
   it("reports a catalogue it could not load in the server's words, once, for every panel", () => {
@@ -1134,6 +1176,42 @@ describe('UseCaseDetail — consumption (FRD-603)', () => {
 
     expect(harness.component.consumption().month?.total_tokens).toBe(10664);
     expect(harness.component.consumption().today?.requests).toBe(59);
+  });
+
+  it('shows spend nobody could price as unknown, the way the reporting screen does', () => {
+    /** A use case on a model with no price, or one that reports no usage, had "—" on the
+     *  reporting screen and `0.00` on its own page for the same traffic. A refusal ran nothing,
+     *  so it has no cost to be unknown and does not keep the figure a figure. */
+    const unpriced = setup({
+      useCaseReport: of(
+        emptyReport({
+          totals: reportRow({ requests: 4, cost: '0.00', cost_nanos: 0, unpriced_requests: 3 }),
+          by_outcome: [
+            reportRow({ key: 'served', requests: 3 }),
+            reportRow({ key: 'rate_limited', requests: 1 }),
+          ],
+        }),
+      ),
+    });
+    const cost = (harness: Harness, window: string) =>
+      harness.html().querySelector(`[data-testid="consumption-${window}-cost"]`)?.textContent;
+
+    expect(cost(unpriced, 'month')?.trim()).toBe('—');
+    expect(cost(unpriced, 'today')?.trim()).toBe('—');
+    expect(
+      unpriced.html().querySelector('[data-testid="consumption-unpriced"]')?.textContent,
+    ).toMatch(/so\s+the spend above is unknown/);
+
+    // Some of it priced: the figure stands, as a lower bound the caveat explains.
+    const partly = setup({
+      useCaseReport: of(
+        emptyReport({
+          totals: reportRow({ requests: 5, cost: '3.75', cost_nanos: 3_750_000_000 }),
+          by_outcome: [reportRow({ key: 'served', requests: 5 })],
+        }),
+      ),
+    });
+    expect(cost(partly, 'month')?.trim()).toBe('3.75');
   });
 });
 

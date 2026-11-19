@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, tzinfo
 from typing import Any
@@ -28,7 +28,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from aira_common.counters import CountersUnavailable, DegradationLog
+from aira_common.counters import (
+    CountersNotAsked,
+    CountersNotConfigured,
+    CountersUnavailable,
+    DegradationLog,
+)
 from aira_common.logging import get_logger
 from aira_common.money import format_display
 from aira_gateway.budgets import keys
@@ -146,24 +151,28 @@ class BudgetService:
                     lifted=lifted,
                     subject=subject,
                     reserved=amounts,
-                    # The lifted budgets' periods now; the enforced ones' as each is reserved.
+                    # The lifted budgets' periods now; each enforced one's as its counter is asked.
                     period_keys={budget.id: periods[budget.id] for budget in lifted},
                     atomic=True,
                 )
                 try:
                     reserved = await self._reserve(session, partial, now)
-                    self._degradation.working(self.FEATURE)
+                    if self._degradation.working(self.FEATURE):
+                        _log.info("budget_reservation_recovered", use_case=use_case)
                     return reserved
-                except CountersUnavailable:
+                except CountersUnavailable as exc:
                     # Redis may have gone between two budgets: hand back the ones already
                     # reserved, which nothing downstream holds a reference to.
                     await self.release(partial)
-                    # Enforce anyway, the racy way (`FRD-405` §4.3).
-                    _log.warning("budget_reservation_degraded", use_case=use_case)
-                    self._degradation.degraded(
+                    # Enforce anyway, the racy way (`FRD-405` §4.3) — said when enforcement
+                    # changes path, not by every request that takes it, and not at all where no
+                    # store is configured: that is a choice, not a failure.
+                    fell_back = self._degradation.degraded(
                         self.FEATURE,
                         "Postgres read-then-book; concurrent requests can overshoot a limit",
                     )
+                    if fell_back and not isinstance(exc, CountersNotConfigured):
+                        _log.warning("budget_reservation_degraded", use_case=use_case)
                 except BaseException:
                     # Anything else part-way through — a database error reading the next budget's
                     # figure, a cancellation — leaves the budgets already reserved holding headroom
@@ -191,23 +200,34 @@ class BudgetService:
             scope_key = keys.scope_key(budget, reservation.subject)
             period_key = keys.period_key(budget.period, now, self._zone)
             seed = await read_usage(session, scope_key, period_key)
-            breached = await self._ledger.reserve(
-                scope_key,
-                period_key,
-                limits=Limits(
-                    tokens=budget.limit_tokens,
-                    requests=budget.limit_requests,
-                    cost_nanos=budget.limit_cost_nanos,
-                ),
-                amounts=amounts,
-                seed=Amounts(seed.tokens, seed.requests, seed.cost_nanos),
-                reservation=reservation.ident,
-                at=now.timestamp(),
-            )
+            # Named before the script runs, so a give-back names it too: a reply lost after Redis
+            # ran the script leaves the reservation there. One the script never made, a give-back
+            # finds closed and moves nothing (`ledger`).
+            reservation.period_keys[budget.id] = period_key
+            try:
+                breached = await self._ledger.reserve(
+                    scope_key,
+                    period_key,
+                    limits=Limits(
+                        tokens=budget.limit_tokens,
+                        requests=budget.limit_requests,
+                        cost_nanos=budget.limit_cost_nanos,
+                    ),
+                    amounts=amounts,
+                    seed=Amounts(seed.tokens, seed.requests, seed.cost_nanos),
+                    reservation=reservation.ident,
+                    at=now.timestamp(),
+                )
+            except CountersNotAsked:
+                # Never sent — no store, or one not asked again yet — so no counter holds it, and a
+                # give-back named for it would only wait in the ledger: one per request while Redis
+                # is away or absent, crowding out the corrections that are owed.
+                del reservation.period_keys[budget.id]
+                raise
             if breached:
+                del reservation.period_keys[budget.id]  # refused: this counter took nothing
                 await self.release(reservation)
                 raise keys.exceeded(budget, breached, now, amounts, settled=seed, zone=self._zone)
-            reservation.period_keys[budget.id] = period_key
         reservation.resolved = False  # reserved; the outcome is still open
         return reservation
 
@@ -302,6 +322,10 @@ class BudgetService:
         ``requests`` is what the call weighed — one, or one **per text** of an embedding batch
         (`FRD-113` FR-6), or a request-count budget could not see batched traffic.
         """
+        if reservation.resolved:
+            # Booked again, the request would count twice: the counter's script moves only an
+            # open reservation, and Postgres has no such guard.
+            return
         reservation.resolved = True
         if not reservation:
             return
@@ -309,7 +333,7 @@ class BudgetService:
         # Under the period the request was admitted in, in both stores: one admitted at 23:59:59
         # and settled after midnight belongs to the counter it reserved against — booked into the
         # next period instead, neither period's counter would ever see it.
-        await self.record(
+        booked = await self.record(
             [*reservation.budgets, *reservation.lifted],
             tokens,
             cost_nanos=cost_nanos,
@@ -322,7 +346,7 @@ class BudgetService:
         # A lifted budget reserved nothing, so its shared counter takes the whole figure — or a
         # budget put back within the counter's lifetime would start from less than was spent.
         await self._add_to_counters(
-            reservation.lifted, reservation.subject, reservation.period_keys, actual, now
+            reservation.lifted, reservation.subject, reservation.period_keys, actual, now, booked
         )
         if not reservation.atomic or self._ledger is None:
             return
@@ -331,35 +355,41 @@ class BudgetService:
             requests=actual.requests - reservation.reserved.requests,
             cost_nanos=actual.cost_nanos - reservation.reserved.cost_nanos,
         )
-        await self._move(reservation, correction)
+        await self._move(reservation, correction, booked)
 
     async def release(self, reservation: Reservation) -> None:
         """Give a reservation back — the request produced nothing to charge for.
 
         Otherwise a provider outage would look to a use case exactly like having spent its month.
+        A second release moves nothing: the counter's own script moves only an open reservation.
         """
         reservation.resolved = True
         if not reservation.atomic or self._ledger is None:
             return
         await self._move(reservation, reservation.reserved.negated())
 
-    async def _move(self, reservation: Reservation, amounts: Amounts) -> None:
+    async def _move(
+        self,
+        reservation: Reservation,
+        amounts: Amounts,
+        booked: dict[tuple[str, str], Amounts] | None = None,
+    ) -> None:
+        """Correct or release the reservation on every counter it was asked of. Never lost to an
+        unreachable store: the ledger holds what the store cannot take and sends it when it can."""
         assert self._ledger is not None
         for budget in reservation.budgets:
             period_key = reservation.period_keys.get(budget.id)
             if period_key is None:
-                continue  # never reserved against this budget (the one that refused)
-            try:
-                await self._ledger.adjust(
-                    keys.scope_key(budget, reservation.subject),
-                    period_key,
-                    amounts=amounts,
-                    reservation=reservation.ident,
-                )
-            except CountersUnavailable:
-                # The counter keeps this request's estimate until it expires and is rebuilt from
-                # Postgres, which has the settled figure (`COUNTER_TTL_SECONDS`).
-                _log.warning("budget_adjust_degraded", budget_id=budget.id)
+                continue  # its counter refused the request, or was never asked
+            scope_key = keys.scope_key(budget, reservation.subject)
+            await self._ledger.resolve(
+                scope_key,
+                period_key,
+                amounts=amounts,
+                reservation=reservation.ident,
+                reserved=reservation.reserved,
+                booked=(booked or {}).get((scope_key, period_key)),
+            )
 
     async def record(
         self,
@@ -371,31 +401,49 @@ class BudgetService:
         requests: int = 1,
         subject: str | None = None,
         periods: dict[int, str] | None = None,
-    ) -> None:
+    ) -> dict[tuple[str, str], Amounts]:
         """Book a request — or a batch counted as the many it is — against every budget.
 
         Keyword-only, so an amount of money and a timestamp cannot be swapped as positionals.
         ``cost_nanos`` of ``None`` is counted as unpriced, not as free (`FRD-403`). ``subject`` is
         required by a per-person budget, whose counter key is the caller. ``periods`` names the
         period a budget was reserved in; one it does not name is booked under ``now``'s.
+
+        Returns each counter's row as this booking left it, by ``(scope_key, period_key)``: what
+        tells the shared counter whether it was built before this booking or after (`ledger`) —
+        told by the request count, so a booking that counts no request returns none.
         """
         if not budgets:
-            return
+            return {}
         now = now or datetime.now(UTC)
+        # In the counters' own order, whatever order the caller hands the budgets in. Each upsert
+        # keeps its row locked until the commit, so two bookings of one use case taking two rows in
+        # opposite orders deadlock on Postgres — and the one it aborts never reaches the record.
+        counters = sorted(
+            (
+                keys.scope_key(budget, subject),
+                (periods or {}).get(budget.id) or keys.period_key(budget.period, now, self._zone),
+            )
+            for budget in budgets
+        )
+        booked: dict[tuple[str, str], Amounts] = {}
         async with self._sessionmaker() as session:
-            for budget in budgets:
-                await session.execute(
-                    accumulate(
-                        session,
-                        scope_key=keys.scope_key(budget, subject),
-                        period_key=(periods or {}).get(budget.id)
-                        or keys.period_key(budget.period, now, self._zone),
-                        tokens=tokens,
-                        requests=requests,
-                        cost_nanos=cost_nanos,
+            for scope_key, period_key in counters:
+                row = (
+                    await session.execute(
+                        accumulate(
+                            session,
+                            scope_key=scope_key,
+                            period_key=period_key,
+                            tokens=tokens,
+                            requests=requests,
+                            cost_nanos=cost_nanos,
+                        )
                     )
-                )
+                ).one()
+                booked[(scope_key, period_key)] = Amounts(row.tokens, row.requests, row.cost_nanos)
             await session.commit()
+        return booked if requests > 0 else {}
 
     async def book_side_call(
         self,
@@ -405,12 +453,15 @@ class BudgetService:
         *,
         cost_nanos: int | None = None,
         now: datetime | None = None,
+        requests: int = 1,
     ) -> None:
         """Book tokens the **gateway** spent on the caller's behalf — a pipeline step (`FRD-125`).
 
         - **Counted as a request**, by the owner's decision: a step's call reaches a model and costs
-          money, and a request budget that cannot see it is sized for other work. **Rate limits
-          are untouched** — a bucket measures how fast requests arrive, and the gate is taken once.
+          money, and a request budget that cannot see it is sized for other work. ``requests`` is
+          how many calls the booking stands for — a step's calls over a batch are booked as one
+          figure, and each was a request. **Rate limits are untouched** — a bucket measures how
+          fast requests arrive, and the gate is taken once.
         - Not a reservation: the tokens are spent before their size is known, because the pipeline
           runs before routing picks the model the reservation is made against.
         - **Both stores**: the guard reads the shared counter, so booking Postgres alone would let
@@ -422,16 +473,16 @@ class BudgetService:
         now = now or datetime.now(UTC)
         async with self._sessionmaker() as session:
             budgets = await applicable(session, use_case, subject)
-        await self.record(
+        booked = await self.record(
             budgets,
             tokens,
             cost_nanos=cost_nanos,
             now=now,
-            requests=1,
+            requests=requests,
             subject=subject,
         )
-        amounts = Amounts(tokens=tokens, requests=1, cost_nanos=cost_nanos or 0)
-        await self._add_to_counters(budgets, subject, {}, amounts, now)
+        amounts = Amounts(tokens=tokens, requests=requests, cost_nanos=cost_nanos or 0)
+        await self._add_to_counters(budgets, subject, {}, amounts, now, booked)
 
     async def _add_to_counters(
         self,
@@ -440,6 +491,7 @@ class BudgetService:
         periods: dict[int, str],
         amounts: Amounts,
         now: datetime,
+        booked: dict[tuple[str, str], Amounts],
     ) -> None:
         """Add a figure no reservation held to each budget's shared counter.
 
@@ -450,16 +502,18 @@ class BudgetService:
         if self._ledger is None:
             return  # degraded to the Postgres path, which the caller already wrote
         for budget in budgets:
-            try:
+            scope_key = keys.scope_key(budget, subject)
+            period_key = periods.get(budget.id) or keys.period_key(budget.period, now, self._zone)
+            # Not held when the store cannot take it, and not logged per call: Postgres has it and
+            # the counter rebuilds from Postgres, so until then a caller is under-charged rather
+            # than refused — and the outage is logged where it begins and ends.
+            with suppress(CountersUnavailable):
                 await self._ledger.adjust(
-                    keys.scope_key(budget, subject),
-                    periods.get(budget.id) or keys.period_key(budget.period, now, self._zone),
+                    scope_key,
+                    period_key,
                     amounts=amounts,
+                    booked=booked.get((scope_key, period_key)),
                 )
-            except CountersUnavailable:
-                # Postgres has it and the counter rebuilds from Postgres; until then the counter is
-                # low, so a caller is under-charged rather than refused.
-                _log.warning("budget_side_call_adjust_degraded", budget_id=budget.id)
 
     # == reporting ================================================================================
 

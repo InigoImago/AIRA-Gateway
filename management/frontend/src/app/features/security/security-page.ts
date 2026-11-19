@@ -30,6 +30,8 @@ type SuspensionsRead = { rows: Suspension[] } | { failure: unknown };
 interface Snapshot {
   page: AnomalyPage;
   suspensions: SuspensionsRead;
+  /** How many stops and restores had answered when it set out (`SecurityPage.decisions`). */
+  decisions: number;
 }
 
 function hasExpired(row: Suspension, now: number): boolean {
@@ -89,6 +91,14 @@ export class SecurityPage implements OnInit {
   protected readonly useCases = signal<string[]>([]);
   /** Why the scope picker offers only "everywhere", when the use-case list could not be read. */
   protected readonly useCasesError = signal<string | null>(null);
+
+  /**
+   * How many stops and restores this page has seen answered. A list of what is stopped is shown
+   * only if none answered after it was asked for: one read before the server had the decision puts
+   * a lifted stop back, or takes a new one away — and a second Stop on a list without the first
+   * creates a duplicate. Not rendered, so not a signal.
+   */
+  private decisions = 0;
 
   /** Whether this caller may stop and restore traffic — **not** whether they may see this page. */
   protected readonly canStop = computed(() => can(this.me(), 'incident.suspend'));
@@ -220,13 +230,22 @@ export class SecurityPage implements OnInit {
     });
   }
 
-  /** Reload what is stopped, after this page stopped or restored something. */
+  /**
+   * Reload what is stopped, after this page stopped or restored something. Every list asked for
+   * before now is out of date — a refresh in flight included — and only this one is shown.
+   */
   protected loadSuspensions(): void {
-    this.readSuspensions().subscribe((read) => this.applySuspensions(read));
+    const decisions = ++this.decisions;
+    this.readSuspensions().subscribe((read) => {
+      if (decisions === this.decisions) this.applySuspensions(read);
+    });
   }
 
   private snapshot(): Observable<Snapshot> {
-    return forkJoin({ page: this.service.anomalies(), suspensions: this.readSuspensions() });
+    const decisions = this.decisions;
+    return forkJoin({ page: this.service.anomalies(), suspensions: this.readSuspensions() }).pipe(
+      map((read) => ({ ...read, decisions })),
+    );
   }
 
   private show(snapshot: Snapshot): void {
@@ -239,7 +258,7 @@ export class SecurityPage implements OnInit {
     const failure = this.findingsFailure();
     if (failure && this.feedback.error() === failure) this.feedback.error.set(null);
     this.findingsFailure.set(null);
-    this.applySuspensions(snapshot.suspensions);
+    if (snapshot.decisions === this.decisions) this.applySuspensions(snapshot.suspensions);
   }
 
   private reportFindingsFailure(response: unknown): void {

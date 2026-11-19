@@ -10,16 +10,17 @@ keeps no chain of its own: what the release before this one wrote is read by not
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, MutableMapping
+from types import ModuleType
 from typing import Any
 
 import pytest
-import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
+from aira_gateway.consumer import apply as consumer_apply
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.core.canonical import (
     CanonicalChunk,
@@ -476,17 +477,19 @@ async def test_a_pipeline_with_only_an_embedding_chain_is_not_empty() -> None:
     assert plain is None
 
 
-async def test_the_installation_chain_event_is_not_applied_and_not_reported() -> None:
+async def test_the_installation_chain_event_is_not_applied_and_not_reported(
+    lines_logged_by: Callable[[ModuleType], list[MutableMapping[str, Any]]],
+) -> None:
     """The compacted topic still holds the last one the previous release sent; a rebuild reads it,
     applies nothing, and does not report a control that did not take effect — there is none."""
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
+    logs = lines_logged_by(consumer_apply)
     with TestClient(app):
         async with app.state.db_sessionmaker() as session:
-            with structlog.testing.capture_logs() as logs:
-                await apply_event(
-                    session, "fallback_chain.upserted", {"kind": "generate", "models": ["x"]}
-                )
-                await apply_event(session, "fallback_chain.renamed", {"kind": "generate"})
+            await apply_event(
+                session, "fallback_chain.upserted", {"kind": "generate", "models": ["x"]}
+            )
+            await apply_event(session, "fallback_chain.renamed", {"kind": "generate"})
         async with app.state.db_sessionmaker() as session:
             rows = list((await session.execute(select(FallbackChainRead))).scalars())
 

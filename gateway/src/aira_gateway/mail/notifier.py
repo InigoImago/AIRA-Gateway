@@ -10,6 +10,10 @@ gateway instances for the same reasons:
 - **one notifier per round**, claimed with a transaction-scoped advisory lock that a session of its
   own holds while the work commits notice by notice. A crash releases the lock with its connection
   and costs at most the mail in hand, which the next round sends again: at least once, never lost.
+
+**One mail's failure is that mail's.** A recipient the relay refuses, or a mail that cannot be
+built, stops neither the other recipients of the notice nor the notices after it; the notice is
+tried again next round, and only to the recipients who do not have it yet.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ import asyncio
 import contextlib
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from email.message import EmailMessage
 
@@ -41,7 +45,13 @@ from aira_gateway.db.models import (
 )
 from aira_gateway.mail.messages import BudgetState, anomaly_mail, budget_mail
 from aira_gateway.mail.recipients import Addresses, Recipient
-from aira_gateway.mail.transport import MAX_REASON, MailUndeliverable, Relay, SmtpRelay
+from aira_gateway.mail.transport import (
+    MAX_REASON,
+    MailUndeliverable,
+    Relay,
+    RelayUnavailable,
+    SmtpRelay,
+)
 from aira_gateway.scopes import PER_PERSON, USE_CASE, Scope, binding
 
 _log = structlog.get_logger(__name__)
@@ -107,6 +117,10 @@ class MailNotifier:
     console_url: str = ""
     interval_seconds: float = INTERVAL_SECONDS
     _task: asyncio.Task[None] | None = None
+    #: Who has each notice still owed, by its id: a notice tried again is not sent to them twice.
+    #: Kept by this instance only, so a restart — or another instance taking the next round — can
+    #: send one a second time: at least once, as everywhere here.
+    _mailed: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
 
     # -- lifecycle -------------------------------------------------------------------------
 
@@ -385,7 +399,11 @@ class MailNotifier:
         addresses = Addresses(self.directory)
         findings: dict[str, list[MailNotice]] = defaultdict(list)
         settled: list[MailNotice] = []
-        for notice in owed.scalars().all():
+        notices = owed.scalars().all()
+        # What a notice no longer owed was, nobody needs to know any more.
+        still_owed = {notice.id for notice in notices}
+        self._mailed = {key: who for key, who in self._mailed.items() if key in still_owed}
+        for notice in notices:
             if _aware(notice.expires_at) <= moment:
                 # Late is wrong: a budget mail about a period that has ended, or old news.
                 notice.outcome = EXPIRED
@@ -443,7 +461,7 @@ class MailNotifier:
         await self._deliver(
             [notice],
             recipients,
-            lambda to: budget_mail(
+            lambda to, _unsent: budget_mail(
                 state,
                 to=to,
                 sender=self.sender,
@@ -478,10 +496,13 @@ class MailNotifier:
         rows = await session.execute(
             select(AnomalyEvent).where(AnomalyEvent.id.in_([n.subject_key for n in notices]))
         )
-        events = list(rows.scalars())
-        if not events:
-            for notice in notices:
+        events = {event.id: event for event in rows.scalars()}
+        for notice in notices:
+            if notice.subject_key not in events:
+                # The finding is gone, so there is nothing left to say about it.
                 notice.outcome = EXPIRED
+        notices = [notice for notice in notices if notice.subject_key in events]
+        if not notices:
             return
         try:
             recipients = await addresses.of_administrators(session, slug)
@@ -491,8 +512,8 @@ class MailNotifier:
         await self._deliver(
             notices,
             recipients,
-            lambda to: anomaly_mail(
-                events,
+            lambda to, unsent: anomaly_mail(
+                [events[notice.subject_key] for notice in unsent],
                 use_case=slug,
                 use_case_name=use_case.name,
                 to=to,
@@ -507,11 +528,17 @@ class MailNotifier:
         self,
         notices: list[MailNotice],
         recipients: list[Recipient],
-        compose: Callable[[Recipient], EmailMessage],
+        compose: Callable[[Recipient, list[MailNotice]], EmailMessage],
         moment: datetime,
     ) -> None:
-        """One mail per recipient, so nobody reads the others' addresses and one refusal does not
-        stop the rest. Any failure leaves every notice owed for another round."""
+        """One mail per recipient, so nobody reads the others' addresses — and **one recipient's
+        failure is that recipient's**: a relay refusing an address, or a mail that cannot be built
+        for it, stops nobody else's. Each recipient is sent the notices they do not have yet, so a
+        notice tried again goes only to those still without it, until its attempts are spent.
+
+        Only a relay nobody can reach ends this round's sending early: every recipient after it
+        would wait for the same timeout, and the next round tries again.
+        """
         first = notices[0]
         if not recipients:
             for notice in notices:
@@ -524,24 +551,48 @@ class MailNotifier:
                 why="nobody to send it to has an address in the directory",
             )
             return
-        try:
-            for recipient in recipients:
-                await self.relay.send(compose(recipient))
-        except MailUndeliverable as exc:
-            self._failed(notices, str(exc))
-            return
+        failure = ""
+        for recipient in recipients:
+            unsent = [n for n in notices if recipient.username not in self._mailed.get(n.id, ())]
+            if not unsent:
+                continue
+            try:
+                message = compose(recipient, unsent)
+            except Exception as exc:  # noqa: BLE001 — this mail's failure, never the round's
+                failure = f"the mail could not be written ({type(exc).__name__})"
+                continue
+            try:
+                await self.relay.send(message)
+            except RelayUnavailable as exc:
+                failure = str(exc)
+                break
+            except MailUndeliverable as exc:
+                failure = str(exc)
+                continue
+            except Exception as exc:  # noqa: BLE001 — as above: one recipient, not the round
+                failure = f"the relay could not be used ({type(exc).__name__})"
+                continue
+            for notice in unsent:
+                self._mailed.setdefault(notice.id, set()).add(recipient.username)
+        everybody = {recipient.username for recipient in recipients}
+        waiting = [n for n in notices if not everybody <= self._mailed.get(n.id, set())]
         for notice in notices:
+            notice.recipients = len(self._mailed.get(notice.id, ()))
+        if waiting:
+            self._failed(waiting, failure)
+        sent = [notice for notice in notices if notice not in waiting]
+        for notice in sent:
             notice.outcome = SENT
-            notice.recipients = len(recipients)
             notice.sent_at = moment
-        _log.info(
-            "mail_sent",
-            notice=first.id,
-            notices=len(notices),
-            kind=first.kind,
-            use_case=first.use_case,
-            recipients=len(recipients),
-        )
+        if sent:
+            _log.info(
+                "mail_sent",
+                notice=sent[0].id,
+                notices=len(sent),
+                kind=sent[0].kind,
+                use_case=sent[0].use_case,
+                recipients=sent[0].recipients,
+            )
 
     def _failed(self, notices: list[MailNotice], why: str) -> None:
         for notice in notices:

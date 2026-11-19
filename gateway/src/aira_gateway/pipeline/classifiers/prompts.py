@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
+from typing import Any
 
 from aira_common.models import ThinkingMode
 from aira_gateway.core.canonical import CanonicalMessage, CanonicalRequest, Role, Thinking
@@ -123,7 +124,11 @@ THINKING_OFF = Thinking(mode=ThinkingMode.DISABLED)
 
 
 def classifier_request(
-    model: str, instruction: str, text: str, thinking: Thinking | None = THINKING_OFF
+    model: str,
+    instruction: str,
+    text: str,
+    thinking: Thinking | None = THINKING_OFF,
+    addressing: dict[str, Any] | None = None,
 ) -> CanonicalRequest:
     """The request every LLM classifier makes: one word out, and as little thinking as allowed.
 
@@ -132,6 +137,10 @@ def classifier_request(
     no catalogue, because a reasoning model sent nothing thinks and spends a one-word allowance on
     it (`FRD-125`). The text travels as data between markers (`DataBoundary`); the answer is still
     read as the one word the instruction asks for.
+
+    ``addressing`` is the catalogue's for the model, resolved by the caller as ``thinking`` is and
+    sent as a dispatch sends it: on a regional platform a model reached by being catalogued has
+    nowhere to be sent without its regions (`FRD-507`).
     """
     boundary = DataBoundary.around(text)
     return CanonicalRequest(
@@ -148,4 +157,5 @@ def classifier_request(
             else THINKING_CLASSIFIER_OUTPUT_TOKENS
         ),
         thinking=thinking,
+        addressing=addressing or {},
     )

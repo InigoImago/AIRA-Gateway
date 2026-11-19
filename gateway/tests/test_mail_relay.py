@@ -14,7 +14,7 @@ from email.message import EmailMessage
 
 import pytest
 
-from aira_gateway.mail import MailUndeliverable, SmtpRelay
+from aira_gateway.mail import MailUndeliverable, RelayUnavailable, SmtpRelay
 
 
 class _Relay(socketserver.ThreadingTCPServer):
@@ -148,3 +148,25 @@ async def test_a_relay_nobody_answers_at_is_a_failure_that_names_its_kind() -> N
 
     with pytest.raises(MailUndeliverable, match="could not be reached"):
         await SmtpRelay("127.0.0.1", free, "none").send(_mail())
+
+
+async def test_a_relay_nobody_answers_at_is_unavailable_to_every_mail() -> None:
+    """The one failure the notifier stops a round's sending for: every recipient after this one
+    would wait for the same connection."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+
+    with pytest.raises(RelayUnavailable):
+        await SmtpRelay("127.0.0.1", free, "none").send(_mail())
+
+
+async def test_a_refused_recipient_is_this_mails_failure_not_the_relays(
+    refusing_relay: _Relay,
+) -> None:
+    """A relay that answered and refused one address will take the next one: the notifier goes
+    on to the other recipients."""
+    with pytest.raises(MailUndeliverable) as refused:
+        await SmtpRelay("127.0.0.1", _port(refusing_relay), "none").send(_mail())
+
+    assert not isinstance(refused.value, RelayUnavailable)

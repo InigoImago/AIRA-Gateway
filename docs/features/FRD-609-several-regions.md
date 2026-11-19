@@ -40,10 +40,13 @@ permits only the first, and widening or narrowing the policy needs no second edi
 
 ### 2.3 A stream that has sent a byte is committed
 
-The chain is walked while **opening**: connect, and let the status check run. Once a chunk has been
+The chain is walked while **opening**: connect, let the status check run, and read the stream up to
+its first chunk that carries something — so an error the provider sends inside its `200` before
+the first word (Anthropic's `overloaded_error` after `message_start`, Google's in-band `503`)
+reaches the next region, as it does for a request that was not streamed. Once a chunk has been
 yielded, every later failure propagates untouched — a client with half an answer cannot have it
 continued by a different region. The same rule this project already states about model fallback,
-one axis along.
+one axis along (`FRD-302` FR-6).
 
 ## 3. What else depended on it
 

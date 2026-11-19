@@ -730,6 +730,68 @@ def test_a_nul_anywhere_in_a_body_is_refused_by_name(document: dict[str, Any]) -
     assert not UseCase.objects.filter(slug="nul-uc").exists()
 
 
+#: An anomaly rule as its use case's administrator posts one, named with a lone surrogate.
+SURROGATE_RULE = {
+    "name": "spike \ud800",
+    "kind": "refusal_rate",
+    "window_minutes": 15,
+    "threshold": 50,
+    "min_sample": 10,
+    "action": "alert",
+    "target": "use_case",
+}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "document"),
+    [
+        ("post", f"/api/v1/use-cases/{SLUG}/anomaly-rules/", SURROGATE_RULE),
+        ("post", "/api/v1/models/", {"name": "gemini-\ud800", "provider": "mock"}),
+        ("patch", "/api/v1/roles/controlling/", {"label": "Controlling \udc00"}),
+        ("post", "/api/v1/use-cases/", {"slug": "s-uc", "name": "n", "deep": [{"x": ["\ud800"]}]}),
+        ("post", "/api/v1/use-cases/", {"slug": "s-uc", "name": "n", "\udfff": 1}),
+    ],
+    ids=["anomaly-rule-name", "model-name", "role-label", "nested-value", "key"],
+)
+def test_a_lone_surrogate_anywhere_in_a_body_is_refused_by_name(
+    method: str, path: str, document: dict[str, Any]
+) -> None:
+    """Half a surrogate pair is not a character, and no UTF-8 text — what both databases are
+    handed — can carry it. A serializer's text field refuses one, but three routes look the
+    caller's name up, or check a label, before or without one, and the driver's
+    `UnicodeEncodeError` answered `500` on SQLite and PostgreSQL alike. Refused where the body is
+    parsed, for every endpoint at once."""
+    from aira_management.apps.anomalies.models import AnomalyRule
+    from aira_management.apps.catalog.models import Model
+    from aira_management.apps.roles.models import StoredRole
+
+    fixture = Fixture()
+    StoredRole.objects.create(slug="controlling", label="Controlling", group_path="/finance/c")
+    raw = json.dumps(document).encode()
+
+    response = getattr(fixture.client, method)(path, raw, content_type="application/json")
+
+    assert response.status_code == 400, response.content
+    assert "lone surrogate" in response.json()["error"]["message"]
+    assert not UseCase.objects.filter(slug="s-uc").exists()
+    assert not AnomalyRule.objects.filter(name__startswith="spike").exists()
+    assert not Model.objects.filter(name__startswith="gemini-").exists()
+    assert StoredRole.objects.get(slug="controlling").label == "Controlling"
+
+
+def test_a_character_written_as_a_surrogate_pair_is_still_read() -> None:
+    """The refusal is of half a pair. A whole one is the character it encodes — an emoji in a use
+    case's name, as a JSON encoder that escapes everything outside ASCII writes it."""
+    fixture = Fixture()
+    raw = json.dumps({"slug": "pair-uc", "name": "Chat \U0001f4ac"}).encode()
+    assert b"\\ud83d\\udcac" in raw
+
+    response = fixture.client.post("/api/v1/use-cases/", raw, content_type="application/json")
+
+    assert response.status_code == 201, response.content
+    assert UseCase.objects.get(slug="pair-uc").name == "Chat \U0001f4ac"
+
+
 def test_two_questions_added_without_a_position_are_both_answered() -> None:
     """The sweep posts each body once per route, and this failure needed two: both questions
     landed at position 0, and the second answered `500` from the unique index."""

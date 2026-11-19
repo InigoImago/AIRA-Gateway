@@ -108,6 +108,59 @@ def test_every_chain_a_surface_opens_is_conditioned_and_fitted(surface: Path) ->
     assert not lacking, f"{surface.parent.name}: " + "; ".join(lacking)
 
 
+# == and a surface's answer is built before its request counts as served ==========================
+
+
+def _accounted_blocks(tree: ast.AST) -> list[tuple[ast.AsyncWith, ast.stmt | None]]:
+    """Every `async with accounting(...)` block, with the statement that follows it."""
+    found: list[tuple[ast.AsyncWith, ast.stmt | None]] = []
+    for parent in ast.walk(tree):
+        body = getattr(parent, "body", None)
+        if not isinstance(body, list):
+            continue
+        for index, node in enumerate(body):
+            if not isinstance(node, ast.AsyncWith):
+                continue
+            called = {
+                ast.unparse(item.context_expr.func)
+                for item in node.items
+                if isinstance(item.context_expr, ast.Call)
+            }
+            if "accounting" in called:
+                found.append((node, body[index + 1] if index + 1 < len(body) else None))
+    return found
+
+
+def _builds_an_answer(node: ast.AST | None) -> bool:
+    return node is not None and any(
+        isinstance(call, ast.Call) and ast.unparse(call.func) == "JSONResponse"
+        for call in ast.walk(node)
+    )
+
+
+def test_every_answer_is_built_before_its_request_counts_as_served() -> None:
+    """Built after the accounting closed, an answer that cannot be written — a vector holding a
+    value JSON has no word for, a header Latin-1 cannot carry — was a `500` for its caller while
+    the row said `200` / `served` and the booking charged for it, so a client that retried paid
+    twice. Built inside, the failure is the request's own exit: a `500` / `internal_error` row,
+    with what the vendor billed booked. Asserted on every block, because only some verbs have an
+    input today that cannot be written, and the next field or header is written for one of the
+    others."""
+    late = [
+        f"{surface.parent.name}:{block.lineno}"
+        for surface in SURFACES
+        for block, after in _accounted_blocks(ast.parse(surface.read_text()))
+        if not _builds_an_answer(block) or _builds_an_answer(after)
+    ]
+    blocks = sum(len(_accounted_blocks(ast.parse(surface.read_text()))) for surface in SURFACES)
+
+    assert blocks >= 6, "the guard found fewer accounting blocks than the verbs that have one"
+    assert not late, (
+        f"these answers are built after their request was booked as served: {late}. Build the "
+        "response inside `accounting`, before `served`, `embedded` or `ranked`."
+    )
+
+
 # == and a surface never loses evidence quietly ==================================================
 
 

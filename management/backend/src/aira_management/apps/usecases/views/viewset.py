@@ -27,6 +27,7 @@ from aira_management.apps.usecases.views.anomaly_rules import AnomalyRulesMixin
 from aira_management.apps.usecases.views.api_keys import ApiKeysMixin
 from aira_management.apps.usecases.views.budgets import BudgetsMixin
 from aira_management.apps.usecases.views.grants import _admit
+from aira_management.apps.usecases.views.lifecycle import held_live
 from aira_management.apps.usecases.views.members import MembersMixin
 from aira_management.apps.usecases.views.payloads import _snapshot
 from aira_management.apps.usecases.views.pipeline import PipelineMixin
@@ -110,6 +111,12 @@ class UseCaseViewSet(
         return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer: Any) -> None:
+        """The change is saved onto the row as it stands, held until it commits, never onto the
+        copy this request read (`lifecycle.held_live`): saved whole, that copy writes back every
+        field as it was read — a retirement that committed meanwhile undone, a colleague's change
+        to another field with it. A use case retired meanwhile is a `404`, as it would be a moment
+        later."""
         with transaction.atomic():
+            serializer.instance = held_live(serializer.instance)
             usecase = serializer.save()
             emit("usecase.upserted", _snapshot(usecase))

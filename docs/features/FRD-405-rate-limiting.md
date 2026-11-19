@@ -96,8 +96,11 @@ than better: per-process counters mean N instances permit N times the configured
   never the only copy. Losing Redis loses in-flight reservations, not the period's accounting.
 - **FR-7 Decided degradation**: Redis unavailable → rate limiting falls back to a **per-instance
   in-memory bucket** (bounded, but N × the limit across N instances), budget enforcement falls
-  back to the **Postgres read-then-book path** (today's behaviour: enforcing but racy). Both log
-  a warning and surface in `/readyz` as degraded rather than failing it.
+  back to the **Postgres read-then-book path** (today's behaviour: enforcing but racy). Both
+  surface in `/readyz` as degraded rather than failing it. The change is logged where it happens —
+  a warning when the store goes away and the budgets fall back, a line when they are back — and
+  not by every request that meets it; an installation without Redis configured logs nothing per
+  request, since running without it is its choice.
 - **FR-8 Off by default**: a use case without a configured rate limit is unlimited, exactly as
   today. This feature must not silently start rejecting existing traffic on upgrade.
 - **FR-9 Persistence off the hot path**: the response is returned before the log row is written.
@@ -153,7 +156,7 @@ the period resets" sends the caller to wait for the wrong thing.
 currently in flight — not the month's accounting.
 
 A counter also **expires well before its budget period does** (`COUNTER_TTL_SECONDS`, five
-minutes). This is what bounds drift: if the correction after a request cannot reach Redis, the
+minutes). This is what bounds drift: if the correction after a request never reaches Redis, the
 counter keeps that request's deliberately high estimate, and it cannot be repaired from there —
 the store holding the stale figure is the store that is unreachable. Letting it expire makes the
 drift self-healing, and costs nothing, because every reservation already reads the Postgres figure
@@ -163,9 +166,28 @@ open reservation — and each settlement then subtracted a reservation the count
 a 1000-token budget whose counter expired under one running request admitted three and booked 2970.
 Each reservation is therefore also written beside the counter (`budget:<scope>:<period>:open`),
 under its own id with a deadline of `RESERVATION_LIFETIME_SECONDS` (an hour, longer than any request
-holds one); a rebuild adds those still open, and settling or releasing one removes it. One that can
-never be removed — Redis away when its request settled — over-counts until its deadline, in the
+holds one); a rebuild adds those still open, and settling or releasing one removes it.
+
+**A correction is never dropped because Redis is away.** `RedisRunner` stops asking Redis for five
+seconds after any failed call — one timeout is enough — so a settlement or release in those seconds
+cannot be sent. Dropped, it left its reservation open, and every rebuild in the next hour added the
+estimate back on top of what Postgres held: a use case near its limit was refused as "held by
+requests still in flight" with nothing in flight. The instance holds such a correction instead, at
+most `HELD_CORRECTIONS_LIMIT` of them, and sends them before its next reservation, a bounded share
+per call. A correction moves its counter only while the reservation is open, so one sent twice — or
+a second release — moves nothing. A reservation is named before its script runs, so a reply lost
+after Redis ran it is still given back. One that can never be removed — its correction held by an
+instance that stopped first, or given way to the bound — over-counts until its deadline, in the
 direction that refuses rather than spends, and is then dropped.
+
+**A rebuild and a booking count a request once.** A booking commits to Postgres and then corrects
+the counter; a rebuild reads Postgres and then builds. A rebuild between a booking's two halves
+counted the request twice, and one whose seed was read before the commit, built after the
+correction had found no counter, counted it not at all. Every booking counts a request, so the
+row's request count orders the two: the counter keeps the count it was built on, a correction
+brings the row as its booking left it (`RETURNING`) and takes back only the estimate where the
+counter already holds the booking, and the row is kept beside the counter
+(`budget:<scope>:<period>:booked`) for a rebuild, which builds on whichever reading is later.
 
 **The expiry is set when the counter is built and never extended.** Refreshed by every reservation
 and every correction, it was an idle timeout: a counter that saw a request every few minutes was
@@ -193,6 +215,11 @@ Two properties are non-negotiable. **Bounded**, because unbounded background tas
 the same failure mode the rate limiter exists to prevent — the queue would simply move the
 exhaustion from the connection pool to memory. And **drained on shutdown**, so a redeploy does not
 discard whatever had not yet been written.
+
+*As built*, it is bounded twice: `AIRA_LOG_QUEUE_SIZE` rows, and 64 MiB of the request and response
+bodies they hold (`MAX_QUEUED_BYTES`), a request body counted at the bytes the caller sent — rows
+alone let a slow database keep that many bodies of up to 8 MiB in memory. A body the installation
+does not store (`AIRA_STORE_PAYLOADS=false`) is dropped before its row is queued.
 
 When the queue is full the write happens inline, applying backpressure to the caller that is
 causing it. That is a deliberate choice over dropping the record: a request log that silently

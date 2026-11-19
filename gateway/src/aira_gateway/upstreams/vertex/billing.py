@@ -43,6 +43,11 @@ BILLING_HOST = "https://cloudbilling.googleapis.com/v1beta"
 #: The largest page the API serves; a service's SKUs fit in one or two.
 PAGE_SIZE = 5000
 
+#: How many pages one listing may take. `nextPageToken` comes from the vendor, and a listing that
+#: always returned one would hold the lookup open, asking, for ever; a hundred thousand entries is
+#: far past any account's services or a service's SKUs.
+MAX_PAGES = 20
+
 #: How long one account's services and SKUs are held. They change when Google launches a model;
 #: the prices themselves are asked for each time.
 SKU_CACHE_SECONDS = 6 * 3600
@@ -307,14 +312,19 @@ class BillingPrices:
         return data if isinstance(data, dict) else {}
 
     async def _pages(self, url: str, key: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every page of a listing, up to `MAX_PAGES` — beyond which the listing is refused rather
+        than cut short: a price looked up in half a list would say the account has none."""
         found: list[dict[str, Any]] = []
         token = ""
-        while True:
+        for _ in range(MAX_PAGES):
             data = await self._get(url, {**params, "pageSize": PAGE_SIZE, "pageToken": token})
             found.extend(item for item in data.get(key) or [] if isinstance(item, dict))
             token = str(data.get("nextPageToken") or "")
             if not token:
                 return found
+        raise UpstreamError(
+            f"The billing account's listing did not end within {MAX_PAGES} pages.", 502
+        )
 
     async def _skus(self) -> list[Sku]:
         now = self.clock()

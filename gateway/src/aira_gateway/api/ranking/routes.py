@@ -68,7 +68,10 @@ async def rank_records(project: str, location: str, config: str, request: Reques
             ).model_dump(exclude_none=True)
             # Booked as the model that ranked, which for a fallback is not the one named.
             acct.ranked(trail.served_model, units=prepared.rerank.units, records=ranked)
-        return JSONResponse(payload)
+            # Booked, then built: a score that cannot be written is the `500` the caller gets,
+            # and the row says so, with what the ranking cost.
+            response = JSONResponse(payload)
+        return response
     except REFUSALS as exc:
         response = refusal_response(exc, request)
         await record_refusal(request, trail, exc, status=response.status_code, started=started)

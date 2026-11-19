@@ -64,8 +64,12 @@ export class ConsumptionPanel {
   /** The clock both windows are on — the budgets', so these figures and the limits agree. */
   protected readonly clock = inject(InstallationClock).zone;
 
-  protected readonly monthStats = computed(() => this.statsFor(this.consumption().month));
-  protected readonly todayStats = computed(() => this.statsFor(this.consumption().today));
+  protected readonly monthStats = computed(() =>
+    this.statsFor(this.consumption().month, this.consumption().monthSpendUnknown),
+  );
+  protected readonly todayStats = computed(() =>
+    this.statsFor(this.consumption().today, this.consumption().todaySpendUnknown),
+  );
 
   /** Requests this month whose cost could not be computed at all. */
   protected readonly unpriced = computed(() => this.consumption().month?.unpriced_requests ?? 0);
@@ -85,14 +89,15 @@ export class ConsumptionPanel {
     return `${Math.round((100 * (row.cached_input_tokens ?? 0)) / row.prompt_tokens)}%`;
   }
 
-  private statsFor(row: ReportRow | null): Stat[] {
+  /** A window's figures; `spendUnknown` when nothing that ran could be priced. */
+  private statsFor(row: ReportRow | null, spendUnknown: boolean): Stat[] {
     return [
       // Spend first: a token count cannot stand in for cost, given the price spread between
       // models (`FRD-403`).
       {
         key: 'cost',
         label: `Spend${unitSuffix(this.currency())}`,
-        value: row ? row.cost : '—',
+        value: row && !spendUnknown ? row.cost : '—',
         help: FIGURE_HELP.cost,
       },
       {

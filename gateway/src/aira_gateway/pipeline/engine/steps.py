@@ -38,6 +38,7 @@ from aira_gateway.pipeline.classifiers import (
 )
 from aira_gateway.pipeline.config import PipelineStep, StepType
 from aira_gateway.pipeline.engine.outcomes import StepEvaluation
+from aira_gateway.pipeline.engine.texts import each_in_order
 from aira_gateway.thinking import for_a_classifier
 from aira_gateway.upstreams.base import ProviderRegistry
 
@@ -116,6 +117,11 @@ def _shown(text: str) -> str:
     return text if len(text) <= _SHOWN else text[:_SHOWN] + "…"
 
 
+def _spent(call: ModelCall | None) -> tuple[ModelCall, ...]:
+    """A classifier's call as what its step spent: nothing, where no model was asked."""
+    return () if call is None else (call,)
+
+
 def _said(reply: str, model: str | None) -> dict[str, Any]:
     """What a step's model replied, for the dry run's trace — **screen only, never persisted**
     (`FRD-122` §5.3). One function for every LLM step, so `output` means the same in each. An empty
@@ -138,20 +144,49 @@ def _filled(template: str, **values: str) -> str:
     return template
 
 
-def _with_user_text(request: CanonicalRequest, text: str) -> CanonicalRequest:
-    """The request with the **last user message's text** replaced.
+def _redacted_message(request: CanonicalRequest) -> int | None:
+    """Where the message is that the PII filter reads **and** writes: the last user message, or —
+    in a request without one — the last message, which is what `last_user_text` reads.
 
-    Attachments and tool parts on that message are kept — dropping a document because its covering
-    sentence was rewritten would lose what the request was about. Their contents are not scanned
-    (`FRD-110`'s stated blind spot).
+    One position for both halves. A step that read one message and wrote another recorded a
+    redaction, and showed the caller its notice, while the model was sent the text as typed.
     """
+    for index in range(len(request.messages) - 1, -1, -1):
+        if request.messages[index].role is Role.USER:
+            return index
+    return len(request.messages) - 1 if request.messages else None
+
+
+def _texts_of(request: CanonicalRequest, index: int | None) -> dict[int, str]:
+    """The text parts worth asking about in message ``index``, by their position in it.
+
+    A blank part is left out: there is nothing in it to redact, so nothing to pay for.
+    """
+    if index is None:
+        return {}
+    return {
+        position: part.text
+        for position, part in enumerate(request.messages[index].parts)
+        if isinstance(part, TextPart) and part.text.strip()
+    }
+
+
+def _with_texts(request: CanonicalRequest, index: int, texts: dict[int, str]) -> CanonicalRequest:
+    """The request with message ``index``'s text parts at ``texts``' positions rewritten **in
+    place**, every other part where it was.
+
+    The order is what the model reads — *this image, then this question* — and Anthropic refuses a
+    turn whose tool result follows its text. Attachments and tool parts are kept, because dropping a
+    document when its covering sentence was rewritten would lose what the request was about; their
+    contents are not scanned (`FRD-110`'s stated blind spot).
+    """
+    message = request.messages[index]
+    parts = [
+        TextPart(text=texts[position]) if position in texts else part
+        for position, part in enumerate(message.parts)
+    ]
     messages = list(request.messages)
-    for index in range(len(messages) - 1, -1, -1):
-        if messages[index].role is Role.USER:
-            message = messages[index]
-            kept = [part for part in message.parts if not isinstance(part, TextPart)]
-            messages[index] = message.model_copy(update={"parts": [TextPart(text=text), *kept]})
-            break
+    messages[index] = message.model_copy(update={"parts": parts})
     return request.model_copy(update={"messages": messages})
 
 
@@ -199,6 +234,22 @@ class _Routed:
     classifier: str | None = None
     #: Why no classifier was asked, where none was.
     unasked: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _Asking:
+    """What a step's request carries for one model besides the text — read off its declaration, as
+    a dispatch reads what it sends every candidate (`api.serving.prepare.fitted`).
+
+    Together, because each one missing fails the call outright: without its **addressing** a model
+    reached by being catalogued has nowhere to be sent on a regional platform; a thinking setting it
+    cannot take is a 400 (`for_a_classifier`); and a model that samples at its own settings refuses
+    the redactor's temperature.
+    """
+
+    thinking: Thinking | None
+    addressing: dict[str, Any]
+    fixed_sampling: bool = False
 
 
 class StepEvaluator:
@@ -271,7 +322,7 @@ class StepEvaluator:
                 "action": "blocked" if blocking else action,
                 "why": why,
             },
-            call=classification.call,
+            calls=_spent(classification.call),
             block_reason=_rejection(verdict) if blocking else None,
         )
 
@@ -329,7 +380,7 @@ class StepEvaluator:
                     "from": request.model,
                     "to": target,
                 },
-                call=call,
+                calls=_spent(call),
                 request=request.model_copy(update={"model": target}),
                 notice=notice,
             )
@@ -346,7 +397,7 @@ class StepEvaluator:
                 "category": category or "",
                 "why": "matched" if category else "no_category_matched",
             },
-            call=call,
+            calls=_spent(call),
             notice=notice,
         )
 
@@ -361,32 +412,62 @@ class StepEvaluator:
 
         This step has no lesser version of itself: passing the original through would send exactly
         what it exists to withhold. So a failure **blocks by default** (`FRD-125`); `on_failure:
-        allow` is the operator's recorded choice. Only the **user's own text** is rewritten — the
-        system instruction is the use case's, and a redactor must not edit it.
+        allow` is the operator's recorded choice. Only the **caller's own text** is rewritten: the
+        last user message, never the system instruction before it, which is the use case's and not
+        a redactor's to edit. A request with no user message has its last message rewritten instead
+        — the one the injection filter reads there too — so the role a text is sent under is no way
+        past the step.
+
+        **What is read is what is written**: that one message (`_redacted_message`), each of its
+        text parts asked about on its own and rewritten where it stands. Joined, the parts' rewrite
+        could only be put back as one text, in front of every attachment and tool result.
         """
         candidates = await self._models_for(config, declaration_of, permits)
         if not candidates.found:
             why = candidates.why_none("no model is available to redact with")
-            return self._pii_failure(config, why, None)
+            return self._pii_failure(config, why, ())
 
-        original = request.last_user_text()
+        target = _redacted_message(request)
+        texts = _texts_of(request, target)
+        original = request.messages[target].text if target is not None else ""
 
-        async def ask(model: str, provider: Any) -> Redaction:
-            return await LlmRedactor(
-                provider,
-                model,
-                config.get("instruction"),
-                await self._thinking_for(model, declaration_of),
-            ).rewrite(original)
+        async def redacted(text: str) -> tuple[str, Redaction]:
+            async def ask(model: str, provider: Any) -> Redaction:
+                asking = await self._asking(model, declaration_of)
+                return await LlmRedactor(
+                    provider,
+                    model,
+                    config.get("instruction"),
+                    asking.thinking,
+                    addressing=asking.addressing,
+                    fixed_sampling=asking.fixed_sampling,
+                ).rewrite(text)
 
-        answered = await self._asked(candidates.found, ask)
-        # `candidates.found` is not empty, so the chain answered with something.
-        assert answered is not None
-        model, result = answered
-        if result.text is None:
-            return self._pii_failure(config, result.failure or "the redactor failed", result.call)
+            answered = await self._asked(candidates.found, ask)
+            # `candidates.found` is not empty, so the chain answered with something.
+            assert answered is not None
+            return answered
 
-        changed = result.text.strip() != original.strip()
+        answers = await each_in_order(list(texts.values()), redacted)
+        calls = tuple(result.call for _, result in answers if result.call is not None)
+        unusable = next((result for _, result in answers if result.text is None), None)
+        if unusable is not None:
+            return self._pii_failure(config, unusable.failure or "the redactor failed", calls)
+
+        rewritten = {
+            position: result.text
+            for (position, given), (_, result) in zip(texts.items(), answers, strict=True)
+            if result.text is not None and result.text.strip() != given.strip()
+        }
+        # The models that redacted — two only where a chain answered two parts differently; with
+        # nothing to ask about, the one the step would have asked.
+        model = ", ".join(dict.fromkeys(name for name, _ in answers)) or candidates.found[0][0]
+        redacted_request: CanonicalRequest | None = None
+        after = original
+        if target is not None and rewritten:
+            redacted_request = _with_texts(request, target, rewritten)
+            after = redacted_request.messages[target].text
+        changed = redacted_request is not None
         return StepEvaluation(
             type="pii_filter",
             action="redacted" if changed else "unchanged",
@@ -395,7 +476,7 @@ class StepEvaluator:
                 "classifier": model,
                 "changed": changed,
                 "before": _shown(original),
-                "after": _shown(result.text),
+                "after": _shown(after),
             },
             # `changed`, not a count: the placeholder shape is the operator's instruction's, so a
             # count would be a number nobody measured.
@@ -404,15 +485,17 @@ class StepEvaluator:
                 "action": "redacted" if changed else "unchanged",
                 "why": model,
             },
-            call=result.call,
-            request=_with_user_text(request, result.text) if changed else None,
+            calls=calls,
+            request=redacted_request,
             notice=str(config.get("notice") or "").strip() if changed else None,
-            rewrote=(original, result.text) if changed else None,
+            rewrites=tuple((texts[position], text) for position, text in rewritten.items()),
         )
 
     @staticmethod
-    def _pii_failure(config: dict[str, Any], why: str, call: ModelCall | None) -> StepEvaluation:
-        """A redactor that did not produce a usable rewrite."""
+    def _pii_failure(
+        config: dict[str, Any], why: str, calls: tuple[ModelCall, ...]
+    ) -> StepEvaluation:
+        """A redactor that did not produce a usable rewrite — and what asking it cost."""
         allows = str(config.get("on_failure", UNDETERMINED_BLOCKS)) == UNDETERMINED_ALLOWS
         return StepEvaluation(
             type="pii_filter",
@@ -423,7 +506,7 @@ class StepEvaluator:
                 "action": "allowed" if allows else "blocked",
                 "why": why,
             },
-            call=call,
+            calls=calls,
             block_reason=None if allows else f"Personal data could not be removed: {why}.",
         )
 
@@ -448,11 +531,13 @@ class StepEvaluator:
         if config.get("mode") == "llm":
 
             async def ask(model: str, provider: Any) -> Classification:
+                asking = await self._asking(model, declaration_of)
                 return await LlmInjectionClassifier(
                     provider,
                     model,
                     config.get("instruction"),
-                    await self._thinking_for(model, declaration_of),
+                    asking.thinking,
+                    addressing=asking.addressing,
                 ).classify_text(text)
 
             candidates = await self._models_for(config, declaration_of, permits)
@@ -491,8 +576,9 @@ class StepEvaluator:
             return _Routed(None, default_model)
 
         async def ask(model: str, provider: Any) -> Routing:
+            asking = await self._asking(model, declaration_of)
             return await LlmCategoryRouter(
-                provider, model, categories, await self._thinking_for(model, declaration_of)
+                provider, model, categories, asking.thinking, addressing=asking.addressing
             ).classify_text(_system_and_user(request))
 
         candidates = await self._models_for(config, declaration_of, permits)
@@ -585,12 +671,16 @@ class StepEvaluator:
         # identifies neither.
         return self._registry.provider_for(model, declaration.provider, declaration.publisher)
 
-    async def _thinking_for(self, model: str, declaration_of: DeclarationOf | None) -> Any:
-        """What to tell ``model`` about thinking, from the catalogue.
+    async def _asking(self, model: str, declaration_of: DeclarationOf | None) -> _Asking:
+        """What to send ``model`` besides the text, from the catalogue.
 
-        Without a resolver the classifier asks for off: a reasoning model sent nothing thinks and
-        spends its one-word allowance doing so (`FRD-125`).
+        Without a resolver the classifier asks for no thinking — a reasoning model sent nothing
+        thinks and spends its one-word allowance doing so (`FRD-125`) — and no address, which is
+        all a model this gateway's configuration names needs.
         """
         if declaration_of is None:
-            return Thinking(mode=ThinkingMode.DISABLED)
-        return for_a_classifier(await declaration_of(model))
+            return _Asking(Thinking(mode=ThinkingMode.DISABLED), {})
+        declaration = await declaration_of(model)
+        return _Asking(
+            for_a_classifier(declaration), declaration.addressing, declaration.fixed_sampling
+        )

@@ -72,7 +72,10 @@ EXPOSE 8001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
     CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/healthz').read()"]
 
-# A stopping container waits this long for running requests, then lets the application's shutdown
-# cut short the streams still read after their callers left, so they book and record what they
-# know — inside Docker's own ten seconds before it kills the process.
+# A stopping container waits this long for running requests, then cancels the ones still running —
+# most streams, since a model's answer usually takes longer — and the application's shutdown cuts
+# short the streams still read after their callers left. It then waits at most three seconds more
+# for each of those to book what it used and hand over its row before it closes the writer, the
+# counters and the vendors' clients: five and three, inside Docker's own ten seconds before it
+# kills the process.
 CMD ["uvicorn", "aira_gateway.main:app", "--host", "0.0.0.0", "--port", "8001", "--timeout-graceful-shutdown", "5"]

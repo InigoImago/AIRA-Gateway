@@ -8,7 +8,6 @@ classifier calls (`FRD-125`), and still stores the redacted prompt rather than t
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from typing import Any
 
@@ -30,6 +29,7 @@ from aira_gateway.pipeline.engine.texts import (
     _over_the_batch,
     _summed,
     _worst,
+    each_in_order,
 )
 from aira_gateway.pipeline.errors import PipelineRejected
 from aira_gateway.upstreams.base import ProviderRegistry
@@ -65,16 +65,14 @@ class PipelineEngine:
         )
         for step in pipeline.steps:
             evaluation = await self._steps.evaluate(step, outcome.request, declaration_of, permits)
-            if evaluation.call is not None:
-                outcome.model_calls.append(evaluation.call)
+            outcome.model_calls.extend(evaluation.calls)
             if evaluation.decision is not None:
                 outcome.decisions.append(evaluation.decision)
             if evaluation.request is not None:
                 outcome.request = evaluation.request
             if evaluation.notice:
                 outcome.notices.append(evaluation.notice)
-            if evaluation.rewrote is not None:
-                outcome.rewrites.append(evaluation.rewrote)
+            outcome.rewrites.extend(evaluation.rewrites)
             if evaluation.block_reason is not None:
                 raise PipelineRejected(evaluation.block_reason, step=str(step.type))
         return outcome
@@ -107,15 +105,17 @@ class PipelineEngine:
         for step in pipeline.steps:
             if step.type not in TEXT_ONLY_STEPS:
                 continue
-            evaluations = await self._evaluate_each(
-                step, outcome.texts, model, declaration_of, permits
-            )
-
-            # Spend and rewrites first, as in `run`: recorded whether or not the step refuses.
-            outcome.model_calls.extend(
-                _summed(str(step.type), [e.call for e in evaluations if e.call])
-            )
-            outcome.rewrites.extend(e.rewrote for e in evaluations if e.rewrote is not None)
+            spent: dict[int, tuple[ModelCall, ...]] = {}
+            try:
+                evaluations = await self._evaluate_each(
+                    step, outcome.texts, model, declaration_of, permits, spent
+                )
+            finally:
+                # Spend first, as in `run`, and **however the batch ends** — refused, failed or
+                # cancelled: what the texts that finished cost was spent all the same.
+                made = [call for index in sorted(spent) for call in spent[index]]
+                outcome.model_calls.extend(_summed(str(step.type), made))
+            outcome.rewrites.extend(rewrite for e in evaluations for rewrite in e.rewrites)
 
             notable = _worst(evaluations)
             decision = _over_the_batch(step, evaluations, notable)
@@ -136,19 +136,23 @@ class PipelineEngine:
         texts: Sequence[str],
         model: str,
         declaration_of: DeclarationOf | None,
-        permits: StepPermits | None = None,
+        permits: StepPermits | None,
+        spent: dict[int, tuple[ModelCall, ...]],
     ) -> list[StepEvaluation]:
-        """One evaluation per text, a bounded handful at a time, **in the texts' order** —
-        `asyncio.gather` keeps argument order, and a rewrite applied to the wrong text is silent."""
-        limit = asyncio.Semaphore(REDACTIONS_AT_ONCE)
+        """One evaluation per text, a bounded handful at a time, in the texts' order, as one unit
+        (`each_in_order`). Each text's calls go into ``spent``, under its position, the moment its
+        evaluation is done — so a batch that fails part-way still has what its finished texts cost.
+        """
 
-        async def one(text: str) -> StepEvaluation:
-            async with limit:
-                return await self._steps.evaluate(
-                    step, _one_message(text, model), declaration_of, permits
-                )
+        async def one(numbered: tuple[int, str]) -> StepEvaluation:
+            index, text = numbered
+            evaluation = await self._steps.evaluate(
+                step, _one_message(text, model), declaration_of, permits
+            )
+            spent[index] = evaluation.calls
+            return evaluation
 
-        return list(await asyncio.gather(*(one(text) for text in texts)))
+        return await each_in_order(list(enumerate(texts)), one, at_once=REDACTIONS_AT_ONCE)
 
     async def dry_run(
         self,
@@ -176,8 +180,7 @@ class PipelineEngine:
         reason: str | None = None
         for step in pipeline.steps:
             evaluation = await self._steps.evaluate(step, current, declaration_of, permits)
-            if evaluation.call is not None:
-                calls.append(evaluation.call)
+            calls.extend(evaluation.calls)
             if evaluation.request is not None:
                 current = evaluation.request
             # `blocked` is read before this step's own outcome, so the blocking step is not marked

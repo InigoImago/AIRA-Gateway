@@ -6,6 +6,10 @@ What a stream's ending means is the same on every surface, so it is decided here
                                 recorded with its failure; where it had reported nothing and the
                                 connection or this gateway's time limit ended it, not the vendor,
                                 counted at the vendor first, as for a caller who left (`FRD-408`)
+    this gateway failed         ended like the above, with the error the surface would have sent
+                                as a status: recorded as `500` / `internal_error`, and counted at
+                                the vendor where nothing was reported — this gateway stopped
+                                reading, the vendor did not stop answering
     the answer was delivered    served — whether or not the upstream ever reported usage
     the caller left             read to its end first (`ADR-0041`), so the vendor says what the
                                 answer cost; settled at what it reported, recorded as `499`. Cut
@@ -13,13 +17,15 @@ What a stream's ending means is the same on every surface, so it is decided here
                                 settled at that floor — otherwise unknown, and the reservation goes
                                 back
 
-A surface writes only its wire format. It opens the dispatch chain through :class:`Opening`, which
-waits for a first chunk no longer than a caller can be kept without a byte (`ADR-0046`). Inside
-:meth:`StreamAccounting.accounted` it passes each chunk through :meth:`~StreamAccounting.take` and
-says whether the stream was :meth:`~StreamAccounting.delivered` or
-:meth:`~StreamAccounting.broke_off`; then it returns an :class:`AccountedStream`, which sees the
-accounting run however the response ends — finished, cancelled inside the body, cancelled while a
-frame was being sent, or cancelled before the body began. The body itself cannot see the last two.
+A surface writes only its wire format. It opens the dispatch chain inside
+:meth:`StreamAccounting.dispatching`, which accounts for the request from that moment — the chain
+calls a model from its first step — through :class:`Opening`, which waits for a first chunk no
+longer than a caller can be kept without a byte (`ADR-0046`). From that block it returns an
+:class:`AccountedStream`, which takes the accounting over. Inside :meth:`StreamAccounting.accounted`
+the body passes each chunk through :meth:`~StreamAccounting.take` and says whether the stream was
+:meth:`~StreamAccounting.delivered` or :meth:`~StreamAccounting.broke_off`, and the response sees
+the accounting end however it ends — finished, cancelled inside the body, cancelled while a frame
+was being sent, or cancelled before the body began. The body itself cannot see the last two.
 """
 
 from __future__ import annotations
@@ -27,11 +33,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Mapping
-from contextlib import ExitStack, asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from starlette.types import Receive, Scope, Send
 
 from aira_common.logging import get_logger
@@ -41,12 +49,13 @@ from aira_gateway.api.serving.counting import Unreported
 from aira_gateway.api.serving.prepare import Prepared
 from aira_gateway.api.serving.pump import Pump
 from aira_gateway.api.serving.refusals import (
+    REFUSALS,
     caller_message,
     refusal_outcome,
     stream_failure_status,
 )
 from aira_gateway.audio import AudioDigest
-from aira_gateway.audit import AuditTrail, UsageBasis
+from aira_gateway.audit import AuditTrail, Outcome, UsageBasis
 from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage, ToolCallPart
 from aira_gateway.explaining import MODEL_HEADER, withhold
 from aira_gateway.pipeline.dispatch import Streaming, passed_over_by
@@ -131,7 +140,7 @@ class StreamAccounting:
         request: Request,
         trail: AuditTrail,
         prepared: Prepared,
-        streamed: Streaming | Opening,
+        streamed: Streaming | Opening | None = None,
         *,
         api: str,
         operation: str,
@@ -174,18 +183,35 @@ class StreamAccounting:
         #: The request's technical record (`FRD-630`): the provider's milestones are seen here.
         self._technical = technical_of(request)
         self._payload: dict[str, Any] | None = None
+        self._pump: Pump | None = None
+        #: The request's accounting, held from :meth:`dispatching` until the response is over.
+        self._exits = AsyncExitStack()
+        self._account: Accounting | None = None
+        #: Whether a response took the accounting over (`AccountedStream`).
+        self._handed_over = False
+        if streamed is not None:
+            self.reads(streamed)
+
+    def reads(self, streamed: Streaming | Opening) -> None:
+        """Read ``streamed``: the stream the chain opened, or the chain itself, still looking for a
+        first chunk when the response has to begin without one (`ADR-0046`)."""
         if isinstance(streamed, Opening):
             # The response begins before any model answered (`ADR-0046`), so its headers cannot
             # name one: a fallback may yet answer instead of the model asked first.
-            withhold(request.state, MODEL_HEADER)
+            withhold(self._request.state, MODEL_HEADER)
             streamed.on_open = self._opened
             source: AsyncIterator[CanonicalChunk] = streamed
         else:
             self._opened(streamed)
             source = streamed.chunks
-        #: The upstream's chunks, read by a task of their own (`pump`): what the vendor sends is
-        #: observed as it arrives, and a stream whose caller left can be read to its end.
-        self.chunks = Pump(source, self._observe)
+        self._pump = Pump(source, self._observe)
+
+    @property
+    def chunks(self) -> Pump:
+        """The upstream's chunks, read by a task of their own (`pump`): what the vendor sends is
+        observed as it arrives, and a stream whose caller left can be read to its end."""
+        assert self._pump is not None, "a stream is read once its chain has been opened"
+        return self._pump
 
     def _opened(self, streamed: Streaming) -> None:
         """A candidate produced the first chunk: it is the model that answers.
@@ -257,12 +283,33 @@ class StreamAccounting:
         Either the model that answered broke off, or — on a response that had to begin before any
         model answered (`ADR-0046`) — the chain ran out of candidates. The second says whom it
         tried and passed over, as a refusal's row does (`FRD-302` FR-11).
+
+        Or this gateway failed while it carried the answer — an adapter that could not read a chunk,
+        a defect anywhere on the way. The surface ends the stream as it ends one an upstream broke
+        off, with its error element, where the failure would otherwise cut the connection and leave
+        the caller a response that stops mid-body. A defect is then nobody else's to report: it is
+        logged with its traceback under the name every unhandled error has, and marked on the trace
+        as one, as it would have been on its way to the server.
         """
         self._failure = exc
         self._technical.failed(exc)
         chain = passed_over_by(exc)
         if chain is not None:
             self._trail.passed_over(list(chain.skipped), list(chain.failed))
+        if not isinstance(exc, REFUSALS):
+            _log.error(
+                "unhandled_error",
+                path=self._request.url.path,
+                method=self._request.method,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model=self.model,
+                exc_info=exc,
+            )
+            span = trace.get_current_span()
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            return
         _log.error(
             "upstream_stream_error",
             error=str(exc),
@@ -283,38 +330,63 @@ class StreamAccounting:
         return stored
 
     @asynccontextmanager
-    async def accounted(self) -> AsyncIterator[None]:
-        """The body runs inside this, and the request is accounted for however the body ends.
+    async def dispatching(self) -> AsyncIterator[None]:
+        """The block that opens the chain, accounted for from its first line.
 
-        A caller who left before the upstream's end leaves the upstream to be read to it first,
-        so the vendor's own figure is what is booked (`ADR-0041`).
+        From here on a model is being called — for as long as the status waits for a first chunk,
+        and a thinking model can be silent for all of it. Whatever ends the request before its
+        response exists — a refusal while it is still a status, a failure of this gateway's own, a
+        stopping server — settles or gives back the reservation and leaves the row, as on every
+        other verb, and closes what the chain opened. Left without an exception, the block has
+        built the response, which takes the accounting over (`AccountedStream`).
         """
-        # Held from the drain until the row is written — past the accounting's own exit — so a
-        # stopping server waits for this request's row rather than closing the writer under it.
-        with ExitStack() as held:
-            async with accounting(
+        self._account = await self._exits.enter_async_context(
+            accounting(
                 self._request,
                 self._trail,
                 self._prepared,
                 api=self._api,
                 operation=self._operation,
                 started=self._started,
-            ) as acct:
+            )
+        )
+        try:
+            yield
+        except BaseException as exc:
+            if self._pump is not None:
+                await uninterrupted(self._pump.aclose())
+            await self._leave(exc)
+            raise
+        if not self._handed_over:
+            # No response took it over, so nothing else would end it.
+            await self._leave(None)
+
+    def hand_over(self) -> None:
+        """A response took the accounting over: it ends it, however the response ends."""
+        self._handed_over = True
+
+    @asynccontextmanager
+    async def accounted(self) -> AsyncIterator[None]:
+        """The body runs inside this, and the request is accounted for however the body ends.
+
+        A caller who left before the upstream's end leaves the upstream to be read to it first,
+        so the vendor's own figure is what is booked (`ADR-0041`).
+        """
+        async with self._held() as acct:
+            try:
+                yield
+            except asyncio.CancelledError, GeneratorExit:
+                # The moment the caller went (`FRD-630`) — before the drain, which goes on reading
+                # after they have gone, and whatever the upstream did meanwhile.
+                self._technical.mark("caller_left")
+                raise
+            finally:
                 try:
-                    yield
-                except asyncio.CancelledError, GeneratorExit:
-                    # The moment the caller went (`FRD-630`) — before the drain, which goes on
-                    # reading after they have gone, and whatever the upstream did meanwhile.
-                    self._technical.mark("caller_left")
-                    raise
+                    if self._caller_left():
+                        await uninterrupted(self._drain())
                 finally:
-                    try:
-                        if self._caller_left():
-                            held.enter_context(drains_of(self._request).held())
-                            await uninterrupted(self._drain())
-                    finally:
-                        self._report(acct)
-                        await uninterrupted(self.chunks.aclose())
+                    self._report(acct)
+                    await uninterrupted(self.chunks.aclose())
 
     async def never_started(self) -> None:
         """Account for a response whose body never ran: cancelled while its headers were sent.
@@ -324,22 +396,32 @@ class StreamAccounting:
         its end as for any caller who left; what it reported is settled, and with nothing reported
         the row says the caller left and the reservation goes back.
         """
-        with ExitStack() as held:
-            async with accounting(
-                self._request,
-                self._trail,
-                self._prepared,
-                api=self._api,
-                operation=self._operation,
-                started=self._started,
-            ) as acct:
-                try:
-                    self._technical.mark("caller_left")
-                    held.enter_context(drains_of(self._request).held())
-                    await self._drain()
-                finally:
-                    self._left(acct, self.stored())
-            await self.chunks.aclose()
+        async with self._held() as acct:
+            try:
+                self._technical.mark("caller_left")
+                await self._drain()
+            finally:
+                self._left(acct, self.stored())
+        await self.chunks.aclose()
+
+    @asynccontextmanager
+    async def _held(self) -> AsyncIterator[Accounting]:
+        """The accounting :meth:`dispatching` began, ended by whatever ends this block."""
+        assert self._account is not None, "a stream is accounted for from its dispatch"
+        try:
+            yield self._account
+        except BaseException as exc:
+            await self._leave(exc)
+            raise
+        await self._leave(None)
+
+    async def _leave(self, exc: BaseException | None) -> None:
+        """End the accounting, telling it what ended the request — as an `async with` around it
+        would have: nothing, a cancellation, a refusal, or a failure."""
+        if exc is None:
+            await self._exits.aclose()
+        else:
+            await self._exits.__aexit__(type(exc), exc, exc.__traceback__)
 
     def _caller_left(self) -> bool:
         """Whether the body ended with the upstream still sending, and nobody to send it to."""
@@ -370,15 +452,12 @@ class StreamAccounting:
                     # Reported before the end: the vendor's running total, a floor (`UsageBasis`).
                     acct.usage_basis = UsageBasis.PARTIAL
             elif _vendor_may_go_on(self._failure):
-                # Nothing reported, and the stream ended by the connection or this gateway's time
-                # limit rather than by the vendor, which goes on answering — and billing — on its
-                # side. Counted there, as a caller who left is, or the request is booked as free.
+                # Nothing reported, and the stream ended by the connection, this gateway's time
+                # limit or a failure of its own rather than by the vendor, which goes on answering
+                # — and billing — on its side. Counted there, as a caller who left is, or the
+                # request is booked as free.
                 acct.unreported = self._unreported()
-            acct.failed(
-                stream_failure_status(self._failure),
-                refusal_outcome(self._failure),
-                caller_message(self._failure),
-            )
+            acct.failed(*_recorded_as(self._failure))
         elif self._delivered:
             # Served even when the upstream never reported usage — an OpenAI-compatible server
             # may ignore `stream_options` — or a delivered answer would read as a caller who left
@@ -420,19 +499,36 @@ def _vendor_may_go_on(failure: Exception) -> bool:
     """Whether a stream ended by ``failure`` may still be answered — and billed — at the vendor.
 
     A transport failure carries no status: this gateway stopped waiting, or the connection broke,
-    and either way the vendor was not the one that stopped. An error the vendor sent carries its
-    status, and is the vendor ending the answer itself.
+    and either way the vendor was not the one that stopped — nor where this gateway failed while it
+    read the answer. An error the vendor sent carries its status, and is the vendor ending the
+    answer itself.
     """
+    if not isinstance(failure, REFUSALS):
+        return True
     return isinstance(failure, UpstreamError) and failure.status_code is None
+
+
+def _recorded_as(failure: Exception) -> tuple[int, Outcome, str | None]:
+    """The status, outcome and message of a stream that failed after its status went out.
+
+    A refusal's own, as both surfaces map it. Anything else is this gateway failing, recorded as
+    what it would have been as a status: `500`, `internal_error`, and no message — the caller is
+    told no more than that it failed.
+    """
+    if isinstance(failure, REFUSALS):
+        return stream_failure_status(failure), refusal_outcome(failure), caller_message(failure)
+    return 500, Outcome.INTERNAL_ERROR, None
 
 
 class AccountedStream(StreamingResponse):
     """A streamed response whose request is accounted for however the connection ends.
 
-    The body accounts for itself while it runs. Two endings never reach it: a cancellation while a
-    frame was being sent leaves it suspended between two frames — closed whenever the collector
-    gets to it, in another task, unshielded — and one while the headers were being sent means it
-    never started at all. Both are settled here, after the response is over.
+    Built, it takes over the accounting the block that opened the chain began
+    (`StreamAccounting.dispatching`). The body accounts for itself while it runs. Two endings never
+    reach it: a cancellation while a frame was being sent leaves it suspended between two frames —
+    closed whenever the collector gets to it, in another task, unshielded — and one while the
+    headers were being sent means it never started at all. Both are settled here, after the response
+    is over.
     """
 
     def __init__(
@@ -446,6 +542,7 @@ class AccountedStream(StreamingResponse):
         super().__init__(body, media_type=media_type, headers=headers)
         self._stream = stream
         self._body = body
+        stream.hand_over()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:

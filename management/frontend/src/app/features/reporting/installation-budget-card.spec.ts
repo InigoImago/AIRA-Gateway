@@ -112,6 +112,24 @@ function setup(options: Options = {}) {
   };
 }
 
+/** Open the window and type a spend limit into it, the way a person does. */
+async function typeCost(harness: ReturnType<typeof setup>, value: string): Promise<HTMLElement> {
+  harness.click('add-installation-budget');
+  // `ngModel` inside a `<form>` registers on a microtask.
+  await Promise.resolve();
+  const field = harness.fixture.nativeElement.querySelector(
+    '#installation-cost',
+  ) as HTMLInputElement;
+  field.value = value;
+  field.dispatchEvent(new Event('input'));
+  harness.fixture.detectChanges();
+  return harness.testid('installation-budget-editor') as HTMLElement;
+}
+
+function saveButton(window: HTMLElement): HTMLButtonElement {
+  return window.querySelector('button[type="submit"]') as HTMLButtonElement;
+}
+
 const MONTHLY: Budget = {
   id: 7,
   scope: 'installation',
@@ -186,6 +204,31 @@ describe('InstallationBudgetCard', () => {
     expect(component.validationError()).toContain('must be an amount');
   });
 
+  it('asks which amount "5.000" and "5,000" are, and saves neither as five', async () => {
+    // Either mark is taken for the decimals, so both read as five — the cap on unattributed spend
+    // a thousand times smaller than the person meant, under "Installation budget saved."
+    for (const typed of ['5.000', '5,000']) {
+      const harness = setup({ currency: 'EUR' });
+      const window = await typeCost(harness, typed);
+
+      expect(window.textContent).toContain(`“${typed}” could be 5000 or 5.00`);
+      expect(saveButton(window).disabled).toBe(true);
+      harness.component.save();
+      expect(harness.calls.filter((call) => call.startsWith('save:'))).toEqual([]);
+    }
+  });
+
+  it('says what a spend limit will be stored as, before it is saved', async () => {
+    const harness = setup({ currency: 'CHF' });
+    const window = await typeCost(harness, '20,5');
+
+    expect(harness.testid('installation-cost-reading')?.textContent).toContain(
+      'Will be saved as 20.50 CHF.',
+    );
+    saveButton(window).click();
+    expect(harness.calls).toContain('save:installation:month:20.5:null:null:true');
+  });
+
   it('saves the scope the gateway binds on, and says enabled out loud', () => {
     // `scope: 'installation'` with an empty use case selects the residual bucket in the gateway;
     // an upsert silent about `enabled` would re-arm a budget somebody had lifted.
@@ -215,6 +258,29 @@ describe('InstallationBudgetCard', () => {
     component.save();
 
     expect(feedback.error()).toContain('refused');
+  });
+
+  it('says why a save was refused inside the window, not behind it', async () => {
+    // The page's banner sits under the backdrop, in a part of the page made inert: neither seen
+    // nor announced while the window is open. A limit of 0 is one the server refuses.
+    const harness = setup({ save: httpError(400) });
+    harness.feedback.fail({ status: 502 }, 'Could not load the report.');
+    harness.click('add-installation-budget');
+    const window = harness.testid('installation-budget-editor') as HTMLElement;
+    // A failure from before the window opened is not its outcome.
+    expect(window.textContent).not.toContain('Could not load the report.');
+    await Promise.resolve();
+    const field = window.querySelector('#installation-requests') as HTMLInputElement;
+    field.value = '50';
+    field.dispatchEvent(new Event('input'));
+    harness.fixture.detectChanges();
+
+    saveButton(window).click();
+    harness.fixture.detectChanges();
+
+    const said = harness.testid('installation-budget-editor-error');
+    expect(said?.textContent).toContain('refused');
+    expect(said?.closest('[data-testid="installation-budget-editor"]')).not.toBeNull();
   });
 
   it('reports a failed load rather than showing an empty card', () => {

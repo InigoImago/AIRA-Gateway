@@ -15,6 +15,7 @@ from aira_gateway.api.serving.prepare import Prepared
 from aira_gateway.audit import AuditTrail
 from aira_gateway.catalog import ModelDeclaration
 from aira_gateway.core.canonical import CanonicalRequest, CanonicalResponse, FinishReason
+from aira_gateway.explaining import header_value
 
 WITHHELD_STRUCTURED = (
     "the answer is a document the caller parses, and a sentence would invalidate it"
@@ -49,11 +50,18 @@ def check_structured_result(canonical: CanonicalRequest, response: CanonicalResp
 
 def deprecation_headers(declaration: ModelDeclaration) -> dict[str, str]:
     """A ``Warning`` header for a deprecated model (FRD-114 FR-5). It warns and never blocks:
-    blocking is revocation (`FRD-307`), and conflating the two removes the announcement."""
+    blocking is revocation (`FRD-307`), and conflating the two removes the announcement.
+
+    The name is written as the header can carry it — Latin-1 on one line, inside its quotes: a
+    catalogue name may be any printable text, and a header that cannot be encoded fails the answer
+    it was meant to annotate.
+    """
     if not declaration.deprecated:
         return {}
+    name = header_value(declaration.name).decode("latin-1").replace("\\", "\\\\")
+    name = name.replace('"', '\\"')
     return {
-        "Warning": f'299 - "Model {declaration.name} is deprecated and will be withdrawn."',
+        "Warning": f'299 - "Model {name} is deprecated and will be withdrawn."',
     }
 
 

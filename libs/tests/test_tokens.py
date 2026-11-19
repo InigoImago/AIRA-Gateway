@@ -5,7 +5,8 @@ it per platform means getting the refresh race right per platform, and the secon
 the one that is subtly wrong — so it is written once and tested here, hard.
 
 The clock is injected because "refreshes *before* expiry" is otherwise a property testable only by
-waiting an hour.
+waiting an hour. A refresh runs **behind** the requests, which keep the held token meanwhile, so a
+test lets it run (`_let_the_refresh_run`) before it asks what it brought.
 """
 
 from __future__ import annotations
@@ -32,6 +33,13 @@ class _Clock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+async def _let_the_refresh_run() -> None:
+    """Hand the event loop to a refresh started in the background, which finishes at once unless
+    a test holds it at its gate."""
+    for _ in range(3):
+        await asyncio.sleep(0)
 
 
 class _Counting:
@@ -71,9 +79,76 @@ async def test_it_refreshes_before_expiry_rather_than_on_it() -> None:
     clock.advance(700)  # 70% of the lifetime — not yet due
     assert await source.token() == "token-1"
 
-    clock.advance(150)  # past 80%, and still comfortably valid
+    clock.advance(150)  # past 80%, and still valid: served while its successor is fetched
+    assert await source.token() == "token-1"
+    await _let_the_refresh_run()
+
     assert await source.token() == "token-2"
     assert acquirer.calls == 2
+
+
+async def test_a_due_refresh_holds_up_no_request() -> None:
+    """**No request waits for an identity provider while a valid token is held.** The refresh is
+    due at 80 % of the lifetime — with an hour's token, twelve minutes before it expires — and ran
+    inline: every request arriving while the provider was slow to answer waited for it, and all
+    traffic the token carries stood still. The held token is what they get, and its successor is
+    fetched once, behind them."""
+    clock, acquirer = _Clock(), _Counting(lifetime=1000.0)
+    source = TokenSource(acquirer, clock=clock)
+    await source.token()
+
+    acquirer.gate = asyncio.Event()  # the identity provider is slow to answer
+    clock.advance(850)
+    served = []
+    for _ in range(20):
+        served.append(await asyncio.wait_for(source.token(), timeout=1.0))
+        await _let_the_refresh_run()
+
+    assert served == ["token-1"] * 20
+    assert acquirer.calls == 2, "the refresh is one fetch, whoever found it due"
+    acquirer.gate.set()
+    await _let_the_refresh_run()
+    assert await source.token() == "token-2"
+
+
+async def test_a_caller_with_nothing_valid_waits_for_the_refresh_in_flight() -> None:
+    """Only a caller with no usable token waits — and for the fetch already running, not one of its
+    own."""
+    clock, acquirer = _Clock(), _Counting(lifetime=1000.0)
+    source = TokenSource(acquirer, clock=clock)
+    await source.token()
+    acquirer.gate = asyncio.Event()
+    clock.advance(850)
+    # The refresh begins, and waits at the gate; the caller who found it due does not.
+    assert await asyncio.wait_for(source.token(), timeout=1.0) == "token-1"
+
+    clock.advance(500)  # the held token expires meanwhile
+    waiting = asyncio.create_task(source.token())
+    await _let_the_refresh_run()
+    assert not waiting.done(), "a caller with no valid token was answered without one"
+    acquirer.gate.set()
+
+    assert await waiting == "token-2"
+    assert acquirer.calls == 2
+
+
+async def test_a_caller_who_leaves_does_not_cancel_the_fetch_others_wait_for() -> None:
+    """A caller that hangs up is cancelled where it waits. Were that the fetch, every other caller
+    waiting for the same token would have to fetch again, each paying the provider's time once
+    more."""
+    clock, acquirer = _Clock(), _Counting()
+    acquirer.gate = asyncio.Event()
+    source = TokenSource(acquirer, clock=clock)
+
+    leaving = asyncio.create_task(source.token())
+    staying = asyncio.create_task(source.token())
+    await _let_the_refresh_run()
+    leaving.cancel()
+    await asyncio.gather(leaving, return_exceptions=True)
+    acquirer.gate.set()
+
+    assert await staying == "token-1"
+    assert acquirer.calls == 1
 
 
 async def test_concurrent_callers_produce_one_fetch() -> None:
@@ -125,8 +200,9 @@ async def test_a_caller_after_a_shared_failure_tries_again() -> None:
 
 async def test_only_the_fetch_a_caller_waited_for_is_its_answer() -> None:
     """A failure from before — followed by a fetch that worked — is not handed to a caller whose
-    wait ended in that success, even when the token it brought is already due again: that caller
-    fetches for itself rather than reporting an outage that is over."""
+    wait ended in that success, even when the token it brought is already due again: that caller is
+    answered with the token, still valid, rather than with an outage that is over — and the next
+    request renews it behind the requests."""
     clock, acquirer = _Clock(), _Counting(lifetime=1000.0)
     source = TokenSource(acquirer, clock=clock)
     acquirer.fail = True
@@ -143,7 +219,10 @@ async def test_only_the_fetch_a_caller_waited_for_is_its_answer() -> None:
     acquirer.gate.set()
 
     assert await first == "token-2"
-    assert await second == "token-3"
+    assert await second == "token-2"
+    assert await source.token() == "token-2"  # due, so its successor is fetched meanwhile
+    await _let_the_refresh_run()
+    assert await source.token() == "token-3"
 
 
 async def test_a_failed_refresh_keeps_serving_the_still_valid_token() -> None:
@@ -169,6 +248,7 @@ async def test_a_failed_refresh_backs_off_instead_of_retrying_every_request() ->
     clock.advance(850)
     for _ in range(10):
         await source.token()
+        await _let_the_refresh_run()
 
     assert acquirer.calls == 2, "every request retried the failing refresh"
 
@@ -202,9 +282,12 @@ async def test_a_recovered_provider_is_used_again() -> None:
     acquirer.fail = True
     clock.advance(850)
     await source.token()
+    await _let_the_refresh_run()
 
     acquirer.fail = False
     clock.advance(100)  # past the back-off window
+    assert await source.token() == "token-1"  # still valid: served while the provider is asked
+    await _let_the_refresh_run()
     assert await source.token() == "token-3"
 
 

@@ -112,6 +112,20 @@ def csv_attachment(body: str, name: str) -> Response:
     )
 
 
+def refuse_control_characters(**filters: str) -> None:
+    """Refuse a filter that carries a control character, naming it, before any query reads it.
+
+    No use case, outcome, subject, key prefix, address, name or request id has one, so such a filter
+    matches nothing — and PostgreSQL refuses a NUL in any text parameter, which would answer the
+    caller's value with this gateway's 500. SQLite, which the hermetic suite runs on, takes it.
+    """
+    for name, value in filters.items():
+        if printable(value) != value:
+            raise GeminiHTTPError(
+                400, f"'{name}' may not contain control characters.", "INVALID_ARGUMENT"
+            )
+
+
 def parse_cursor(cursor: str) -> tuple[datetime, str]:
     """``<iso8601>|<id>`` — the id makes the order total, since two rows can share a millisecond
     (`FRD-502` §4.2)."""

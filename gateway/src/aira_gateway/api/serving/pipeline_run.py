@@ -201,6 +201,7 @@ async def record_pipeline_calls(request: Request, trail: AuditTrail) -> None:
                 getattr(attribution, "person", None),
                 call.usage.total_tokens,
                 cost_nanos=cost,
+                requests=call.requests,
             )
     except Exception:  # noqa: BLE001 — see above
         _log.error("pipeline_call_not_recorded", operation=trail.operation, exc_info=True)

@@ -70,6 +70,12 @@ OPENCODE = {
     "2": CLIENTS / "node_modules" / "@opencode" / "cli" / "bin" / "opencode.exe",
 }
 
+#: An OpenCode run's temp directory, inside the test's own (`_environment`) and removed after it
+#: (`opencode`). OpenCode is a Bun executable: it unpacks its native libraries — five to fourteen
+#: megabytes a start — into the temp directory every time it starts and never removes them, so
+#: under the machine's `/tmp` every run of these tests left them there for good.
+TEMP_DIR = "tmp"
+
 #: How the catalogue declares the model these clients talk to: two level words, no default.
 THINKING: dict[str, Any] = {"modes": [], "levels": ["low", "high"]}
 
@@ -567,10 +573,12 @@ def test_google_genai_sends_json_schema_and_a_thinking_level() -> None:
 
 
 @pytest.fixture
-def opencode(node_clients: None) -> None:
+def opencode(node_clients: None, tmp_path: Path) -> Iterator[None]:
     missing = [generation for generation, binary in OPENCODE.items() if not binary.exists()]
     if missing:
         pytest.fail(f"OpenCode {missing} not installed by tools/clients: run make test-clients")
+    yield
+    shutil.rmtree(tmp_path / TEMP_DIR, ignore_errors=True)
 
 
 @pytest.fixture(scope="module")
@@ -643,11 +651,15 @@ def _project(
 
 
 def _environment(root: Path, project: Path, cache: Path) -> dict[str, str]:
-    """A home of its own, so nothing of the developer's OpenCode is read or written."""
+    """A home of its own, so nothing of the developer's OpenCode is read or written, and a temp
+    directory of its own, so nothing it unpacks outlives the test (`TEMP_DIR`)."""
     home = root / "home"
+    temp = root / TEMP_DIR
+    temp.mkdir(exist_ok=True)
     return {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(home),
+        "TMPDIR": str(temp),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_DATA_HOME": str(home / ".local" / "share"),
         "XDG_STATE_HOME": str(home / ".local" / "state"),
@@ -669,6 +681,19 @@ def _environment(root: Path, project: Path, cache: Path) -> dict[str, str]:
             if (value := os.environ.get(key))
         },
     }
+
+
+def test_an_opencode_run_keeps_what_it_unpacks_inside_the_tests_own_directory(
+    tmp_path: Path,
+) -> None:
+    """OpenCode unpacks its native libraries into the temp directory on every start and never
+    removes them: under the machine's `/tmp`, each run of the tests below left about ninety
+    megabytes there for good. Its environment names a directory inside the test's own instead,
+    which the `opencode` fixture removes after the test."""
+    env = _environment(tmp_path, tmp_path / "project", tmp_path / "cache")
+
+    assert env["TMPDIR"] == str(tmp_path / TEMP_DIR)
+    assert (tmp_path / TEMP_DIR).is_dir()
 
 
 def _command(generation: str) -> list[str]:

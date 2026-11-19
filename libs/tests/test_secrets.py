@@ -18,13 +18,14 @@ it does:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, MutableMapping
+from types import ModuleType
+from typing import Any
 
 import httpx
 import pytest
-from structlog.testing import capture_logs
 
-from aira_common import config
+from aira_common import config, secrets
 from aira_common.config import BaseAiraSettings, VaultSource
 from aira_common.secrets import (
     DEV_TOKEN_ENV,
@@ -41,6 +42,8 @@ from aira_common.secrets import (
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
+#: The root conftest's `lines_logged_by` fixture.
+LinesLoggedBy = Callable[[ModuleType], list[MutableMapping[str, Any]]]
 
 ADDRESS = "https://vault.internal:8200"
 SECRET = "s.super-secret-token-value"
@@ -215,13 +218,15 @@ def test_no_secret_id_at_all_refuses_rather_than_trying_anonymously() -> None:
         load_secrets(_config(), _vault(_happy()))
 
 
-def test_a_development_token_is_accepted_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_development_token_is_accepted_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, lines_logged_by: LinesLoggedBy
+) -> None:
     """`make up` runs Vault in dev mode with a root token, so this path has to exist. It warns,
     which is what makes a deployment that reached production on one *visible* rather than merely
     possible."""
     monkeypatch.setenv(DEV_TOKEN_ENV, "root")
-    with capture_logs() as entries:
-        assert load_secrets(_config(role_id=""), _vault(_happy())) == STORED
+    entries = lines_logged_by(secrets)
+    assert load_secrets(_config(role_id=""), _vault(_happy())) == STORED
     assert any(entry["event"] == "vault_dev_token_used" for entry in entries)
 
 
@@ -469,7 +474,9 @@ def test_one_rule_names_the_setting_a_key_belongs_to() -> None:
 # == values never surface (FR-6) =================================================================
 
 
-def test_nothing_a_vault_read_logs_contains_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nothing_a_vault_read_logs_contains_a_value(
+    monkeypatch: pytest.MonkeyPatch, lines_logged_by: LinesLoggedBy
+) -> None:
     """The test the rest of this file is in service of. A log line is the single most likely place
     for a secret to escape, and the loader is deliberately chatty about *names*.
 
@@ -478,8 +485,8 @@ def test_nothing_a_vault_read_logs_contains_a_value(monkeypatch: pytest.MonkeyPa
     of green.
     """
     monkeypatch.setenv(SECRET_ID_ENV, SECRET)
-    with capture_logs() as entries:
-        load_secrets(_config(), _vault(_happy()))
+    entries = lines_logged_by(secrets)
+    load_secrets(_config(), _vault(_happy()))
 
     rendered = repr(entries)
     for value in (*STORED.values(), SECRET):
@@ -513,10 +520,14 @@ def test_the_config_object_never_holds_the_secret_id(monkeypatch: pytest.MonkeyP
     assert SECRET not in repr(config)
 
 
-def test_the_client_token_does_not_reach_a_log(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_client_token_does_not_reach_a_log(
+    monkeypatch: pytest.MonkeyPatch, lines_logged_by: LinesLoggedBy
+) -> None:
     monkeypatch.setenv(SECRET_ID_ENV, SECRET)
-    with capture_logs() as entries:
-        VaultClient(_config(), _vault(_happy())).login()
+    entries = lines_logged_by(secrets)
+    VaultClient(_config(), _vault(_happy())).login()
+    # The login's own line was read, or the absence below would be the absence of any line at all.
+    assert [entry["event"] for entry in entries] == ["vault_authenticated"]
     assert "s.client-token" not in repr(entries)
 
 

@@ -7,7 +7,6 @@ the same rules (`use_case_refusal`, `must_name_a_use_case`) with its own envelop
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 
 from fastapi import Depends, Request
@@ -32,7 +31,7 @@ from aira_gateway.auth.attribution import (
 from aira_gateway.auth.credentials import KEY_IN_URL, extract_token, key_in_url_not_read
 from aira_gateway.auth.grants import GroupGrantResolver
 from aira_gateway.auth.keys import is_aira_key
-from aira_gateway.auth.oidc import OidcValidator
+from aira_gateway.auth.oidc import OidcValidator, validate_off_the_loop
 from aira_gateway.auth.principal import Principal
 from aira_gateway.auth.role_definitions import RoleResolver
 from aira_gateway.auth.service import ApiKeyService
@@ -77,10 +76,11 @@ async def resolve_principal(request: Request) -> Principal | None:
     # Otherwise treat it as an OIDC bearer (JWT), if OIDC is configured.
     validator: OidcValidator | None = request.app.state.oidc_validator
     if validator is not None:
-        # **Off the event loop** (`FRD-617` §3.4): validation may fetch the JWKS synchronously, and
-        # a Keycloak that accepts connections and does not answer would stall every concurrent
-        # request on the worker, API-key callers and `/readyz` included.
-        principal = await asyncio.to_thread(validator.validate, token)
+        # **Off the event loop** (`FRD-617` §3.4), and off its default executor: validation may
+        # fetch the JWKS synchronously, and a Keycloak that accepts connections and does not answer
+        # must hold up nobody but the callers presenting its tokens — not API-key callers, not the
+        # audit writer, not `/readyz`.
+        principal = await validate_off_the_loop(validator, token)
         if principal is None:
             return None
         return await _with_group_grants(request, await _with_permissions(request, principal))

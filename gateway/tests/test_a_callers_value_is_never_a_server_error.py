@@ -31,10 +31,13 @@ endpoint is covered by it on the day it is added rather than on the day somebody
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.adapt import PyFormat, Transformer
+from sqlalchemy import event
 
 from aira_gateway.app import create_app
 from aira_gateway.auth.dependencies import require_principal
@@ -70,6 +73,9 @@ WEIRD: list[str] = [
     "%",
     "'",
     "1e400",
+    # A NUL: legal JSON and a legal `%00` in a URL, refused by PostgreSQL in any text parameter and
+    # stored by SQLite without a word — so `_client` hands every parameter to psycopg's dumper.
+    "a\x00b",
 ]
 
 #: Paths whose **body** is swept elsewhere, with the file that does it. The two generation
@@ -132,6 +138,7 @@ BODIES: dict[str, tuple[str, list[Any]]] = {
             {"target": "subject", "target_value": "x", "throttle_rpm": "many"},
             {"target": "subject", "target_value": "x", "throttle_rpm": 10**12},
             {"target": "use_case", "target_value": "x" * 5000},
+            {"target": "subject", "target_value": "ada\ud800"},
             [1, 2],
             "text",
         ],
@@ -144,6 +151,7 @@ BODIES: dict[str, tuple[str, list[Any]]] = {
             {"levels": [1, 2, 3]},
             {"levels": ["x" * 5000]},
             {"modes": {"a": 1}},
+            {"modes": ["auto\ud800"], "levels": ["low\ud800"]},
             [1, 2],
             "text",
         ],
@@ -159,6 +167,17 @@ BODIES: dict[str, tuple[str, list[Any]]] = {
             {"pipeline": {"steps": [{"type": "model_route", "config": {"categories": []}}]}},
             {"pipeline": {"fallback_models": ["x"] * 500}},
             {"use_case": "x" * 500},
+            {
+                "use_case": "demo-uc",
+                "pipeline": {
+                    "steps": [
+                        {
+                            "type": "model_route",
+                            "config": {"categories": [{"name": "a", "model": "m\ud800"}]},
+                        }
+                    ]
+                },
+            },
             [1, 2],
             "text",
         ],
@@ -197,13 +216,28 @@ def _concrete(path: str, names: list[str], value: str) -> str | None:
     if not value.strip() or "/" in value:
         return None
     for name in names:
-        path = path.replace("{" + name + "}", value)
+        # Escaped where a URL may not carry the character itself; the server decodes it back.
+        path = path.replace("{" + name + "}", value.replace("\x00", "%00"))
     return path
+
+
+_DUMPERS = Transformer()
+
+
+def _adapt_like_psycopg(*args: Any) -> None:
+    """``before_cursor_execute``: every text parameter through psycopg's own dumper, the step that
+    refuses a NUL before a statement reaches PostgreSQL in production. SQLite would store it."""
+    parameters = args[3]
+    values = parameters.values() if isinstance(parameters, dict) else (parameters or ())
+    for value in values:
+        if isinstance(value, str):
+            _DUMPERS.get_dumper(value, PyFormat.AUTO).dump(value)
 
 
 def _client() -> TestClient:
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     app.dependency_overrides[require_principal] = lambda: ADMIN
+    event.listen(app.state.db_engine.sync_engine, "before_cursor_execute", _adapt_like_psycopg)
     # `raise_server_exceptions=False` is what makes this a sweep rather than a crash: an unhandled
     # exception has to arrive as the 500 a real client would see, so every case is reported
     # together instead of the first one ending the run.
@@ -327,7 +361,12 @@ async def test_no_hand_written_body_answers_with_a_server_error() -> None:
         await _catalogue(client)
         for path, bodies in BODIES.values():
             for body in bodies:
-                response = client.post(path, json=body)
+                # Encoded here rather than by the client, which refuses half a surrogate pair that
+                # JSON itself can carry escaped — and a caller can send.
+                raw = json.dumps(body).encode("ascii")
+                response = client.post(
+                    path, content=raw, headers={"content-type": "application/json"}
+                )
                 if response.status_code >= 500:
                     failures.append((path, body, response.status_code, response.text[:200]))
     assert not failures, failures

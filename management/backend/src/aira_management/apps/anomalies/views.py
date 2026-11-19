@@ -12,6 +12,7 @@ from typing import Any
 
 from django.db import transaction
 from django.db.models import Q, QuerySet
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -84,6 +85,14 @@ class AnomalyRuleViewSet(viewsets.ModelViewSet[AnomalyRule]):
     def perform_update(self, serializer: Any) -> None:
         self._guard(serializer.instance)
         with transaction.atomic():
+            # Onto the rule as it stands, held until this commits, never onto the copy this
+            # request read: saved, that copy of a rule deleted meanwhile is *inserted* again —
+            # Django creates a row it no longer finds — and the gateway, hearing of it after the
+            # deletion, applies the removed rule again. Deleted meanwhile is the `404` a moment
+            # later would give.
+            serializer.instance = get_object_or_404(
+                AnomalyRule.objects.select_for_update(), pk=serializer.instance.pk
+            )
             rule = serializer.save()
             emit("anomaly_rule.upserted", rule_payload(rule))
 

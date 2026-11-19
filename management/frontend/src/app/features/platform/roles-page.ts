@@ -1,4 +1,5 @@
 import { Component, OnInit, computed, inject, signal, viewChild } from '@angular/core';
+import { Observable } from 'rxjs';
 import { MeService } from '../../core/api/me.service';
 import { Me, PermissionInfo, Role } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
@@ -97,7 +98,10 @@ export class RolesPage implements OnInit {
     this.feedback.clear();
   }
 
-  /** After a save: the role is open, and the list, the names and the log show the change. */
+  /**
+   * After a save: the role is open, and the list, the names and the log show the change — the
+   * names asked of the server again, since `/me` is otherwise the answer the console started with.
+   */
   protected onSaved(role: Role): void {
     this.editor.set(null);
     this.selectedSlug.set(role.slug);
@@ -116,7 +120,7 @@ export class RolesPage implements OnInit {
 
   private afterWrite(): void {
     this.loadRoles();
-    this.loadMe();
+    this.loadMe(this.meService.reload());
     this.changeLog()?.reload();
   }
 
@@ -137,8 +141,8 @@ export class RolesPage implements OnInit {
    * Who is asking, for `role.manage` and the roles' names. Without it the page offers no control,
    * and says why, rather than a form whose every save might be refused.
    */
-  private loadMe(): void {
-    this.meService.get().subscribe({
+  private loadMe(answer: Observable<Me> = this.meService.get()): void {
+    answer.subscribe({
       next: (me) => this.me.set(me),
       error: (response: unknown) =>
         this.feedback.fail(response, 'Could not load your account, so nothing can be changed.'),

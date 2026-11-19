@@ -9,7 +9,7 @@ import { InfoHint } from '../../core/ui/info-hint';
 import { Modal } from '../../core/ui/modal';
 import { PageFeedback } from '../../core/ui/page-feedback';
 import { can } from '../../core/auth/roles';
-import { displayCount, storedAmount } from '../../core/ui/money';
+import { ambiguousAmount, displayCount, storedAmount } from '../../core/ui/money';
 
 /** A spend limit as typed: an amount with up to six decimals, either separator. */
 const AMOUNT = /^\d+([.,]\d{1,6})?$/;
@@ -58,6 +58,18 @@ export class InstallationBudgetCard implements OnInit {
   protected readonly cost = signal('');
   protected readonly tokens = signal<number | null>(null);
   protected readonly requests = signal<number | null>(null);
+
+  /**
+   * The spend limit as it will be stored, said under the field before it is saved: `20,5` is
+   * `20.50`. Empty while the field holds no amount, or one that could be read two ways — the
+   * window's error says why.
+   */
+  protected readonly costReading = computed(() => {
+    const typed = this.cost().trim();
+    if (!AMOUNT.test(typed) || ambiguousAmount(typed)) return '';
+    const unit = this.currency();
+    return `Will be saved as ${storedAmount(typed.replace(',', '.'))}${unit ? ` ${unit}` : ''}.`;
+  });
 
   /**
    * The unit in the label, or nothing. Built here as one string: interpolated across a control-flow
@@ -115,6 +127,8 @@ export class InstallationBudgetCard implements OnInit {
     if (cost && !AMOUNT.test(cost)) {
       return 'The spend limit must be an amount, e.g. 250 or 250.00.';
     }
+    const ambiguous = cost ? ambiguousAmount(cost) : null;
+    if (ambiguous) return ambiguous;
     if (!cost && this.tokens() == null && this.requests() == null) {
       return 'Set a spend limit, a token limit, or a request limit.';
     }
@@ -123,6 +137,15 @@ export class InstallationBudgetCard implements OnInit {
 
   protected canSave(): boolean {
     return !this.validationError() && !this.feedback.busy();
+  }
+
+  /**
+   * Open the window afresh: an earlier failure on the page is not this window's outcome, and the
+   * window says its own refusal where the reader is — the page's banner is behind the backdrop.
+   */
+  protected openForm(): void {
+    this.feedback.clear();
+    this.showForm.set(true);
   }
 
   protected save(): void {

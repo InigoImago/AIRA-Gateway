@@ -130,7 +130,9 @@ difference. `FRD-603` needed no new query. This one does.
   the accessibility tree and a keyboard opens it without any script.
 - **FR-18 A spend nobody could compute reads as unknown, and says which kind of unknown.** Where
   **every** request in a group was unpriced, the figure is an em dash — `0.00` is a measurement, and
-  that one was never made. And the two causes are counted apart: a model with **no price on file**
+  that one was never made. The reporting totals and a use case's own consumption card ask it by one
+  rule, against the requests that ran, so they never show `—` and `0.00` for the same traffic.
+  And the two causes are counted apart: a model with **no price on file**
   (add one) and an upstream that reported **no token usage** for anything to be priced from (no
   price can fix that). `unmetered_requests` is the second, a subset of `unpriced_requests`.
 - **FR-17 A use case's own page gets one period control**, on the chart card — today, last 7 days,

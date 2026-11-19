@@ -90,10 +90,15 @@ months before it existed. The chain was built; its document was the companion no
     declaring a lower maximum is skipped by name rather than called, where its vendor would refuse
     it after the call or answer with less than was asked for.
 - **FR-6 A stream uses the chain** (`ADR-0032`). For each candidate in turn: conditions, open the
-  upstream stream, and pull its first chunk — the `__anext__` that issues the HTTP request. A
-  candidate that fails before producing that chunk is passed over, and its iterator is closed. The
-  chunk is then handed to the surface together with the chosen model, so the recorded, billed and
-  reported model is the one that answered.
+  upstream stream, and read it to its **first chunk that carries something** — text, thinking, a
+  function call, speech or a finish; the `__anext__` that issues the HTTP request is the first of
+  those reads. What comes before it — the OpenAI dialect's empty role delta, a running usage
+  figure — is a preamble: held back, merged into one chunk, and handed on with the first chunk,
+  never on its own. A candidate that fails before producing that chunk is passed over — an error
+  sent inside its `200` right after a preamble included — and its iterator is closed. The chunks
+  are then handed to the surface together with the chosen model, so the recorded, billed and
+  reported model is the one that answered. A model catalogued in several regions is walked region
+  by region by the same rule (`FRD-609` §2.3).
   - **FR-6a** The HTTP response begins once a candidate has produced a chunk — or after
     `AIRA_STREAM_KEEPALIVE_SECONDS` (15), whichever comes first (`ADR-0046`). A streamed request
     that no candidate can serve within that time is an error **status**, recorded like any other
@@ -104,16 +109,21 @@ months before it existed. The chain was built; its document was the companion no
     which a proxy between caller and gateway ends by closing the connection.
   - **FR-6b** After the first chunk the stream is committed: a later failure ends it and is
     recorded, with whatever was delivered.
-  - **FR-6c** A candidate whose stream ends with **no chunk at all** has answered. The chain stops
-    there, because a stream with a finish reason and no text is how a vendor's own safety filter
-    refuses.
+  - **FR-6c** A candidate whose stream **ends** before that chunk — with no chunk at all, or a
+    preamble only — has answered. The chain stops there, because a stream with a finish reason and
+    no text is how a vendor's own safety filter refuses. A `200` that holds no `data:` event at
+    all is not a stream — a proxy's block page, a server that ignored `stream: true` — and fails as
+    a `200` that is not JSON does: a 502 the chain moves on for.
 - **FR-7 A step reaches a chain.** `injection_filter` (in `llm` mode), `model_route` and
   `pii_filter` take an optional `fallback_models` in their own step configuration — same bounds as
   FR-1 — tried in order after the model the step names.
 - **FR-8 Reached, not agreeable.** A step's chain moves on only when a candidate could not be
-  **reached**: no provider resolves it, or the call failed. A candidate that answered keeps its
-  answer, including an `UNDETERMINED` verdict or a rewrite too short to trust. A chain that
-  shopped for a better verdict would be a filter that weakens under load.
+  **reached**: no provider resolves it, or the call failed — including the failures that pass a
+  dispatch chain on, a model with no region this gateway may send it to and a request its wire
+  format cannot carry. A candidate that answered keeps its answer, including an `UNDETERMINED`
+  verdict or a rewrite too short to trust. A chain that shopped for a better verdict would be a
+  filter that weakens under load. A step's call carries what a dispatch's does for its model — the
+  catalogue's addressing, so a model served by being catalogued is reached by a step as well.
 - **FR-9 The safe direction is unchanged.** When no candidate of a step's chain can be reached,
   the step degrades exactly as it did with one model: the LLM filter to the heuristic, the router
   to its `default_model` recorded as `not_asked`, the redactor to a block (or to `on_failure:
@@ -156,8 +166,11 @@ caller ──▶ prepare (pipeline runs; model may be re-routed; chain is read)
 
 **Why the first chunk is the test.** A streaming adapter issues its HTTP request on the first
 `__anext__`, not when the iterator is built (`telemetry.model_call_chunks` says so, and it is why
-that wrapper exists). So pulling one chunk is exactly the point at which a candidate has proven it
-can serve, and it is the last point at which switching is invisible to the caller.
+that wrapper exists). So pulling chunks is exactly how a candidate proves it can serve — and the
+first one that carries something is the last point at which switching is invisible to the caller.
+A preamble proves nothing: vLLM, Azure and OpenAI send the empty role delta before the engine has
+produced a token, and fail right after it when it cannot; taken as the first chunk, it committed the
+chain to a server that had given the caller nothing (`read_opening`).
 
 **The wrapper owns what it wrapped.** The iterator handed to the surface is a generator that
 yields the proven chunk and then the adapter's own. That wrapper is a layer, and a layer in a
@@ -202,6 +215,15 @@ from an absent `ModelCall` — the heuristic classifier also has no call, and re
 `gateway/tests/test_pipeline_dispatch.py` — the chain's own behaviour: order, the primary tried
 first, a condition skipping a candidate, `NoCapableModel` when every candidate is excluded, the
 upstream error when one was tried, addressing re-read per hop.
+
+`gateway/tests/test_a_stream_falls_back_until_its_answer_begins.py` — the first chunk that carries
+something is the test, in both places that apply it: a region that fails before its first word —
+Claude's `overloaded_error` after `message_start`, Google's in-band `503` — is passed over as it is
+unstreamed, one that fails after it is not; a candidate failing right after the OpenAI dialect's
+preamble moves the chain on; a stream that ends after its preamble has answered; what the preamble
+reported still reaches the caller, held as one chunk.
+`test_a_200_that_is_no_event_stream_is_a_failure.py` — through every real adapter, a `200` with no
+event moves the chain on and its row says the upstream failed.
 
 `gateway/tests/test_a_stream_falls_back_until_a_chunk_is_out.py` — the stream chain: a primary that
 fails before its first chunk is replaced and the caller sees the second model's text; the recorded

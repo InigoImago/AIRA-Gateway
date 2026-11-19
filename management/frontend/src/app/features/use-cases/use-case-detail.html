@@ -1,10 +1,8 @@
 <div class="stack">
   <a routerLink="/use-cases" class="muted">&larr; All use cases</a>
 
-  @if (feedback.error(); as message) {
-    @if (!missing()) {
-      <p class="callout callout--danger" role="alert">{{ message }}</p>
-    }
+  @if (banner(); as message) {
+    <p class="callout callout--danger" role="alert">{{ message }}</p>
   }
   @if (feedback.notice(); as message) {
     <p class="callout" role="status">{{ message }}</p>

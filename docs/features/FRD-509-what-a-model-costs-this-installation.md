@@ -37,7 +37,8 @@ installation set; without a rate it is shown, not filled.
   ?model=&region=` (`catalog.write`) answers `{model, region, billingAccount, currency, prices,
   unpriced}`, each price `{perMillion, currency, skuId, skuName, region, contract}`.
 - **FR-2 — The matching.** The account's services whose name says Vertex AI, Claude, Anthropic, Model
-  Garden, Gemini, GLM or DeepSeek; their SKUs (every page; held six hours); a SKU names the model
+  Garden, Gemini, GLM or DeepSeek; their SKUs (every page, up to twenty of 5 000 — a listing still
+  paging after that is refused, not read as complete; held six hours); a SKU names the model
   when its name, without a known prefix and up to the first word that says what is billed, is the
   model's id word for word (`claude-sonnet-4-5` is `claude sonnet 4.5`, `-maas` is dropped). Input,
   output, cached input and cache write by their words; batch, long context, audio, image, video,

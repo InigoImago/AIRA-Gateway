@@ -42,6 +42,9 @@ EMBED = "all-minilm"
 #: allowance thinking and every assertion below becomes an assertion about an empty string
 #: (`FRD-124`).
 NO_THINKING = {"mode": "disabled"}
+#: How long a hang-up's row may take: the rest of a 400-token answer, which the gateway reads to its
+#: end before it books it, on a local model — the same bound the evidence round's hang-ups use.
+HANG_UP_RECORDED_WITHIN = 90.0
 
 
 # == helpers =====================================================================================
@@ -301,7 +304,10 @@ async def test_a_client_that_hangs_up_on_a_kira_stream_is_still_recorded(fixture
         async for _ in response.aiter_bytes():
             break
 
-    rows = await _settled_rows(engine, fixture.slug, 1, timeout=20.0)
+    # **As long as the rest of the answer takes.** A stream whose caller left is read to its end,
+    # so that the vendor's own figure is booked (`ADR-0041`), and only then is the row written: the
+    # wait is the local model writing the remaining tokens, not the audit queue draining.
+    rows = await _settled_rows(engine, fixture.slug, 1, timeout=HANG_UP_RECORDED_WITHIN)
     assert rows[0]["operation"] == "streaming-chat"
     # Served or abandoned, it is recorded — which is the property. Which of the two it was still
     # depends on how fast the model is, so that is not asserted; what *is* asserted is that the

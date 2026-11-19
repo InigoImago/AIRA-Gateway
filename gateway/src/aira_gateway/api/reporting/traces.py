@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aira_common.access import GrantRole
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
-from aira_gateway.api.reporting.common import parse_cursor, router, scope_label, visible_scope
+from aira_gateway.api.reporting.common import (
+    parse_cursor,
+    refuse_control_characters,
+    router,
+    scope_label,
+    visible_scope,
+)
 from aira_gateway.audit import Outcome
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
@@ -35,6 +41,7 @@ from aira_gateway.payloads import (
     sees_people,
     withheld_row,
 )
+from aira_gateway.persistence.sanitize import printable
 from aira_gateway.state import sessionmaker_of, settings_of
 
 #: What a trace row exposes — an **allow-list**: a column added to `request_logs` must not appear
@@ -145,6 +152,14 @@ async def traces(
     Not the prompt, not the response, not a snippet of either (§2). An oversight role sees every use
     case, a member their own, and anybody else an empty list rather than a refusal.
     """
+    refuse_control_characters(
+        use_case=use_case,
+        outcome=outcome,
+        credential=credential,
+        source_ip=source_ip,
+        subject=subject,
+        request_id=request_id,
+    )
     scope = visible_scope(principal, Permission.TRACE_READ_ALL)
     investigating = principal.allows(Permission.INCIDENT_INVESTIGATE)
     strict_data = settings_of(request).strict_data_mode
@@ -265,6 +280,7 @@ async def trace_detail(
     record is committed **before** the details are returned: a look that cannot be recorded does
     not happen.
     """
+    _refuse_an_id_that_names_no_request(trace_row_id)
     scope = visible_scope(principal, Permission.TRACE_READ_ALL)
     strict_data = settings_of(request).strict_data_mode
     withholding = strict_data and not sees_people(principal)
@@ -319,6 +335,7 @@ async def trace_payload(
     storage switch and the retention clock meet. The access row is committed **before** the content
     is returned: if recording the read fails, the read does not happen (`ADR-0009`).
     """
+    _refuse_an_id_that_names_no_request(trace_row_id)
     # Reading any use case's content includes reaching the request it belongs to (`FRD-614`
     # FR-11); the list of requests stays with `trace.read_all`.
     reach_any = principal.allows(Permission.PAYLOAD_READ_ANY)
@@ -367,6 +384,13 @@ async def trace_payload(
         ground=verdict.ground,
     )
     return JSONResponse({**body, "available": True, "ground": verdict.ground})
+
+
+def _refuse_an_id_that_names_no_request(trace_row_id: str) -> None:
+    """The answer for an id with a control character: no request has one, so it is the same `404`
+    as any id that names none — never the query, where PostgreSQL would refuse a NUL as our 500."""
+    if printable(trace_row_id) != trace_row_id:
+        raise GeminiHTTPError(404, "No such request.", "NOT_FOUND")
 
 
 def _fields(investigating: bool) -> tuple[str, ...]:

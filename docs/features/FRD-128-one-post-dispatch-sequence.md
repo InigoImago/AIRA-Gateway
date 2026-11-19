@@ -43,7 +43,12 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
   row — as **one unit that runs to its end** (`shielding.uninterrupted`), so a cancelled task can
   neither lose the row nor resolve the reservation twice. A streamed response accounts for the two
   endings its body cannot see — cancelled while a frame was sent, or before the body began
-  (`serving.streaming.AccountedStream`).
+  (`serving.streaming.AccountedStream`). A stream is accounted for from the moment its dispatch
+  chain is opened (`StreamAccounting.dispatching`), and its response takes the accounting over:
+  the status waits up to a keepalive interval for the first chunk while a model is already being
+  called, and accounting that began only in the body left that window with no exit for a
+  cancellation — the reservation held until it expired, no row — and none but the last-resort
+  handler's for a failure, which writes no row.
 - **FR-2** A caller who abandons the request is recorded with status **499** and outcome
   `client_gone`. Nobody is sent that status; it exists so the audit can tell that case from a
   served one, and `client_gone` is its own outcome because "clients keep hanging up" is a
@@ -68,7 +73,11 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
   `upstream_error`). Released, schema requests that reliably truncate were spend no budget saw. **Any other exception** is this gateway failing,
   which no boundary records, so the sequence writes it: status `500`, outcome `internal_error`.
   It once wrote nothing for those too — found when a live round's embeddings failed with a 500 and
-  left the audit trail without a trace of them.
+  left the audit trail without a trace of them. After a stream's status went out, such a failure
+  ends the stream as an upstream's does — Google's error element (`500 INTERNAL`), a KIRA stream
+  without `completed` — rather than by a cut connection; its row says `500` / `internal_error`,
+  what the vendor had reported is settled, and with nothing reported the vendor is asked to count
+  (FR-6), since this gateway stopped reading and the vendor did not stop answering.
 
 - **FR-6** A stream whose caller left **before its vendor reported any usage** is counted from
   facts, never estimated. Vertex's Gemini sends `usageMetadata` on every chunk, but with no count in
@@ -112,9 +121,13 @@ and the guarantee is the *order*, exactly as before. Two of the six were right.
   2026-10-22). The trade, decided by the owner for real figures: the vendor finishes and bills the
   whole answer, where it might have stopped. A stopping server cuts every read short
   (`Drains.stop`, first in the application's shutdown), and each request then books what it knows
-  — FR-2 or FR-6 — and writes its row before the audit writer closes; the image passes
-  `--timeout-graceful-shutdown 5` so that shutdown begins inside Docker's ten seconds. `0` closes a
-  stream with its caller as before, and FR-6 applies.
+  — FR-2 or FR-6 — and writes its row before the audit writer closes. The same holds for every
+  request the server cancels when its grace period is over, which on a deploy is most streams:
+  `Drains` counts each request from the moment it enters `accounting` until its row is handed over,
+  and the shutdown waits for those — at most `DRAINS_STOP_SECONDS` (3) — before it closes the
+  writer, the counters, the vendors' clients and the database, so a count at the vendor reaches a
+  client that is still open. The image passes `--timeout-graceful-shutdown 5`: five and three,
+  inside Docker's ten seconds. `0` closes a stream with its caller as before, and FR-6 applies.
 
 ## 4. Design notes worth keeping
 

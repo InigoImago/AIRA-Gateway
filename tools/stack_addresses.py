@@ -284,6 +284,27 @@ def redis_url(database: int = 0) -> str:
     return f"redis://{netloc('redis')}/{database}"
 
 
+def settings_environment() -> dict[str, str]:
+    """Where this stack answers, in the variables the planes' **settings** read.
+
+    A plane's settings carry the addresses of a stack on today's ports as their defaults, and the
+    hermetic `conftest.py` removes every `AIRA_*` variable from a test session. So anything the live
+    suite built from settings — `GatewaySettings()`, the migrations' own engine, a `manage.py relay`
+    in a subprocess — reached whatever answered on the defaults, while every address this module
+    hands out pointed at this stack. With a second stack on moved ports that was the *other* stack,
+    which a test then wrote into.
+
+    Never for `docker compose`: there `AIRA_POSTGRES_PORT` is the port the gateway connects to
+    inside the network, where PostgreSQL listens on 5432 whatever the host publishes.
+    """
+    return {
+        "AIRA_POSTGRES_HOST": host(),
+        "AIRA_POSTGRES_PORT": str(port("postgres")),
+        "AIRA_KAFKA_BOOTSTRAP_SERVERS": netloc("kafka"),
+        "AIRA_REDIS_URL": redis_url(),
+    }
+
+
 def container(service: str) -> str:
     """The name Compose gives `service`'s container: `${AIRA_STACK:-aira}-<service>`.
 

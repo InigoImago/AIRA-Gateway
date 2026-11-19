@@ -91,6 +91,40 @@ async def test_a_read_on_ends_at_its_bound() -> None:
     await pump.aclose()
 
 
+def _waiting_reads() -> list[str]:
+    """The reader's tasks still waiting, by what they run."""
+    return [
+        name
+        for task in asyncio.all_tasks()
+        if not task.done()
+        and (name := getattr(task.get_coro(), "__qualname__", "")).startswith("Pump.")
+    ]
+
+
+@pytest.mark.parametrize("ended_by", ["its bound", "a cancellation"])
+async def test_a_read_on_leaves_nothing_waiting_however_it_ends(ended_by: str) -> None:
+    """The read on waits for the next chunk in a task of its own. Ended by its bound or by a
+    cancellation — a vendor still answering when the time runs out — that wait has to end with it:
+    the reader is closed next and never hands over another chunk, so a wait left behind waits for
+    ever, holding the stream and through it the request's accounting until the collector destroys
+    it as a task that was still pending."""
+    quiet = asyncio.Event()
+    pump = Pump(_answer(quiet), lambda chunk: None)
+    await anext(pump)  # the caller read one chunk and left
+
+    if ended_by == "its bound":
+        assert await pump.drain(0.05, asyncio.Event()) is False
+    else:
+        reading = asyncio.ensure_future(pump.drain(600, asyncio.Event()))
+        await asyncio.sleep(0.05)
+        reading.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reading
+    await pump.aclose()
+
+    assert _waiting_reads() == []
+
+
 async def test_a_reader_that_never_started_is_started_by_the_read_on() -> None:
     """A caller can leave before the first chunk was read: the read on starts the reader."""
     seen: list[CanonicalChunk] = []

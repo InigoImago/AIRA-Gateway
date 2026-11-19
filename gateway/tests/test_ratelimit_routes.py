@@ -116,8 +116,9 @@ class _TrackingBudgets:
 
     # The real `hold` is reused rather than re-implemented: a hand-written copy of the
     # release-unless-resolved contract in a test double is exactly how a double drifts away from
-    # the thing it stands in for.
+    # the thing it stands in for. With the release it falls back on, which logs rather than raises.
     hold = BudgetService.hold
+    _release_quietly = BudgetService._release_quietly
 
     # `FRD-125c` added a pre-pipeline check to the real service. Inherited rather than stubbed
     # out: a stand-in more permissive than the thing it replaces is how a control comes to be
@@ -271,6 +272,29 @@ def test_a_release_that_fails_does_not_replace_the_refusal_the_caller_is_owed() 
     assert response.json()["error"]["status"] == "UNAVAILABLE"
 
 
+async def test_the_refusal_boundary_gives_back_an_allowance_nothing_else_resolved() -> None:
+    """The backstop for a refusal raised between the reservation and the accounting block. Every
+    verb enters the accounting as soon as the reservation is made, so no request reaches this with
+    its allowance unresolved any more, and only asking the boundary directly shows it still does
+    its part — for the next verb written, which would otherwise hold its slice of the use case's
+    allowance until the reservation expired."""
+    from aira_gateway.api.serving import record_refusal
+
+    app = create_app(GatewaySettings(auth_required=False))
+    budgets = _TrackingBudgets()
+    app.state.budgets = budgets
+    request = _stream_request(app)
+    # Refused before anyone was attributed, so it writes no row: the release is all that happens.
+    request.state.attribution = None
+    request.state.reservation = Reservation()
+    trail = AuditTrail(operation="streamGenerateContent", api="gemini")
+
+    await record_refusal(request, trail, UpstreamError("overloaded", 503), status=503, started=0.0)
+
+    assert budgets.released == 1
+    assert request.state.reservation.resolved
+
+
 def test_a_failed_stream_releases_rather_than_charging_for_nothing() -> None:
     """A stream that produced no output consumed nothing. Settling would still book a request
     against a request-limited budget, so a provider outage would eat the allowance."""
@@ -313,6 +337,7 @@ async def test_a_client_that_disconnects_mid_stream_does_not_leak_the_reservatio
             _prepared(),
             AuditTrail(operation="streamGenerateContent", api="gemini", requested_model="mock-1"),
             sse=False,
+            started=0.0,
         )
         iterator = response.body_iterator
         await iterator.__anext__()  # one chunk, then the client goes away
@@ -360,6 +385,7 @@ async def test_a_caller_who_leaves_after_usage_arrived_is_499_and_billed_for_it(
             _prepared(),
             AuditTrail(operation="streamGenerateContent", api="gemini", requested_model="mock-1"),
             sse=True,
+            started=0.0,
         )
         iterator = response.body_iterator
         await iterator.__anext__()  # the first chunk and its usage, then the caller goes away

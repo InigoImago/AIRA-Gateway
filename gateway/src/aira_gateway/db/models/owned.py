@@ -89,10 +89,12 @@ class RequestLog(Base):
     #: ``direct`` | ``route`` | ``fallback:N`` — how the served model was arrived at.
     model_selection: Mapped[str | None] = mapped_column(String(32), nullable=True)
     #: Where the request was actually processed (`FRD-115` FR-10): residency as evidence, per
-    #: request rather than per deployment.
-    provider: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    #: request rather than per deployment. `provider` and `region` hold what the catalogue can
+    #: name (`0060`): a self-hosted server is audited under the name the installation gives it,
+    #: and a region cut short is one the register of processing activities reads as unexpected.
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     publisher: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    region: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[int] = mapped_column(Integer)
     #: Why the request ended this way (:class:`aira_gateway.audit.Outcome`). Indexed for reporting.
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

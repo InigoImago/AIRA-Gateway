@@ -95,7 +95,13 @@ is not stored.
 - **FR-8 Delivery.** Mail goes out over SMTP through the relay the installation names: host, port,
   STARTTLS, TLS or neither, and an optional login, from `AIRA_MAIL_FROM`. A relay that refuses or
   cannot be reached is tried again on later rounds, up to five attempts, while the period is
-  current. A notice whose period has ended is dropped rather than sent late.
+  current. A notice whose period has ended is dropped rather than sent late. *As built*, delivery
+  is per recipient: an address the relay refuses, or a mail that cannot be written for it, stops
+  neither the notice's other recipients nor the notices after it, and a notice tried again goes
+  only to those without it — remembered by the instance, so a restart can repeat one. A relay
+  nobody can reach ends the round's sending, since every recipient after would wait for the same
+  timeout. A subject is written on one line, whatever a use case's name holds; an address that
+  is not one line is not written to at all, since folded it could name somebody else.
 - **FR-9 Off by default.** Without `AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`, nothing is checked, stored
   or sent. Neither a missing relay nor an unreachable one stops start-up or readiness. A host set
   without a sender is reported once at start.
@@ -148,7 +154,8 @@ sequenceDiagram
 - Gateway `mail_notices`, one row per mail owed: `kind` (`budget` or `anomaly`), `use_case`,
   `subject_key` (the counter's key, or the finding's id), `period_key`, `threshold`, `expires_at`,
   `outcome` (`""` while owed, then `sent`, `superseded`, `no_recipient`, `failed` or `expired`),
-  `recipients`, `attempts`, `last_error` and `sent_at`. It is unique on
+  `recipients` (how many have it — also on a `failed` notice, whose attempts ran out while somebody
+  still lacked it), `attempts`, `last_error` and `sent_at`. It is unique on
   (`kind`, `subject_key`, `period_key`, `threshold`), which is what makes FR-4 hold across
   instances. Rows are deleted 30 days after they expire.
 

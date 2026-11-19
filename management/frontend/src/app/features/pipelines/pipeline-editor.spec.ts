@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, provideRouter } from '@angular/router';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { CatalogModel, DryRunResult, PipelineConfig } from '../../core/api/models';
 import { UseCaseService } from '../../core/api/use-case.service';
 import { ConfirmService } from '../../core/ui/confirm.service';
@@ -232,6 +232,36 @@ describe('PipelineEditor', () => {
     expect(component.dirty()).toBe(false);
     expect(component.saved()).toBe(true);
     expect(text()).toContain('Saved ✓');
+  });
+
+  it('keeps an edit made while a save is on its way, and still calls it unsaved', () => {
+    // The answer to a save is the copy that was sent. Put over the graph, it took a step added
+    // meanwhile with it — and said "Saved ✓" about the change it had just thrown away.
+    const answer = new Subject<PipelineConfig>();
+    const harness = setup({ steps: [], fallback_models: [] }, { save: answer });
+    const html = harness.fixture.nativeElement as HTMLElement;
+    const press = (text: string) => {
+      [...html.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.includes(text))!
+        .click();
+      harness.fixture.detectChanges();
+    };
+    press('+ Model Routing');
+    press('Save pipeline');
+    press('+ Injection Filter');
+
+    answer.next(harness.getSaved()!);
+    answer.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.component.config().steps.map((step) => step.type)).toEqual([
+      'model_route',
+      'injection_filter',
+    ]);
+    expect(harness.text()).toContain('Unsaved changes');
+    expect(harness.text()).not.toContain('Saved ✓');
+    press('Save pipeline');
+    expect(harness.getSaved()?.steps.length).toBe(2);
   });
 
   it('shows a loading state until the pipeline arrives', () => {

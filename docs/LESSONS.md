@@ -22,6 +22,26 @@ Detail and dates: [`DEVLOG.md`](DEVLOG.md) · decisions: [`adr/`](adr/README.md)
 These have each happened more than once. When something behaves impossibly, check these before
 reading code.
 
+- **A failure of the environment is not a failure of the work, and the two need opposite answers.**
+  A configuration event that met a connection the database had closed was skipped as if the event
+  were bad, and its offset committed: a key revocation lost for good to a restart. The audit writer
+  dropped the row that met the same connection. A budget correction the Redis breaker refused was
+  dropped while its reservation stayed counted for an hour. And a stream committed to a region at
+  its HTTP `200`, so an error the vendor sent in-band a moment later reached no other region. Each
+  time the code had one answer for every failure, right only for the failures that say something
+  about the work. **Ask of every `except` which failures pass.** Those are held and tried again,
+  decided by type and SQLSTATE, never by message text, and only what fails the same way every time
+  is skipped. A position — an offset, a commitment to a candidate — moves only past work that is
+  done.
+- **One shared resource is one shared fate.** An identity provider that hung stalled the audit
+  writer and readiness, because token checks waited on the event loop's default executor, which
+  both share. A token refresh under one lock held up every Vertex request while the token in hand
+  was still good. One use-case name with a line break stopped every mail of the installation, and
+  one refused address every recipient sorted after it. One malformed catalogue entry took the model
+  list down for every client, and one unhandled `500` cost the next request on its connection.
+  **Give what may hang a pool of its own, serve what is held while it is renewed, and let one item
+  fail alone.**
+
 - **When a process reliably produces nothing useful, look for the missing field before resolving to
   do better.** The first release mechanism published `v0.1.0` with the tag annotation `Release
   v0.1.0` and no GitHub Release at all — and it was working exactly as designed. The trigger was a
@@ -2332,7 +2352,9 @@ reading code.
   change is precisely what the browser layer exists for, and it was the layer not run. Or the
   subset the touched file suggests: a console style fix passed the console's format, build and unit
   gates and failed CI's Python job, which holds the repository's scan of every class a template
-  uses — the rule had been written in a form that scan does not read.
+  uses — the rule had been written in a form that scan does not read. *Or two branches, each run
+  whole and green:* merged, a counter field one of them added met the other's comparison of the
+  whole hash, and only the merged suite failed.
 - **A gate nobody runs is a gate that is already red.** The Angular branch-coverage threshold had
   been failing on `main` at 91.37 % against 92 — so `make ci` was red before any change, and every
   local run since had been reading the tail of the output rather than its exit code. Fixed by
@@ -2346,6 +2368,12 @@ reading code.
   where the real adapter returns a response *with usage* made "the audit row carries what the
   answer reported" a property no test could lose, because the harness never produced one. Both
   times a mutation run found it and no reviewer would have.
+
+  *And a stand-in that recovers at once, or holds no lock, is more permissive too.* The budget
+  breaker's test used a runner that answered again immediately; the real one refuses for five
+  seconds, which is when corrections were lost. The token-validation test's validator had neither
+  PyJWT's lock nor the shared executor, which together were the whole defect. A stream test's
+  adapter produced events where a real one, handed a proxy's block page, produces none.
 
   *And a stand-in shaped like a dependency's last release outlives the release.* OpenTelemetry
   1.45 moved its exporter's HTTP seam; the partial-success tests drove a stand-in shaped like
@@ -2464,7 +2492,10 @@ reading code.
   mutation rendered the same claim under a different label — assert the element, not the wording;
   a panel test that left the usage map empty proved the line was missing because nothing had been
   *measured*, not because the scope was wrong. Four of these were found by the harness in one
-  session, two of them in tests written minutes earlier. *A header has two spellings and a dict
+  session, two of them in tests written minutes earlier. *Seven defects of one review showed only
+  on PostgreSQL* — a NUL, a width, a deadlock, a dead pooled connection — while the hermetic suite
+  runs on SQLite. Test the property the code controls: the value handed over is cut, the rows are
+  taken in one order, the pool tests a connection. Then run the proof once on the real thing. *A header has two spellings and a dict
   has one key per spelling:* the live suites' helper named the use case as `x-aira-use-case`, a
   test laid `X-AIRA-Use-Case` over it, both went out, and the gateway read the helper's — so the
   test that a blank selector is no selector stayed green, for the helper's reason, after the rule it

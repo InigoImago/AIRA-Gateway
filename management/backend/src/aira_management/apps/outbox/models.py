@@ -14,6 +14,14 @@ PENDING = Q(published_at__isnull=True, parked_at__isnull=True)
 #: notice states this number (`apps.privacy.notice`) and the relay applies it.
 KEPT_AFTER_DAYS = 30
 
+#: The widest record key an event may have. A key is the entity's whole natural key, and the widest
+#: is a group grant's: a use case's slug (64), `|` and a group path (255). Every key has to fit, or
+#: the change the event belongs to cannot be saved — PostgreSQL refuses a value wider than its
+#: column, inside that change's transaction. Not shortened to fit: the key is the Kafka record key
+#: compaction keeps the last record by, so it must be the same for every event of one entity, and
+#: it is what an operator looks a record up by.
+KEY_MAX_LENGTH = 512
+
 
 class OutboxEventQuerySet(models.QuerySet["OutboxEvent"]):
     def pending(self) -> OutboxEventQuerySet:
@@ -23,7 +31,7 @@ class OutboxEventQuerySet(models.QuerySet["OutboxEvent"]):
 
 class OutboxEvent(models.Model):
     topic = models.CharField(max_length=128)
-    key = models.CharField(max_length=255, blank=True)
+    key = models.CharField(max_length=KEY_MAX_LENGTH, blank=True)
     event_type = models.CharField(max_length=64)
     payload = models.JSONField()
     #: The W3C trace context of the request that caused this event (`FRD-615`). Stored because the

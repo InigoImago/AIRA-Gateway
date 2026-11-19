@@ -5,6 +5,86 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The two rounds on a stack of their own: what the live layers now hold (2026-11-19)
+
+Before the stability fixes and the directory account in `master` landed, the owner asked whether the
+integration and browser layers test them enough. They did not hold them at all: neither round had
+touched `tests/integration/` or `e2e/`. The fixes were proven on SQLite with psycopg's dumper, once
+against a PostgreSQL 17 container and in soak runs, and the directory change against a throwaway
+Keycloak — nothing a later change would have to pass.
+
+**What the live layers hold now**, each test seen failing against a stack built from `f25e405b`, the
+code before the fixes, for the defect it is named after:
+
+- *A database restart* (`test_what_a_database_restart_costs.py`): the stack's PostgreSQL restarted
+  between two requests and a key revocation. Before, the request after the restart was a `500`
+  (`AdminShutdown` on a pooled connection), and with that request taken out the revocation never
+  took — the key stayed active. Now both requests are in the trail and the key is refused.
+  Keycloak's own pool fails one request for each connection the restart ended, so the test waits for
+  ten answers in a row before it returns; the first version did not, and the session's tidy-up then
+  met `unknown_error` asking master for a token.
+- *An identity provider that hangs* (`test_what_a_hanging_identity_provider_holds_up.py`): Keycloak
+  paused and the gateway restarted under it, so it holds no key set. Before, the twenty-fourth of 24
+  token callers waited 121 s, the fetches queued behind PyJWT's lock. Now every one is refused within
+  the one fetch's timeout, and readiness and a key's request answer at once. The first version sent
+  tokens under a key nobody published and passed on the old code: an unknown `kid` was already
+  bounded to one fetch per 30 s, so it tested a property that held. A set outliving its five
+  minutes would be the other way in, and costs a five-minute test.
+- *PostgreSQL's refusals* (`test_a_callers_text_on_postgres.py`): a refusal quoting a NUL from the
+  URL is recorded (before: no row, `PostgreSQL text fields cannot contain NUL`); a NUL in six filters
+  is a `400` naming the filter and an id with one a `404` (before: `500`); half a surrogate pair in a
+  suspension and in a Management body is a `400` (before: `500`); a group grant on a 252-character
+  path is granted, revoked, granted again and its use case retired (before: `500`).
+- *The directory account in `master`* (`test_the_directory_account_in_master.py`): a client in
+  `master` holding `view-users` and `query-groups` on the realm, through the stack's own Keycloak.
+  Master's token reads the realm through `KeycloakDirectory` and `directory_for`, without the setting
+  the realm refuses the account at the token step with `401`, and the account can read and not
+  write. Three mutants of the client — the token asked of the realm read, the lookups in the token's
+  realm, unset meaning master — each fail it.
+- *An amount that reads two ways* (`cost-budgets.spec.ts`): in a browser, `5.000` and `5,000` are
+  asked about and `5000` is saved as five thousand. The console before the fix asked nothing.
+
+**The live suite reached the other stack.** Run against a second stack on moved ports beside the
+owner's on the defaults, three kinds of client in the suite went to the defaults: a
+`GatewaySettings()` a test builds, the migrations' own engine, and `manage.py relay` in a subprocess.
+They read the planes' settings, whose defaults are a stack on today's ports, and the hermetic
+`conftest.py` removes every `AIRA_*` variable from a session, so nothing exported could move them —
+and an exported port, the first attempt at a remedy, was removed with the rest. Six relay runs read
+the owner's Management outbox, found nothing pending and wrote nothing; the migration check, which
+creates and drops a database, had not been reached when the runs were stopped. Every live test now
+hands the planes' settings this stack's addresses (`stack_addresses.settings_environment`),
+`test_every_client_the_suite_builds_reaches_this_stack.py` fails on a moved stack without it, and
+`STK-1`, `STK-2` break the addresses themselves. Two more found on the way, and stated rather than
+fixed: two sessions from one checkout share one register, so each tidied the other's work on the
+other's stack; and the Makefile's `docker` lines read `AIRA_STACK` from the shell, not the `.env`, so
+`demo-ready` waited on the first stack's model download, which did not exist, and returned at once.
+
+**Measured on stacks of their own** (`AIRA_STACK=airaverify`, every port moved, no cloud key), in
+CI's order:
+
+- Integration, strict data mode on: 1095 passed, 6 failed, 17 skipped, under the load of three stacks
+  and a browser suite. Four were the local model, slowed: three hang-up tests whose 400-token answer
+  outran their wait and a rate-limit test's read timeout; all four pass alone. The fifth, a KIRA
+  hang-up, waited 20 s for a row the gateway writes only once the model has finished; that took
+  32 s here on the new code and 40 and 49 s on the old, so the wait is now the evidence round's
+  90 s. The sixth, the seed, followed from the fifth (below).
+- Browser, strict data mode on: 180 of 184 passed. Two waited for a model answer that took 1 min 13 s
+  and 53 s — a cold model load under the same load — past their 60-second poll; both pass alone and
+  in the run's own order. The third was this round's own test, expecting `5.0000` where the console
+  writes `5.00`. Run again on a fresh stack with nothing beside it: 183 passed, 1 skipped.
+- Strict data mode off, integration: 1099 passed, 2 failed, 17 skipped — the KIRA hang-up again,
+  before its wait was raised, and the seed again. The seed met the same two answers in every run:
+  the KIRA hang-up, given up after 20 s, left its 400-token answer running into the tests after it,
+  and a fixed seed answers one way beside another generation and another way alone — measured,
+  *Eyes on the Stars* while the essay ran, *Starlight & Shadow* after it. Where the essay ended
+  between the seed's calls, they disagreed. Run up to the seed in the suite's order on the code
+  after the fixes: with the 20-second wait, the seed failed; with the 90-second one, 514 passed.
+  The code before the fixes passed it with the old wait. Where the essay ends is a matter of timing,
+  and timing is what the raised wait takes out of the seed test.
+- Strict data mode off, browser: 183 passed, 1 skipped.
+
+---
+
 ## The directory account may live in another realm than the one it reads (2026-11-18)
 
 An integration ticket from stage T: adding members to a use case, the console found no groups and
@@ -44,12 +124,134 @@ endpoint — while `/ \ ? # %`, control characters, `.` and `..` are refused: ea
 credential to another path, or names a realm no URL reaches. The first version refused every white
 space, which is a name Keycloak allows.
 
-Mutations `DTR1`–`DTR16`, 2535 in all, every one caught — the swap the ticket asked for among them,
+Mutations `DTR1`–`DTR16`, every one caught — the swap the ticket asked for among them,
 token realm for realm in `_token()` and the other way round in `_get()`. Not built: a live-stack
 test. It would create a client in the `master` realm of whichever stack it runs against, the
 owner's local one included, and the suite's tidy-up knows only the `aira` realm. The console's own
 message for a refused token still says *could not be reached*: it is shown to whoever grants
 access and names nothing, and the log line now carries the status.
+
+---
+
+## A restart, a hang and an outage cost what they must and nothing more (2026-11-16)
+
+A stability review on 2026-11-15 found the system correct in normal operation and not robust
+against faults of its environment: a database restart, a Redis blip, an identity provider that
+hangs, a deploy while answers stream. It reported three High findings, 23 Medium and about thirty
+Low, each with a proof that failed on `4689a279`. The owner asked for the fixes. They were made in
+eight areas side by side, each finding with a regression test seen failing on the old code and a
+mutation that puts the defect back: **162 new mutations, 2697 in all**. Nothing changes the
+infrastructure. Two migrations of the planes' own widen columns PostgreSQL alters in its catalogue
+without rewriting a row: gateway `0060` (`request_logs.provider` and `.region` to 64) and Management
+`outbox 0005` (the event key to 512). No setting is new.
+
+**The three that stopped everything.**
+- *A database restart cost a configuration event for good.* The consumer skipped any failure and
+  aiokafka committed offsets on a timer, so the event that met a dead pooled connection — on a real
+  PostgreSQL 17, an `api_key.revoked` — never came back, and the key kept working while the console
+  showed it revoked. Every engine now tests a pooled connection before handing it out
+  (`pool_pre_ping`). The consumer holds an event through a failure of the database's and tries
+  again, the pause doubling to 30 s; it skips only what fails on its content, and commits an offset
+  once its event was applied or skipped. Which failure is which is read from the error's type and
+  SQLSTATE (`db/transient.py`), never its message. The audit writer writes a row once more on a
+  fresh connection, its id fixed first so it cannot land twice. Re-run with `docker restart` of a
+  throwaway PostgreSQL: the revocation applied, both audit rows written.
+- *An identity provider that hung stalled the gateway.* PyJWT fetches the key set under a lock, and
+  the token check ran on the event loop's default executor, which the audit writer and readiness
+  share: every bearer request fetched in turn, the n-th waiting n timeouts, until audit writes and
+  then API-key requests waited too. Token validation has four threads of its own now. The key-set
+  client fetches once at a time and answers from the set it holds meanwhile. It keeps that set for
+  up to an hour when a fetch fails and backs off from 1 to 30 s. A set the provider does return
+  replaces it at once. Readiness resolves names on threads of its own.
+- *A pipeline step on a catalogued model refused every request.* The classifiers built their
+  request without the catalogue's `addressing`, so a model reached by being catalogued had no
+  region: every request of the use case answered `400` and the dry run `500`. The three classifiers
+  now send what a dispatch sends — addressing, the thinking setting, and no temperature to a model
+  with fixed sampling, which had made a redactor on a current Claude block everything — and pass a
+  model over for the four failures a dispatch chain passes one over for.
+
+**Money and reservations.**
+- A correction the Redis breaker refused is held by the ledger and sent before the next thing asked
+  of the store. The adjust script moves a counter only while its reservation is open, so one sent
+  twice moves it once.
+- A booking upserts its rows in one order, so two bookings of a use case no longer deadlock.
+- A counter keeps the request count it was built on, so a rebuild between a booking's commit and its
+  correction counts the request once.
+- A stream is accounted for from the moment its chain is opened, and a stopping server waits, within
+  the same bound as before, for every request it cut, not only the ones reading on.
+- What a provider had reported before it failed — a Claude answer read whole that broke off, an
+  embedding batch that failed at its tenth text — is booked as `partial`.
+- A redacted batch books a request per call.
+
+**Streams.**
+- SSE is split at CR and LF only. httpx's line reader also splits at U+2028, U+2029 and U+0085,
+  which JSON leaves unescaped, and every answer quoting text copied from a PDF was a `502`. The
+  Gemini surface escapes the three on the way out, where Google's own SDK split the line too.
+- A stream commits to a region or a fallback candidate at its first chunk that carries something.
+  An in-band error after a preamble, or after Claude's `message_start`, now reaches the next one.
+- A `200` holding no event at all is a `502` the chain moves on for.
+- An unhandled `500` carries `Connection: close`. Uvicorn closes the connection after one, and a
+  pooled client reused it, so one server error had cost the next request on that connection.
+- A defect after the first chunk ends the stream with the surface's error element instead of a
+  reset.
+- The Vertex token is renewed behind the requests, with a 10 s limit per identity call.
+
+**Mail and audit.**
+- Every text column of an audit row passes one function on its way in: NUL removed, and a column
+  with a width cut to it and kept on one line. A NUL in a probed model name and a server named
+  longer than 32 characters had each cost their rows.
+- The audit queue holds no bodies that will not be stored, and at most 64 MiB of the rest.
+- A mail header is folded onto one line, and a mail is sent per recipient. One use-case name with a
+  line break had stopped every mail of the installation, and one refused address had stopped
+  everyone sorted after it.
+
+**Management and the console.**
+- An edit is saved onto the row as it stands, under a lock. It used to save the copy the request
+  read, and that undid a retirement or a deletion that committed in between, for use cases, roles,
+  rules and catalogue questions alike.
+- A key issued while its owner is being removed no longer survives the removal.
+- A lone surrogate is a `400` on both planes, and so is a control character in a reporting filter.
+- A console amount that reads one way in German and another in English (`5.000`) is refused with
+  both readings. It used to be saved as 5.
+- A refresh that set out before a stop or a restore no longer undoes it.
+
+**Found while merging, not by the review.**
+- Two branches each green alone were red together. The budget counter's new `basis` field met the
+  new stream tests' comparison of the whole counter hash. Only the merged suite showed it.
+- The chain's stream wrapper was an async generator. Closed before its first read — a caller gone
+  while the headers were on their way — it ran no `finally` and left the adapter's response open
+  until the garbage collector reached it. It is a class now.
+- A redactor whose model could not be addressed had recorded the request `no_capable_model` with the
+  **unredacted prompt stored**. It now blocks, with nothing stored.
+- The review's memory measurement, run again, showed the retained memory growing with every request.
+  The cause was the new held corrections. A reservation names its budget before Redis runs the
+  script, so that a lost reply is still given back, and one Redis was never sent named one too:
+  without Redis, or with its breaker open, every request held a give-back. The oldest gave way at
+  the ledger's limit, and those were the corrections actually owed. A refusal that asked nobody now
+  says so (`CountersNotAsked`), and such a reservation names nothing.
+
+**The suite.**
+- Run in reverse order, the Management suite failed 142 tests. A migration test left `pipelines
+  0005` rolled back, and it now migrates every app forward again (1836 passed reversed).
+- Three log tests depended on a logger cached under an earlier test's configuration. They get a
+  capturing logger of their own now.
+- OpenCode 1 gets a temporary directory of its own, so a run no longer leaves its native libraries
+  in `/tmp`.
+
+**Left open, and said.**
+- A classifier sends Gemini 3.x no thinking setting where the catalogue offers only level
+  words, which nothing ranks.
+- A pipeline step's call, or a fallback candidate, that failed after reporting usage is not booked;
+  the main request's is.
+- Held budget corrections, and mail already sent, are remembered per process: a deploy can leave a
+  reservation counted until its deadline, and a restart can send a mail twice.
+- A database failure that never passes — a statement timeout on every attempt — holds the consumer,
+  logging each attempt.
+- The rate limit's Redis script and its per-process fallback disagree at a refill boundary by a
+  millisecond, in 2 of 40 random sequences. This predates the round and was found by the review's
+  exploration test.
+- Whether Management learns that a gateway applied a change: it does not. The flow is one way, and
+  only the relay's `published_at` says that Kafka took an event.
 
 ---
 

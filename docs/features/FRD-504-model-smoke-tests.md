@@ -351,7 +351,8 @@ writes, and none was needed to answer the question this feature exists for.
   is rated; a verdict taken back to `unrated` names nobody. `POST /api/v1/test-runs/{id}/finish/`
   is the requester's, once. A run is never deleted — earlier runs are history (§5.7).
 - `POST /api/v1/test-cases/` without a `position` appends the question after every position ever
-  used, live or retired.
+  used, live or retired. A `position` another live question holds is refused `400` under
+  `position`, on creating a question and on moving one.
 - `GET /api/v1/test-runs/{id}/export/` — CSV, BOM and CRLF, every field quoted (`FRD-602`'s rules).
 - `GET /api/v1/test-stats/` — **one row per use case**: its latest finished run, the model that run entered
   at, that run's counts, and how many questions the catalogue asks today.

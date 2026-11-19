@@ -86,9 +86,13 @@ interface Options {
   roles?: string[];
   events?: AnomalyEvent[];
   suspensions?: Observable<{ suspensions: Suspension[] }>;
+  /** What is stopped, one answer per read in order — the last one repeats. Default: `suspensions`. */
+  suspensionReads?: Observable<{ suspensions: Suspension[] }>[];
   rules?: AnomalyRule[];
   suspend?: Observable<Suspension>;
   lift?: Observable<Suspension>;
+  /** What creating a global rule answers. Default: the rule, created. */
+  createRule?: Observable<AnomalyRule>;
   update?: Observable<AnomalyRule>;
   /** A cursor on the first page, so the "load older" control appears. */
   moreEvents?: string | null;
@@ -125,6 +129,8 @@ function setup(options: Options = {}) {
     suspensions: () =>
       defer(() => {
         counts.suspensions += 1;
+        const reads = options.suspensionReads;
+        if (reads?.length) return reads[Math.min(counts.suspensions - 1, reads.length - 1)];
         return options.suspensions ?? of({ suspensions: [SUSPENSION] });
       }),
     globalRules: () => of(options.rules ?? [RULE]),
@@ -145,7 +151,7 @@ function setup(options: Options = {}) {
     },
     createGlobalRule: (rule: Record<string, unknown>) => {
       calls.push(`createGlobalRule:${JSON.stringify(rule)}`);
-      return of({ ...rule, id: 99, is_global: true });
+      return options.createRule ?? of({ ...rule, id: 99, is_global: true });
     },
     updateRule: (id: number, changes: Record<string, unknown>) => {
       calls.push(`update:${id}:${JSON.stringify(changes)}`);
@@ -841,6 +847,113 @@ describe('SecurityPage — what live refreshes', () => {
   });
 });
 
+/**
+ * A refresh reads the findings and what is stopped together, and lands when both have answered. One
+ * that set out before a stop or a restore answered read the list as it was: landing afterwards, it
+ * put a lifted stop back for a refresh interval, or took a new one away — and a second Stop on a
+ * list without the first created a duplicate suspension.
+ */
+describe('SecurityPage — a stop or a restore outlives the refresh that was already reading', () => {
+  const LIFTED: Suspension = { ...SUSPENSION, lifted_at: '2026-08-08T12:00:00Z', lifted_by: 'sec' };
+
+  it('keeps a restored stop out of "in force" when an older refresh lands after it', () => {
+    const findings = new Subject<AnomalyPage>();
+    const harness = setup({
+      firstPages: [of({ events: [EVENT], next_cursor: null, scope: 'all' }), findings],
+      suspensionReads: [
+        of({ suspensions: [SUSPENSION] }),
+        // The refresh's read, before the restore reached the server.
+        of({ suspensions: [SUSPENSION] }),
+        of({ suspensions: [LIFTED] }),
+      ],
+    });
+    harness.click('[data-testid="refresh-now"]');
+    harness.toSuspensions();
+    harness.click('[aria-label="Restore access for ada"]');
+    expect(harness.testid('active-banner')).toBeNull();
+
+    const later = { ...EVENT, id: 'e7', rule: 'a later finding' };
+    findings.next({ events: [later, EVENT], next_cursor: null, scope: 'all' });
+    findings.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('active-banner')).toBeNull();
+    expect(harness.testid('active-suspensions')?.textContent ?? '').not.toContain('ada');
+    expect(harness.testid('past-suspensions')?.textContent).toContain('ada');
+    // The findings half of that refresh still lands: only its out-of-date list is left out.
+    harness.toTab('findings');
+    expect(harness.testid('findings-table')?.textContent).toContain('a later finding');
+  });
+
+  it('keeps a new stop on the page when an older refresh lands after it', async () => {
+    const findings = new Subject<AnomalyPage>();
+    const harness = setup({
+      firstPages: [of({ events: [EVENT], next_cursor: null, scope: 'all' }), findings],
+      suspensionReads: [
+        of({ suspensions: [] }),
+        of({ suspensions: [] }),
+        of({ suspensions: [SUSPENSION] }),
+      ],
+    });
+    harness.click('[data-testid="refresh-now"]');
+    harness.toSuspensions();
+    harness.click('[data-testid="stop-toggle"]');
+    await harness.enter('[data-testid="stop-value"]', 'ada');
+    harness.submit('form.disclosure');
+    expect(harness.testid('active-banner')?.textContent).toContain('1');
+
+    findings.next({ events: [EVENT], next_cursor: null, scope: 'all' });
+    findings.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('active-banner')?.textContent).toContain('1');
+    expect(harness.testid('active-suspensions')?.textContent).toContain('ada');
+  });
+
+  it('shows the list read after the last of two stops, whichever read answers last', async () => {
+    const afterFirst = new Subject<{ suspensions: Suspension[] }>();
+    const grace = { ...SUSPENSION, id: 's9', target_value: 'grace' };
+    const harness = setup({
+      suspensionReads: [
+        of({ suspensions: [] }),
+        afterFirst,
+        of({ suspensions: [SUSPENSION, grace] }),
+      ],
+    });
+    harness.toSuspensions();
+    for (const caller of ['ada', 'grace']) {
+      harness.click('[data-testid="stop-toggle"]');
+      await harness.enter('[data-testid="stop-value"]', caller);
+      harness.submit('form.disclosure');
+    }
+    expect(harness.testid('active-banner')?.textContent).toContain('2');
+
+    afterFirst.next({ suspensions: [SUSPENSION] });
+    afterFirst.complete();
+    harness.fixture.detectChanges();
+
+    expect(harness.testid('active-banner')?.textContent).toContain('2');
+    expect(harness.testid('active-suspensions')?.textContent).toContain('grace');
+  });
+
+  it('lets a refresh that set out after the decision show what it read', () => {
+    // The next tick is the reader's only view of an expiry, or of a stop somebody else made.
+    const harness = setup({
+      suspensionReads: [
+        of({ suspensions: [SUSPENSION] }),
+        of({ suspensions: [LIFTED] }),
+        of({ suspensions: [LIFTED, { ...SUSPENSION, id: 's9', target_value: 'grace' }] }),
+      ],
+    });
+    harness.toSuspensions();
+    harness.click('[aria-label="Restore access for ada"]');
+
+    harness.click('[data-testid="refresh-now"]');
+
+    expect(harness.testid('active-suspensions')?.textContent).toContain('grace');
+  });
+});
+
 describe('SecurityPage — how stale the screen is', () => {
   afterEach(() => vi.useRealTimers());
 
@@ -1256,6 +1369,37 @@ describe('SecurityPage — while older findings are in flight', () => {
       threshold: 200,
     });
     expect(harness.text()).toContain('every use case');
+  });
+
+  it('says why a new global rule was refused inside its window, not behind it', async () => {
+    // The page's banner sits under the backdrop, in a part of the page made inert: neither seen
+    // nor announced while the window is open.
+    const harness = setup({
+      permissions: ['anomaly.rule.global.write'],
+      firstPages: [
+        throwError(() => ({ status: 502, error: { error: { message: 'gateway down' } } })),
+      ],
+      createRule: throwError(() => ({
+        status: 400,
+        error: { error: { message: 'A rule with this name exists.' } },
+      })),
+    });
+    harness.toRules();
+    harness.click('[data-testid="new-global-rule"]');
+    const window = harness.testid('global-rule-editor') as HTMLElement;
+    // A failure from before the window opened is not its outcome.
+    expect(window.textContent).not.toContain('gateway down');
+    await harness.enter('[data-testid="new-global-rule-name"]', 'new address');
+    await harness.enter('[data-testid="new-global-rule-threshold"]', '1');
+
+    harness.submit('[data-testid="global-rule-editor"] form');
+
+    expect(harness.testid('global-rule-editor-error')?.textContent).toContain(
+      'A rule with this name exists.',
+    );
+    expect(
+      harness.testid('global-rule-editor')?.contains(harness.testid('global-rule-editor-error')),
+    ).toBe(true);
   });
 
   // ---- the three lists that grow without bound ------------------------------------------------

@@ -1,7 +1,9 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { Observable, of, tap, throwError } from 'rxjs';
 import { App } from './app';
 import { MeService } from './core/api/me.service';
 import { Me } from './core/api/models';
@@ -26,6 +28,15 @@ const baseMe: Me = {
 };
 
 let loggedOut = false;
+
+/**
+ * A `MeService` double that keeps its answer where the real one does — in `me`, which the shell
+ * reads — so a double less capable than the service cannot pass for it.
+ */
+function meDouble(answer: Observable<Me>) {
+  const me = signal<Me | null>(null);
+  return { currency: signal(''), me, get: () => answer.pipe(tap((value) => me.set(value))) };
+}
 
 /**
  * What `/me` lists for each built-in role, as `aira_common.permissions` defines them. Used once, to
@@ -102,10 +113,7 @@ function configure(authenticated: boolean, roles: string[] = [], permissions: st
           },
         },
       },
-      {
-        provide: MeService,
-        useValue: { currency: signal(''), get: () => of({ ...baseMe, roles, permissions }) },
-      },
+      { provide: MeService, useValue: meDouble(of({ ...baseMe, roles, permissions })) },
       // Not due, so the shell's own assertions see the shell. The gate has its own spec.
       { provide: PrivacyNoticeService, useValue: { get: () => of(privacyNotice({ due: null })) } },
     ],
@@ -334,7 +342,7 @@ describe('App when the identity provider cannot be reached', () => {
             logout: () => {},
           },
         },
-        { provide: MeService, useValue: { currency: signal(''), get: () => of(baseMe) } },
+        { provide: MeService, useValue: meDouble(of(baseMe)) },
       ],
     });
     const fixture = TestBed.createComponent(App);
@@ -399,14 +407,12 @@ describe('App when the console cannot find out who you are', () => {
         },
         {
           provide: MeService,
-          useValue: {
-            currency: signal(''),
-            get: () =>
-              throwError(() => ({
-                status: 500,
-                error: { error: { message: 'Account service down.' } },
-              })),
-          },
+          useValue: meDouble(
+            throwError(() => ({
+              status: 500,
+              error: { error: { message: 'Account service down.' } },
+            })),
+          ),
         },
       ],
     });
@@ -494,7 +500,7 @@ describe('App while signing in', () => {
             },
           },
         },
-        { provide: MeService, useValue: { currency: signal(''), get: () => of(baseMe) } },
+        { provide: MeService, useValue: meDouble(of(baseMe)) },
         {
           provide: PrivacyNoticeService,
           useValue: { get: () => of(privacyNotice({ due: null })) },
@@ -538,5 +544,82 @@ describe('App while signing in', () => {
 
     card?.querySelector<HTMLButtonElement>('button')?.click();
     expect(signedOut).toBe(true);
+  });
+});
+
+/**
+ * The shell asks `/v1/me` once, at start-up. What it shows has to follow the account as the console
+ * knows it **now**: a first answer that failed is not the last word, and a role renamed since is
+ * not named the old way. Driven through the real service, because the property is the sharing.
+ */
+describe('App when what the console knows about the account changes', () => {
+  function start(): { http: HttpTestingController; el: HTMLElement; render: () => void } {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideRouter([]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: AuthService,
+          useValue: {
+            isAuthenticated: () => true,
+            startupError: signal<string | null>(null),
+            loginLoop: signal<string | null>(null),
+            signingIn: signal(false),
+            logout: () => {},
+          },
+        },
+        {
+          provide: PrivacyNoticeService,
+          useValue: { get: () => of(privacyNotice({ due: null })) },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    return {
+      http: TestBed.inject(HttpTestingController),
+      el: fixture.nativeElement as HTMLElement,
+      render: () => fixture.detectChanges(),
+    };
+  }
+
+  it('shows the navigation once a screen reads the account, after a first read failed', () => {
+    const { http, el, render } = start();
+    http.expectOne('/api/v1/me').flush(null, { status: 503, statusText: 'Unavailable' });
+    render();
+    expect(el.querySelector('[data-testid="account-error"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="nav-security"]')).toBeNull();
+
+    // Every screen asks again when it opens; a failure is not kept.
+    TestBed.inject(MeService).get().subscribe();
+    http.expectOne('/api/v1/me').flush({ ...baseMe, permissions: ['anomaly.read_all'] });
+    render();
+
+    expect(el.querySelector('[data-testid="account-error"]')).toBeNull();
+    expect(el.querySelector('[data-testid="nav-security"]')).not.toBeNull();
+  });
+
+  it('names a role the way the server names it after the account was asked again', () => {
+    const { http, el, render } = start();
+    http.expectOne('/api/v1/me').flush({ ...baseMe, roles: ['controlling'] });
+    render();
+    const chip = () => el.querySelector('[data-role="controlling"]')?.textContent?.trim();
+    expect(chip()).toBe('Controlling');
+
+    TestBed.inject(MeService).reload().subscribe();
+    render();
+    // Still named while the question is out: a reload does not blank the header.
+    expect(chip()).toBe('Controlling');
+    http.expectOne('/api/v1/me').flush({
+      ...baseMe,
+      roles: ['controlling'],
+      role_labels: { ...baseMe.role_labels, controlling: 'Controlling & Finance' },
+    });
+    render();
+
+    expect(chip()).toBe('Controlling & Finance');
   });
 });

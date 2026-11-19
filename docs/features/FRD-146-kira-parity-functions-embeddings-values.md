@@ -201,7 +201,10 @@ part, so the Gemini surface keeps one vector per text.
 ### 5.3 Aliases
 
 `addressing.model` is the name on the wire. `_VertexAdapter` resolves it once, `upstream_name()`,
-and every URL it builds uses that name; everything keyed by the model — the catalogue row, the
+and every URL it builds uses that name; every other adapter sends it where its platform names a
+model — the body of Agent Platform's open models (`publisher/name`) and of an OpenAI-compatible
+server, Google AI Studio's path — and a probe asks after it, or looks for it in a listing, by that
+name. Everything keyed by the model — the catalogue row, the
 residency permission by name, the price, the audit row — uses the entry's own name. An alias is
 therefore a separate release: approving `gemini-embedding-2` approves nothing about
 `gemini-embedding-2-768`.
@@ -268,8 +271,12 @@ neither shape had been released.
   predecessor's body may not carry: it changes no vector of a text within the model's limit. AI
   Studio aggregates through `embedContent` too; `:predict` and OpenAI-compatible servers refuse
   `aggregate` (`DialectUnsupported`).
-- **Aliases** — `core.canonical.wire_name`; `VertexTransport.url(wire_model=…)` for Gemini and
-  Claude on Vertex. Agent Platform's open models name the model in the body and take no alias.
+- **Aliases** — `core.canonical.wire_name`, in every adapter: `VertexTransport.url(wire_model=…)`
+  for Gemini and Claude on Vertex, the body for Agent Platform's open models and an
+  OpenAI-compatible server, the path for Google AI Studio. Until all of them did, an alias for an
+  open model, an AI Studio model or a self-hosted one was sent under the entry's own name, which
+  the vendor does not know — a 404 for every request
+  (`gateway/tests/test_an_alias_reaches_every_adapters_wire.py`).
 - **Empty embedding text** — `""`, `[]`, `[""]` and a text of blanks are `VALIDATION_ERROR`
   (a text of blanks was `EMPTY_EMBEDDING_INPUT` until the second comparison, §14).
 - **Turn order** — documents first in a turn without function parts; an earlier test pinned the

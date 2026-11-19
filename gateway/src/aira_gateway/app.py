@@ -224,7 +224,8 @@ def _assemble_services(
     # Mail when a budget crosses its use case's thresholds, or its anomaly rules find something
     # (`FRD-409`). `None` where the installation names no relay: nothing is checked or sent.
     app.state.mail = build_notifier(settings, sessionmaker, app.state.clock)
-    # Streams read on after their caller left, so a stopping server can cut them short (`ADR-0041`).
+    # Every request being accounted for, so a stopping server waits for their rows — and cuts short
+    # the streams read on after their caller left (`ADR-0041`).
     app.state.drains = Drains()
     # The audit write happens after the response goes out (FRD-405 §4.4): persistence stays off
     # the request path.
@@ -266,8 +267,9 @@ def _lifespan(
         if app.state.mail is not None:
             await app.state.mail.start()
         yield
-        # First: a stream still read after its caller left stops reading and books what it knows,
-        # and its row reaches the writer before the writer closes.
+        # First: every request still being accounted for — one the server cut when its grace period
+        # ran out, a stream read on after its caller left — books what it knows while the vendors'
+        # clients are open, and hands its row to the writer before the writer closes.
         await app.state.drains.stop()
         await app.state.anomalies.stop()
         if app.state.mail is not None:

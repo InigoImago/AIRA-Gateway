@@ -14,6 +14,7 @@ from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.reporting.common import (
     csv_attachment,
     negotiate,
+    refuse_control_characters,
     router,
     scope_label,
     visible_scope,
@@ -127,6 +128,7 @@ async def reporting(
         raise GeminiHTTPError(
             400, f"'{split}' is not a split. Available: {', '.join(SPLITS)}.", "INVALID_ARGUMENT"
         )
+    refuse_control_characters(person=person)
     try:
         granularity = resolve(window_start, window_end, series) if series else None
     except TooManyBuckets as exc:

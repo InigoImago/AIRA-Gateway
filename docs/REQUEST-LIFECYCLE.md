@@ -73,7 +73,10 @@ takes the same id. It sits inside the path selector, so it refuses on the path e
 `/uc/<slug>/kira/…` is a KIRA request when it is too large too, answered in KIRA's envelope and
 audited as `api="kira"`. The one response no middleware reaches is Starlette's answer to an
 unhandled error, a 500 written outside all of them; its handler adds the security headers, the
-trace id, the KIRA surface's headers and the CORS headers itself.
+trace id, the KIRA surface's headers and the CORS headers itself — and `Connection: close`. The
+server closes the connection after an unhandled error, and a client not told so — every SDK's
+connection pool, a proxy's pool of connections to the gateway — would send its next request on it,
+where that request fails without reaching the gateway.
 
 The ceiling has two exits — a declared `Content-Length` that is too large, and a body that lies and
 is cut off mid-read — and **both record an audit row** under the outcome `request_too_large`. That
@@ -315,11 +318,15 @@ how much, and the gateway logs `injection_scan_partial`. None of these is a bug;
 difference between "the filter ran" and "the prompt was checked", and a reader who assumes the
 second has been misled by omission.
 
-**The PII filter rewrites the last user message only.** A chat client sends the whole conversation
-every turn, and its own copy of earlier turns was never redacted — so from the second turn on, what
-the caller typed earlier reaches the model and the stored payload as it was typed, while the step
-records `unchanged` or `redacted` for the last one. A stated blind spot, like the filter's scope
-above.
+**The PII filter rewrites the last user message only** — each of its text parts asked about on its
+own, one redactor call and one `pipeline:pii_filter` row per part, and written back in its place:
+an attachment or a tool result beside the text keeps its position, and two parts are never joined
+into one. A request with no user message has its last message rewritten, whatever its role — the
+message the injection filter reads there as well — so the role a text is sent under does not take
+it past the step. A chat client sends the whole conversation every turn, and its own copy of
+earlier turns was never redacted — so from the second turn on, what the caller typed earlier
+reaches the model and the stored payload as it was typed, while the step records `unchanged` or
+`redacted` for the last one. A stated blind spot, like the filter's scope above.
 
 **An embedding runs the steps that are about the text it carries, and not the others.** A step
 about the *answer* has nothing to act on — a router chooses a model to generate with, and an
@@ -359,19 +366,31 @@ the dispatch chain asks of every candidate — residency, approval, release, and
 is capped (`installation_requirements`). A model it may not call is passed over **with its reason**,
 and the step degrades as above, saying why.
 
+**And asked as a dispatch asks it.** A step's call goes where the catalogue places its model — the
+regions of its entry, and the wire name of an alias — so a model served by being catalogued is
+served to a step as well. A classifier asks for no thinking where the model can be told not to
+think, and the redactor, which asks every other model for its most likely rewrite (temperature 0),
+sends a model that samples at its own settings no temperature at all: such a model refuses every
+temperature but its own, and a refused redactor blocks the request.
+
 A step may name **more than one**: its own `fallback_models` chain, tried in order where the model
-before it could not be *reached*. Reached, not agreeable — a model that answered `UNDETERMINED`, or
-returned a rewrite too short to trust, has answered and the chain stops, because a filter that kept
-asking until some model agreed would get weaker exactly when things get worse. What a chain adds is
-a candidate; what it never removes is the safe direction above. Every name in it is checked against
-the release when saved and against the installation's conditions when called, like every other.
+before it could not be *reached* — an outage, no region this gateway may send it to (none in its
+catalogue entry, or one residency forbids), or a request its wire format cannot carry, the same
+failures that pass a dispatch chain on. Reached, not agreeable — a model that answered
+`UNDETERMINED`, or returned a rewrite too short to trust, has answered and the chain stops, because
+a filter that kept asking until some model agreed would get weaker exactly when things get worse.
+What a chain adds is a candidate; what it never removes is the safe direction above. Every name in
+it is checked against the release when saved and against the installation's conditions when
+called, like every other.
 
 **A pipeline model call is a first-class request**: it leaves its own audit row named
 `pipeline:<step>`, priced, and booked against the budget **as a request** — it reached a model and
 cost money, so a use case running two steps per request is doing three times the work its request
-budget was sized for. That row stores no prompt. It does **not** take a rate-limit token: a bucket
-measures how fast requests arrive, and the gate above is taken once, on the one request that did.
-Measured against a real model, the classifier costs roughly as much as the answer it guards.
+budget was sized for. Over an embedding's batch a step leaves one row for its calls, booked as the
+one request per text it stands for, as the caller's batch is. That row stores no prompt. It does
+**not** take a rate-limit token: a bucket measures how fast requests arrive, and the gate above is
+taken once, on the one request that did. Measured against a real model, the classifier costs
+roughly as much as the answer it guards.
 
 A filter that ran and **passed** records that it did, so "found nothing" and "none configured" are
 told apart.
@@ -462,7 +481,7 @@ fallback then spends.
 ```mermaid
 graph LR
     chain["Fallback chain"] --> c1{"candidate<br/>every condition met?"}
-    c1 -->|"yes"| tried["dispatch<br/><i>streamed: the first chunk proves it</i>"]
+    c1 -->|"yes"| tried["dispatch<br/><i>streamed: the first chunk with content proves it</i>"]
     c1 -->|"no"| skipped["skip it, keep the reason"]
     tried -->|"answers"| served["served"]
     tried -->|"fails before answering"| failed["keep what the upstream said"]
@@ -514,11 +533,21 @@ carries both lists, and the refusal's row records them.
   but a 429.
 
 **A streamed request uses this chain too.** The chain is *opened* rather than awaited: for each
-candidate in turn, the conditions, then the upstream stream, then its **first chunk** — the
-`__anext__` that issues the HTTP request. A candidate that fails before producing that chunk is
-passed over; the one that produced it owns the rest of the answer. Once a chunk is on the wire the
-stream is **committed**, because text from two models spliced into one answer would be worse than
-the failure it hid.
+candidate in turn, the conditions, then the upstream stream, read up to its **first chunk** that
+carries something — text, thinking, a function call, speech or a finish. What a stream sends
+before that is held back, because it gives the caller nothing: the OpenAI dialect's empty role
+delta, a running usage figure, an event a dialect reads nothing from. A candidate that fails
+before its first chunk is passed over — an error the provider sends inside its `200` right after
+such a preamble included — and the one that produced it owns the rest of the answer. A model
+catalogued in several regions is tried region by region by the same rule, so an in-band
+`overloaded_error` or `503` before the first word reaches the next region, as it does for a
+request that was not streamed. Once a chunk is on the wire the stream is **committed**, because
+text from two models — or two regions — spliced into one answer would be worse than the failure it
+hid. A stream that **ends** before its first chunk — with nothing, or only a preamble — has
+answered, and the chain stops there: that is how a vendor's own safety filter refuses, and asking
+the next model would pay it to refuse again. A `200` that holds no event at all — a proxy's block
+page, a server that ignored `stream: true` — is not a stream and fails like a `200` that is not
+JSON: a 502 the chain moves on for.
 
 **The response waits for that first chunk for at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15).** A
 model that reads a large context, thinks, or writes a function call's arguments produces no chunk
@@ -545,7 +574,9 @@ assembled from it before it is returned. A non-streamed request has nothing to k
 can precede its status — but this gateway's own time limit for an answer
 (`AIRA_VERTEX_TIMEOUT_SECONDS`) then measures a silence rather than the whole answer: a long answer
 to a large context takes longer than any such limit, while the stream carries something the whole
-time. A failure inside that stream moves on to the next region, as nothing reached the caller.
+time. A failure inside that stream moves on to the next region, as nothing reached the caller — and
+what Claude had reported using when it broke off, which it bills, goes with it: onto the answer of
+the region that served, or onto the row of a request no region served (§6).
 
 **What a candidate must meet**, asked of every candidate by one mechanism (`requirements_for`)
 rather than each feature inventing its own:
@@ -594,7 +625,7 @@ One context manager owns every way out:
 graph TB
     exit{"How did it end?"}
     exit -->|"answered"| settle["settle the reservation<br/>with what was really used"]
-    exit -->|"refused"| refused["settle what the upstream had produced<br/>(a document it did not finish), else release"]
+    exit -->|"refused"| refused["settle what the upstream had produced<br/>(a document it did not finish)<br/>or reported before it failed, else release"]
     exit -->|"client hung up"| cancel["settle what was reported, or what the vendor counts<br/>of the request and the answer received — else release<br/>status 499 · outcome <b>client_gone</b>"]
     exit -->|"the gateway failed"| fail["settle what was produced, else release<br/>status 500 · outcome <b>internal_error</b>"]
     settle --> row["audit row"]
@@ -611,20 +642,36 @@ and what system (the credential), which use case and which surface, requested **
 how the model was chosen, provider/publisher/**region**, status and outcome, pipeline decisions —
 each step's verdict, and every candidate the chain skipped or tried — whether a step flagged the
 request, the tools offered and the names of those called, tokens and how they were established
-(`usage_basis`), latency, cost in nano-units, request bytes, trace id, which controls were
+(`usage_basis`), latency (from the moment its route began, so the pipeline and its steps' model
+calls are in it on either surface), cost in nano-units, request bytes, trace id, which controls were
 degraded at the time, the message a caller who was not served was given (`error`, through the same
-redactor as the bodies), and the request's technical record (`technical`, §9).
+redactor as the bodies), and the request's technical record (`technical`, §9). Every text in it is
+one its column can store, because PostgreSQL refuses the whole row otherwise: a NUL is taken out
+of every text, a one-line value — a name, an identifier — loses its control characters, and one
+longer than its column is cut to it. Many of these come from the caller (the model and method in
+the URL, the subject in the token, the words a refusal quotes back) or from the installation (a
+self-hosted server's name and region, recorded whole up to 64 characters); a less faithful row is
+the price, never a missing one.
 
 **A request that reached this point is recorded however it ended.** A dropped socket _cancels_ the
 response task, so settling or releasing the reservation and writing the row run to their end as one
 unit (`shielding.uninterrupted`). Shielding the wait alone is not enough: Starlette cancels a
 streamed body through anyio, whose cancellation is re-delivered to every await in the cancelled
 scope, so control would leave the exit while the settle still ran and the reservation would be
-resolved twice. A stream whose body never began — cancelled while its headers were sent — is
-accounted for by its response instead (`AccountedStream`).
+resolved twice. A stream is accounted for from the moment its dispatch chain is opened, before its
+response exists: a model is called from there, and the status can wait a keepalive interval for its
+first chunk. A stream whose body never began — cancelled while its headers were sent — is accounted
+for by its response (`AccountedStream`).
 
 A refusal raised **after** the upstream answered — a document the model did not finish — was paid
-for: what it spent is settled, and its row carries the tokens and the cost.
+for: what it spent is settled, and its row carries the tokens and the cost. So was an answer that
+broke off after the provider had reported part of what it used: a Claude answer read for a caller
+who did not stream states its input at the start, and an embedding batch sent one text per call has
+paid for each text before the one that failed. What was reported is settled as the floor it is
+(`usage_basis` `partial`), under the model that failed, and the refusal's row carries it. **An
+answer is built before its request counts as served**: one that cannot be written — a vector or a
+score holding a value JSON has no word for — is the `500` its caller gets, and its row says
+`internal_error`, with what the vendor billed booked.
 
 **A defect is recorded where `accounting` sees it.** An unhandled exception inside it leaves a
 `500` / `internal_error` row, settled like any other exit. One raised before dispatch reaches the
@@ -639,21 +686,25 @@ reported: several vendors report usage only there, and a stream closed with its 
 nothing they said — a request anyone could make free by hanging up before the end. Nothing the
 caller did not receive is stored, and the row says `499` / `client_gone`. The answer is finished
 and billed whole, which can cost more than one closed early. A stopping server cuts every read
-short; each such request books what it knows and writes its row before the audit writer closes.
+short, and cancels every request still running once its grace period is over; it then waits, at
+most three seconds, for each request it cut to book what it knows — counted at the vendor, while
+the vendor's client is still open — and hand its row over, before it closes the audit writer, the
+shared counters, the vendors' clients and the database.
 
 **A stream left before its vendor said everything it used is a floor, and the row says so** — one
 closed with its caller (`AIRA_DRAIN_LEFT_STREAMS_SECONDS=0`), or read on and cut short.
 `usage_basis` takes one of two values. **`partial`**: the vendor had reported part of its usage when
-the caller left — a Claude stream states its input at the start and its output only at the end —
-and that much is settled. **`counted`**: the vendor had reported nothing — Vertex's Gemini reports
-usage only in a stream's last chunk — so in the exit, the caller gone and nobody waiting, the
-vendor's own free token count is asked for the request as it was sent and the answer as it was
-received, in the region that answered. Either way the answer the vendor produced after the caller
-left is in no count, and reports call the spend a lower bound. A vendor that cannot count, a count
-that fails, or `AIRA_COUNT_CANCELLED_STREAMS=false` leaves the usage unknown and releases the
-reservation. The same count is asked for a stream that broke off with nothing reported when the
-connection or this gateway's time limit ended it: the vendor was not the one that stopped, and goes
-on answering — and billing — on its side.
+the caller left — a Claude stream states its input at the start and its output only at the end — and
+that much is settled; the same value marks an answer that broke off with part of its usage reported,
+streamed or not (§5, and the refusal above). **`counted`**: the vendor had reported nothing —
+Vertex's Gemini reports usage only in a stream's last chunk — so in the exit, the caller gone and
+nobody waiting, the vendor's own free token count is asked for the request as it was sent and the
+answer as it was received, in the region that answered. Either way the answer the vendor produced
+after the caller left is in no count, and reports call the spend a lower bound. A vendor that cannot
+count, a count that fails, or `AIRA_COUNT_CANCELLED_STREAMS=false` leaves the usage unknown and
+releases the reservation. The same count is asked for a stream that broke off with nothing reported
+when the connection or this gateway's time limit ended it: the vendor was not the one that stopped,
+and goes on answering — and billing — on its side.
 
 **Refusals are recorded at the route's exception boundary** — one site, because a fact repeated at
 every `return` is a fact eventually forgotten at one of them.
@@ -734,10 +785,12 @@ names (by default the moment it is used up), only the highest share crossed at o
 whose allowance it is or, for the use case's shared budget, to its administrators; and one mail a
 round per use case listing its new findings, to its administrators unless they switched that off,
 naming no person, key or address. Each mail owed is a row in `mail_notices`, so a crossing seen
-again owes nothing new and a mail that fails is tried again the next round, up to five times; one
-whose period has ended, or a finding older than a day, is not sent late. The address is read from
-the directory when the mail is sent, by exact username, and the members of a group that administers
-the use case are asked for theirs. Nothing on the request path waits for any of it.
+again owes nothing new and a mail that fails is tried again the next round, up to five times —
+only to the recipients who do not have it yet, since one the relay refuses, or a mail that cannot
+be written, stops no other; one whose period has ended, or a finding older than a day, is not sent
+late. The address is read from the directory when the mail is sent, by exact username, and the
+members of a group that administers the use case are asked for theirs. Nothing on the request path
+waits for any of it.
 
 Also afterwards: the **retention worker** clears stored prompts and answers once the use case's
 period has passed (default 7 days), and on its next run for a use case that has switched storage
@@ -783,6 +836,7 @@ off by default, so the audit rows themselves are kept. Each run is recorded in `
 | Upstream 401/403, any other status, or unreachable | 502 `UNAVAILABLE`, **masked** | 502 `EXTERNAL_KI_API_ERROR` | `upstream_error` |
 | Document left incomplete | 502, with what it cost; a stream is not checked | 502 `EXTERNAL_KI_API_ERROR`; a stream ends without `completed` | `upstream_error` |
 | A stream that fails after its first chunk | the 200 stands; Google's error element ends it | the 200 stands; it ends without `completed` | `upstream_error`, with the upstream's status |
+| This gateway failed (a defect) after a stream's status went out | the 200 stands; Google's error element, `500 INTERNAL`, ends it | the 200 stands; it ends without `completed` | `internal_error` (status 500), with what the vendor had reported |
 | A stream whose chain is refused after its status went out — no first chunk within `AIRA_STREAM_KEEPALIVE_SECONDS` | the 200 stands; Google's error element ends it | the 200 stands; it ends without `completed` | the refusal's outcome, with the status it would have had |
 | This gateway failed (a defect) during dispatch | 500 `INTERNAL` | 500 `INTERNAL_SERVER_ERROR` | `internal_error` |
 | This gateway failed before dispatch | 500 `INTERNAL` | 500 `INTERNAL_SERVER_ERROR` | _(no row; logged as `unhandled_error`)_ |

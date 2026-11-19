@@ -50,6 +50,33 @@ test.describe('Cost budgets', () => {
     await expect(await submitOfOpenForm(page)).toBeDisabled();
   });
 
+  test('an amount that reads two ways is asked about, and the one saved is the one shown', async ({
+    page,
+  }) => {
+    // `5.000` is five thousand to a German reader and five to an English one. Read as five, it was
+    // saved under "Budget saved." and an enforced limit stopped the use case after five euros.
+    await login(page, USERS.globalAdmin);
+    const slug = uniqueSlug('ambiguous');
+    await createUseCase(page, slug, 'Ambiguous probe');
+
+    await page.goto(`/use-cases/${slug}?tab=budgets`);
+    await page.click('button:has-text("Add budget")');
+    for (const typed of ['5.000', '5,000']) {
+      await page.fill('#budget-cost', typed);
+      await expect(page.locator('.field__hint--error')).toContainText(
+        `“${typed}” could be 5000 or 5.00`,
+      );
+      await expect(page.getByTestId('budget-cost-reading')).toHaveCount(0);
+      await expect(await submitOfOpenForm(page)).toBeDisabled();
+    }
+
+    await page.fill('#budget-cost', '5000');
+    await expect(page.getByTestId('budget-cost-reading')).toContainText('Will be saved as 5000.00');
+    await (await submitOfOpenForm(page)).click();
+
+    await expect(page.locator('[data-testid^="budget-spend-"]')).toContainText(/5 ?000\.00/);
+  });
+
   test('the catalog lists prices and flags models that cannot be costed', async ({ page }) => {
     await login(page, USERS.globalAdmin);
     await page.goto('/models');

@@ -6,6 +6,7 @@ from typing import Any
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -60,6 +61,27 @@ class TestCaseViewSet(viewsets.ModelViewSet[TestCase]):
                 ]
             }
         )
+
+    def perform_update(self, serializer: Any) -> None:
+        """Saved onto the question as it stands, held until this commits — a question deleted
+        meanwhile is not created again by saving the copy this request read; and a position
+        another question took between the check and the save is refused by name, as on
+        creation, rather than answered as a server error."""
+        try:
+            with transaction.atomic():
+                serializer.instance = get_object_or_404(
+                    self.get_queryset().select_for_update(), pk=serializer.instance.pk
+                )
+                serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError(
+                {
+                    "position": [
+                        "Another question took this position at the same moment. Choose another "
+                        "one."
+                    ]
+                }
+            ) from exc
 
     def perform_destroy(self, instance: TestCase) -> None:
         """Refuse to delete a question somebody has already answered, and say what to do instead.

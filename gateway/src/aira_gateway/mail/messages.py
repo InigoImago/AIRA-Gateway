@@ -7,6 +7,7 @@ case's to its administrators — and an anomaly mail names no person, key or add
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
@@ -36,6 +37,9 @@ _CONCERNED = {
 }
 
 _SIGNATURE = "-- \nAIRA Gateway\n"
+
+#: The kinds of character a header line cannot hold: controls, line and paragraph separators.
+_NOT_IN_A_HEADER = frozenset({"Cc", "Zl", "Zp"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,11 +226,39 @@ def _tab(console_url: str, use_case: str, tab: str) -> str:
     return f"{base}/use-cases/{use_case}?tab={tab}" if base else ""
 
 
+def _one_line(value: str) -> str:
+    """``value`` as one header line: each control character, line and paragraph separator a space,
+    and each run of spaces one.
+
+    A use case is named by its administrators, through the console or the API, and a name with a
+    line break in it — a form feed and U+2028 count, as everywhere `str.splitlines` breaks — is
+    one the email package refuses in a header, so the mail could not be built at all.
+    """
+    spaced = "".join(
+        " " if unicodedata.category(character) in _NOT_IN_A_HEADER else character
+        for character in value
+    )
+    return " ".join(spaced.split())
+
+
+def _address(value: str) -> str:
+    """``value`` as a recipient's address, or :class:`ValueError` where it is not one line.
+
+    Text is folded onto one line and says the same; an address is not text. A line break between
+    two addresses, folded, leaves one header naming both — a mail to somebody nobody chose. So the
+    directory's address is taken as it is or not at all, and the notifier counts the refusal
+    against this recipient alone.
+    """
+    if _one_line(value) != value:
+        raise ValueError("the address is not one line")
+    return value
+
+
 def _message(sender: str, to: Recipient, subject: str, lines: list[str]) -> EmailMessage:
     message = EmailMessage()
-    message["From"] = sender
-    message["To"] = to.address
-    message["Subject"] = subject
+    message["From"] = _one_line(sender)
+    message["To"] = _address(to.address)
+    message["Subject"] = _one_line(subject)
     message["Date"] = format_datetime(datetime.now().astimezone())
     message["Message-ID"] = make_msgid(domain="aira.invalid")
     # Not a person writing: an auto-reply to this would go nowhere useful.

@@ -158,11 +158,15 @@ class ModelViewSet(viewsets.ModelViewSet[Model]):
         The releases cascade here, while the gateway keeps its own copy of each use case's list:
         unannounced, a name catalogued again later would be callable there by every use case that
         once had it, and released nowhere on this console (`FRD-308`). A retired use case is not
-        announced, because an upsert after its retirement would bring it back.
+        announced, because an upsert after its retirement would bring it back. The ones announced
+        are held until this commits, so a retirement arriving meanwhile waits and follows the
+        announcement rather than preceding it; in slug order, so two deletions wait in turn.
         """
         with transaction.atomic():
             name = instance.name
-            releasing = list(instance.use_cases.filter(deleted_at__isnull=True).order_by("slug"))
+            releasing = list(
+                instance.use_cases.live().select_for_update(of=("self",)).order_by("slug")
+            )
             instance.delete()
             emit("model.deleted", {"name": name})
             for usecase in releasing:

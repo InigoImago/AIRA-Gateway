@@ -9,8 +9,10 @@ the ones asking `/readyz`. With PyJWT's default timeout — nothing was passed �
 was thirty seconds.
 
 Two halves, and this file is about the one a shorter timeout cannot substitute for. It measures
-concurrency rather than asserting that `asyncio.to_thread` appears in the source, because the
-second would pass against a `to_thread` that is awaited before the work it was meant to move.
+concurrency rather than asserting that a hand-off to a thread appears in the source, because the
+second would pass against a hand-off that is awaited before the work it was meant to move. Which
+threads — the validation's own, not the loop's default executor — is
+`test_a_hanging_identity_provider_holds_up_nobody_else.py`.
 """
 
 from __future__ import annotations

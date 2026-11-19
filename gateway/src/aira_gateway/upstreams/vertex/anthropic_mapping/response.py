@@ -461,6 +461,13 @@ class MessageAssembler:
             raise UpstreamError("The model provider ended the answer before it was complete.", 502)
         return {**self._message, "content": [self._blocks[i] for i in sorted(self._blocks)]}
 
+    def spent(self) -> CanonicalUsage | None:
+        """What the provider has reported using so far — its running totals, the input whole from
+        `message_start` on — or ``None`` before it reported anything."""
+        if self._message is None:
+            return None
+        return usage_of(self._message.get("usage"))
+
     def _delta(self, index: int, delta: dict[str, Any]) -> None:
         block = self._blocks.setdefault(index, {})
         kind = delta.get("type")

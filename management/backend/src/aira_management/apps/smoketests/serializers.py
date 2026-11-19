@@ -6,8 +6,15 @@ from collections.abc import Iterable
 from typing import Any
 
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from aira_management.apps.smoketests.models import TestCase, TestResult, TestRun
+
+#: Why a position is refused: the catalogue holds one live question per position.
+POSITION_TAKEN = (
+    "Another question in the catalogue holds this position. Choose a free one, or leave the "
+    "position out to append the question."
+)
 
 
 def verdict_counts(results: Iterable[TestResult]) -> dict[str, int]:
@@ -29,6 +36,18 @@ class TestCaseSerializer(serializers.ModelSerializer[TestCase]):
         #: check over two fields: it fills an omitted position with its default, so the view's
         #: append never happens, and it refuses under `non_field_errors` instead of `position`.
         validators: list[Any] = []
+        #: That validator, written out: DRF builds none for a constraint with a condition, and a
+        #: move onto a taken position then reached the database's constraint. A question's own
+        #: position is not taken by itself, and a retired one's is free.
+        extra_kwargs = {
+            "position": {
+                "validators": [
+                    UniqueValidator(
+                        queryset=TestCase.objects.filter(retired=False), message=POSITION_TAKEN
+                    )
+                ]
+            }
+        }
 
 
 class TestResultSerializer(serializers.ModelSerializer[TestResult]):

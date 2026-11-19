@@ -62,7 +62,8 @@ one named person included. A use case's administrator could also leave the rung 
   holding `incident.investigate`.
 - **FR-3 — Content.** Every use case that stores content is treated as `oversight`, whatever its
   stored value. Management refuses saving `members` or `own` with `400`, and reports the effective
-  value. The console offers *Not stored* and *Oversight roles only*.
+  value; `oversight` sent back with a change of an existing use case is not stored over its own
+  choice, which FR-1 restores. The console offers *Not stored* and *Oversight roles only*.
 - **FR-4 — Figures per person.** `by_member` and `by_person` carry the caller's own row only unless
   the caller may see people — `report.read_all` no longer exempts. `person=` naming somebody else
   answers an empty report. The report says `people_limited` and `strict_data`.

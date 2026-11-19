@@ -21,6 +21,7 @@ from aira_gateway.core.canonical import (
     CanonicalEmbeddingRequest,
     CanonicalRequest,
     CanonicalResponse,
+    wire_name,
 )
 from aira_gateway.residency import check_region, parse_allowed
 from aira_gateway.upstreams.base import ModelNotListed, OfferedModel, UpstreamModel
@@ -178,29 +179,32 @@ class GeminiUpstream:
         offered = await self.available_models()
         if not model:
             return f"{len(offered)} model(s) listed" if offered else "endpoint answered"
-        if model not in {entry.name for entry in offered}:
+        # Looked for under the name Google knows, where the catalogue entry is an alias of it.
+        listed = wire_name(model, addressing)
+        if listed not in {entry.name for entry in offered}:
             raise ModelNotListed(
                 f"The endpoint answered, and its listing of {len(offered)} model(s) for this "
-                f"credential does not include '{model}'."
+                f"credential does not include '{listed}'."
             )
-        return f"{model} is listed"
+        return f"{listed} is listed"
 
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         data = await self._post(
-            _model_path(request.model, "generateContent"), canonical_to_gemini_request(request)
+            _model_path(wire_name(request.model, request.addressing), "generateContent"),
+            canonical_to_gemini_request(request),
         )
         return gemini_response_to_canonical(data, request.model)
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         # One embedding of several parts is `embedContent` too: Google combines them.
+        wire = wire_name(request.model, request.addressing)
         if request.size > 1 and not request.aggregate:
             data = await self._post(
-                _model_path(request.model, "batchEmbedContents"),
-                batch_embedding_body(request, request.model),
+                _model_path(wire, "batchEmbedContents"), batch_embedding_body(request, wire)
             )
         else:
             data = await self._post(
-                _model_path(request.model, "embedContent"), canonical_to_gemini_embedding(request)
+                _model_path(wire, "embedContent"), canonical_to_gemini_embedding(request)
             )
         return embedding_values(data)
 
@@ -209,7 +213,7 @@ class GeminiUpstream:
         async with (
             opened_stream(
                 self._client,
-                _model_path(request.model, "streamGenerateContent"),
+                _model_path(wire_name(request.model, request.addressing), "streamGenerateContent"),
                 NAME,
                 params={"alt": "sse"},
                 headers=self._headers(),

@@ -110,6 +110,8 @@ interface Options {
   catalogueFails?: boolean;
   confirm?: boolean;
   meFails?: boolean;
+  /** What `/v1/me` answers when it is asked again; the first answer by default. */
+  meLater?: Partial<Me>;
   /** What the server's catalogue lists; the shared one by default. */
   catalogue?: PermissionInfo[];
 }
@@ -182,9 +184,12 @@ function setup(options: Options = {}) {
       { provide: UseCaseService, useValue: service },
       {
         provide: MeService,
+        // As the real service behaves: `get` replays the first answer for as long as the page
+        // lives, and only `reload` asks the server again.
         useValue: {
           currency: signal(''),
           get: () => (options.meFails ? refused(500, 'Account service down.') : of(me)),
+          reload: () => of({ ...me, ...options.meLater }),
         },
       },
       {
@@ -654,6 +659,30 @@ describe('RolesPage (`FRD-614` FR-9)', () => {
     expect(html().querySelector('[role="status"].callout')?.textContent).toContain(
       'Controlling is deleted.',
     );
+  });
+
+  it('names a renamed role by its new name in the log, without a reload of the page', async () => {
+    // The log names a role as `/v1/me` names it today. Asked through `get`, which replays the
+    // answer the page started with, it kept the old name until the browser reloaded.
+    const renamed: RoleChange = {
+      id: 4,
+      role: 'controlling',
+      action: 'updated',
+      actor: 'admin',
+      at: '2026-09-13T10:15:00+00:00',
+      before: { label: 'Controlling', group_path: '/finance/controlling', permissions: [] },
+      after: { label: 'Controlling', group_path: '/finance/controlling', permissions: [] },
+    };
+    const { click, type, open, q } = setup({
+      changes: [of(page([])), of(page([renamed]))],
+      meLater: { role_labels: { ...LABELS, controlling: 'Controlling & Finance' } },
+    });
+    await open('controlling');
+    await click('edit-role');
+    await type('role-label', 'Controlling & Finance');
+    await click('save-role');
+
+    expect(q('change-role')?.textContent?.trim()).toBe('Controlling & Finance');
   });
 
   it('deletes nothing when the question is declined', async () => {

@@ -12,9 +12,9 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
 
-from aira_gateway.core.canonical import CanonicalChunk
+from aira_gateway.core.canonical import CanonicalChunk, CanonicalUsage
 from aira_gateway.residency import RegionNotAllowed
-from aira_gateway.upstreams.base import AmbiguousModel, UpstreamError
+from aira_gateway.upstreams.base import AmbiguousModel, UpstreamError, added, read_opening
 from aira_gateway.upstreams.exchange import sse_payloads
 from aira_gateway.upstreams.vertex.transport import NAME, VertexTransport
 
@@ -102,6 +102,8 @@ def _declared_regions(addressing: dict[str, Any]) -> tuple[str, ...]:
 async def _across_regions[T](
     targets: tuple[tuple[str, str], ...],
     attempt: Callable[[str, str], Awaitable[T]],
+    *,
+    spent_with: Callable[[T, CanonicalUsage], T] | None = None,
 ) -> T:
     """Try each region in order, moving on only for a failure that is about the **place**.
 
@@ -109,17 +111,28 @@ async def _across_regions[T](
     move on; anything else — a malformed request, a bad credential, an answer — is identical in
     every region and propagates. When every region fails, the **last** failure is raised, so the
     caller learns where the chain ended rather than that nothing was tried.
+
+    **What a failed region reported using is spent all the same** (`UpstreamError.spent`): its
+    vendor bills it. The failure raised carries what every region before it reported, and the
+    answer of a region that served carries it too, where ``spent_with`` says how to add it — the
+    same model, at the same price, so the regions' attempts are one request's cost.
     """
     last: Exception | None = None
+    spent: CanonicalUsage | None = None
     for region, publisher in targets:
         try:
-            return await attempt(region, publisher)
+            answer = await attempt(region, publisher)
         except RegionNotAllowed as exc:
             last = exc
         except UpstreamError as exc:
+            spent = exc.spent = added(spent, exc.spent)
             if exc.status_code not in REGION_FAILOVER_STATUSES:
                 raise
             last = exc
+        else:
+            if spent is not None and spent_with is not None:
+                return spent_with(answer, spent)
+            return answer
     if last is not None:
         raise last
     # Unreachable through `_targets`, which refuses an empty list by name.
@@ -133,13 +146,17 @@ async def _open_stream(
     reader: Callable[[], ChunkReader],
     region: str,
 ) -> AsyncGenerator[CanonicalChunk]:
-    """Open a streamed call in ``region`` and return an iterator over its chunks.
+    """Open a streamed call in ``region``, read it **until its answer begins**, and return an
+    iterator over its chunks.
 
-    Split from the iteration on purpose — the split **is** the failover boundary. Everything that
-    can go wrong about a region goes wrong while opening, before any byte reaches the caller; once
-    this returns, the stream is committed. ``reader`` is called once per attempt, so a stateful
-    reader never carries half a tool call into another region's response. The stream is closed by
-    the iterator's ``finally``.
+    Split from the rest of the iteration on purpose — the split **is** the failover boundary.
+    Everything that can go wrong about a region before the answer begins goes wrong in here, and
+    nothing of it has reached the caller: a refused status, an error the provider sends inside its
+    `200` before the first word — Anthropic's `overloaded_error` after `message_start`, Google's
+    in-band `503` — a body that is no event stream (`exchange.sse_payloads`). Once this returns,
+    the stream is committed. ``reader`` is called once per attempt, so a stateful reader never
+    carries half a tool call into another region's response. The stream is closed by the
+    iterator's ``finally``, or here, when the opening fails.
 
     The first chunk names the region that opened the stream (`CanonicalChunk.served_region`): the
     streamed answer's residency evidence, exactly as `generate` reports where it was answered.
@@ -149,18 +166,33 @@ async def _open_stream(
     read = reader()
 
     async def chunks() -> AsyncGenerator[CanonicalChunk]:
-        located = False
         try:
             async with aclosing(sse_payloads(response, NAME)) as payloads:
                 async for payload in payloads:
                     chunk = read(payload)
-                    if chunk is None:
-                        continue
-                    if not located:
-                        chunk = chunk.model_copy(update={"served_region": region})
-                        located = True
-                    yield chunk
+                    if chunk is not None:
+                        yield chunk
         finally:
             await context.__aexit__(None, None, None)
 
-    return chunks()
+    stream = chunks()
+    try:
+        opening = await read_opening(stream)
+    except BaseException:
+        await stream.aclose()
+        raise
+    return _located(opening, stream, region)
+
+
+async def _located(
+    opening: list[CanonicalChunk], rest: AsyncGenerator[CanonicalChunk], region: str
+) -> AsyncGenerator[CanonicalChunk]:
+    """What ``region``'s stream said while it was opened, the first chunk naming ``region``, then
+    the rest of it — closed with this iterator, which a caller who stops reading closes."""
+    try:
+        for index, chunk in enumerate(opening):
+            yield chunk.model_copy(update={"served_region": region}) if index == 0 else chunk
+        async for chunk in rest:
+            yield chunk
+    finally:
+        await rest.aclose()

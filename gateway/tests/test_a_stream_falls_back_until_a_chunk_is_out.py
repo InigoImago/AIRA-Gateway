@@ -473,6 +473,19 @@ async def test_a_caller_who_stops_reading_closes_the_stream_that_answered() -> N
     assert answering.closed, "the adapter's stream outlived the caller who was reading it"
 
 
+async def test_a_caller_who_never_began_reading_closes_the_stream_that_answered() -> None:
+    """The same release when the wrapper is closed **before its first read** — a caller gone while
+    the response's headers were on their way. The chain has already read the adapter's opening, so
+    its response is open; and closing an async generator that never started runs none of its body,
+    a `finally` included. The wrapper must release what it holds whether or not it was read."""
+    answering = _Server("primary-1")
+    streamed = await stream_with_fallback(ProviderRegistry([answering]), _request(), ())
+
+    await streamed.chunks.aclose()  # type: ignore[attr-defined]
+
+    assert answering.closed, "the adapter's stream outlived a caller who never read from it"
+
+
 # == the governance half, through the surface =====================================================
 
 

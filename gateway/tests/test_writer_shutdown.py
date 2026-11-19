@@ -89,7 +89,7 @@ async def test_a_dead_worker_does_not_hang_the_shutdown() -> None:
         await worker
 
     for index in range(3):
-        writer._queue.put_nowait(_entry(f"orphan-{index}"))
+        writer._queue.put_nowait((_entry(f"orphan-{index}"), 0))
 
     async with asyncio.timeout(5):
         await writer.stop()
@@ -119,7 +119,7 @@ async def test_a_failing_write_during_shutdown_does_not_stop_the_rest() -> None:
         await worker
 
     for operation in ("good-1", "bad", "good-2"):
-        writer._queue.put_nowait(_entry(operation))
+        writer._queue.put_nowait((_entry(operation), 0))
 
     async with asyncio.timeout(5):
         await writer.stop()

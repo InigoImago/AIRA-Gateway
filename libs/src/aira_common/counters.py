@@ -71,6 +71,17 @@ class CountersUnavailable(RuntimeError):
     """Redis could not be reached. The caller decides what that means for its feature."""
 
 
+class CountersNotAsked(CountersUnavailable):
+    """The store was not asked at all — none is configured, or one failed a moment ago and is not
+    tried again yet — so nothing the call would have sent can have taken effect there. Told apart
+    from a call that failed on its way, whose script may have run with only its reply lost."""
+
+
+class CountersNotConfigured(CountersNotAsked):
+    """No counter store is configured. The same fallback as an outage, and no failure: running
+    without Redis is the installation's choice, so it is not reported as one."""
+
+
 class DegradationLog:
     """What each feature has most recently experienced from the shared counter store.
 
@@ -83,13 +94,19 @@ class DegradationLog:
     def __init__(self) -> None:
         self._degraded: dict[str, str] = {}
 
-    def working(self, feature: str) -> None:
-        """Record that ``feature`` reached the counter store."""
+    def working(self, feature: str) -> bool:
+        """Record that ``feature`` reached the counter store — and return whether that is news, the
+        feature having been on its fallback until now, so a caller says so once and not per call."""
+        recovered = feature in self._degraded
         self._degraded.pop(feature, None)
+        return recovered
 
-    def degraded(self, feature: str, detail: str) -> None:
-        """Record that ``feature`` fell back, and what that costs while it lasts."""
+    def degraded(self, feature: str, detail: str) -> bool:
+        """Record that ``feature`` fell back, and what that costs while it lasts — and return
+        whether that is news, the feature having worked until now."""
+        fell_back = feature not in self._degraded
         self._degraded[feature] = detail
+        return fell_back
 
     @property
     def features(self) -> dict[str, str]:
@@ -115,11 +132,11 @@ class DisabledRunner:
     """Used when no Redis is configured. Every call reports unavailability immediately.
 
     Not an error state: an installation may run without Redis, and every caller then takes its
-    documented fallback quietly.
+    documented fallback quietly — which :class:`CountersNotConfigured` lets it tell apart.
     """
 
     async def run(self, script: str, keys: Sequence[str], args: Sequence[ScriptArg]) -> Any:
-        raise CountersUnavailable("No counter store is configured.")
+        raise CountersNotConfigured("No counter store is configured.")
 
     async def close(self) -> None:
         return None
@@ -150,6 +167,9 @@ class RedisRunner:
         self._client: Any | None = None
         self._scripts: dict[str, Any] = {}
         self._unavailable_until = 0.0
+        #: Whether the last call failed: an outage is logged where it begins and where it ends, not
+        #: by every call that meets it.
+        self._failing = False
 
     def _connect(self) -> Any:
         if self._client is None:
@@ -193,7 +213,7 @@ class RedisRunner:
     async def run(self, script: str, keys: Sequence[str], args: Sequence[ScriptArg]) -> Any:
         now = self._clock()
         if now < self._unavailable_until:
-            raise CountersUnavailable("Counter store is in a failed state; not retrying yet.")
+            raise CountersNotAsked("Counter store is in a failed state; not retrying yet.")
         try:
             # Watched per call, successes included: how slowly Redis answers is the question
             # (`FRD-617` §3.3).
@@ -208,8 +228,13 @@ class RedisRunner:
             raise
         except Exception as exc:  # redis errors, DNS, timeouts — all mean "not usable right now"
             self._unavailable_until = self._clock() + RETRY_AFTER_FAILURE_SECONDS
-            _log.warning("counters_unavailable", error=str(exc), error_type=type(exc).__name__)
+            if not self._failing:
+                self._failing = True
+                _log.warning("counters_unavailable", error=str(exc), error_type=type(exc).__name__)
             raise CountersUnavailable(str(exc)) from exc
+        if self._failing:
+            self._failing = False
+            _log.info("counters_available")
         self._unavailable_until = 0.0
         return result
 

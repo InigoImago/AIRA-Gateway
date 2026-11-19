@@ -153,7 +153,11 @@ def test_a_group_that_already_confers_a_role_is_refused(directory) -> None:
 
 def test_the_reserved_permission_and_an_unknown_one_are_refused(directory) -> None:
     admin = _admin()
-    assert _create(admin, permissions=["role.manage"]).status_code == 400
+    reserved = _create(admin, permissions=["role.manage"])
+    assert reserved.status_code == 400
+    # Refused as reserved, by its own reason: strict data mode withholds more, and its refusal of
+    # the same permission would otherwise stand in for this one.
+    assert "Global Administrator alone" in str(reserved.json()["error"]["details"])
     assert _create(admin, permissions=["no.such.thing"]).status_code == 400
     assert not StoredRole.objects.filter(builtin=False).exists()
 
@@ -395,6 +399,87 @@ def test_a_name_taken_while_the_group_was_being_checked_is_named_as_the_name(
 
     assert response.status_code == 400, response.content
     assert "label" in response.json()["error"]["details"]
+
+
+def _controlling() -> StoredRole:
+    return StoredRole.objects.create(
+        slug="controlling",
+        label="Controlling",
+        group_path="/finance/controlling",
+        permissions=["report.read_all"],
+    )
+
+
+def test_a_role_edit_racing_its_deletion_does_not_bring_the_role_back(
+    directory: dict[str, bool], captured: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deletion commits after the edit read the role. Saved, the copy it read was *inserted*
+    again — Django creates a row it no longer finds — so the deleted role's group conferred it once
+    more, and the gateway heard of it after its removal. Refused as a moment later would be."""
+    del directory
+    from aira_management.apps.roles import views as role_views
+
+    _controlling()
+    labelled = role_views._label
+
+    def a_colleague_deletes_it_first(raw: Any) -> str:
+        colleague = _client(_user("colleague", "global-admin"))
+        assert colleague.delete(f"{BASE}controlling/").status_code == 204
+        return labelled(raw)
+
+    monkeypatch.setattr(role_views, "_label", a_colleague_deletes_it_first)
+
+    response = _admin().patch(f"{BASE}controlling/", {"label": "Controlling EU"}, format="json")
+
+    assert response.status_code == 404, response.content
+    assert not StoredRole.objects.filter(slug="controlling").exists()
+    assert [kind for kind, _ in captured if kind.startswith("role.")] == ["role.removed"]
+    assert list(RoleChange.objects.values_list("action", flat=True)) == [RoleChange.DELETED]
+
+
+def test_a_role_deleted_twice_at_once_is_deleted_and_recorded_once(
+    directory: dict[str, bool], captured: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both requests found the role. The second answers as a moment later would — not with a server
+    error looking for the row, and not with a second deletion in the change log and on the wire."""
+    del directory
+    from aira_management.apps.roles import views as role_views
+
+    _controlling()
+    found = role_views.RoleViewSet._definition
+    asked: list[str] = []
+
+    def a_colleague_deletes_it_meanwhile(view: Any, slug: str) -> Any:
+        role = found(view, slug)
+        if not asked:
+            asked.append(slug)
+            colleague = _client(_user("colleague", "global-admin"))
+            assert colleague.delete(f"{BASE}controlling/").status_code == 204
+        return role
+
+    monkeypatch.setattr(role_views.RoleViewSet, "_definition", a_colleague_deletes_it_meanwhile)
+
+    response = _admin().delete(f"{BASE}controlling/")
+
+    assert response.status_code == 404, response.content
+    assert [kind for kind, _ in captured if kind.startswith("role.")] == ["role.removed"]
+    assert list(RoleChange.objects.values_list("action", flat=True)) == [RoleChange.DELETED]
+
+
+def test_a_change_to_a_role_holds_its_row_until_it_is_saved(
+    directory: dict[str, bool], row_locks: list[str]
+) -> None:
+    """The half of the two properties above only PostgreSQL can show: an edit and a deletion each
+    read the row they write under a lock, so the second waits for the first and then sees it."""
+    del directory
+    _controlling()
+    admin = _admin()
+    row_locks.clear()
+
+    assert admin.patch(f"{BASE}controlling/", {"label": "EU"}, format="json").status_code == 200
+    assert admin.delete(f"{BASE}controlling/").status_code == 204
+
+    assert row_locks.count("roles.StoredRole") == 2
 
 
 def test_a_group_path_longer_than_its_column_is_refused_before_anybody_is_asked(

@@ -27,6 +27,7 @@ from aira_management.apps.usecases.views.payloads import _snapshot
 from django.apps import apps
 from django.core.management import call_command
 from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
 from django.utils import timezone
 
 pytestmark = pytest.mark.django_db
@@ -40,6 +41,20 @@ MIGRATION = importlib.import_module(
 #: holds exactly that value: a field added later whose default differs needs an announcement of its
 #: own, and belongs here only once it has one.
 ADDED_SINCE = {"budget_mail_thresholds": [100], "mail_admins_on_anomalies": True}
+
+
+def _upgrade() -> None:
+    """Forwards to the head of **every** app, as an upgrade runs it.
+
+    Migrating `usecases` back also took back the later migrations of the apps that depend on it —
+    `pipelines`, `catalog` — and `migrate usecases` brings back only what `usecases` itself
+    depends on. Those were left unapplied for every test that came after, which then failed on a
+    missing column, in whichever order the suite happened to run.
+    """
+    call_command("migrate", verbosity=0)
+    executor = MigrationExecutor(connection)
+    unapplied = executor.migration_plan(executor.loader.graph.leaf_nodes())
+    assert not unapplied, f"the upgrade left migrations unapplied: {unapplied}"
 
 
 # Off, because the migration is history: it ran once, with its own frozen copy of the event, and
@@ -105,7 +120,7 @@ def test_a_restriction_survives_the_upgrade_that_replaces_its_field() -> None:
         cursor.execute(insert, ["restricted", "R", True])
         cursor.execute(insert, ["open", "O", False])
 
-    call_command("migrate", "usecases", verbosity=0)
+    _upgrade()
 
     visibilities = dict(UseCase.objects.values_list("slug", "payload_visibility"))
     assert visibilities == {"restricted": "own", "open": "members"}
@@ -132,6 +147,6 @@ def test_reasoning_was_switched_on_for_the_use_cases_that_predate_it() -> None:
             "        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
 
-    call_command("migrate", "usecases", verbosity=0)
+    _upgrade()
 
     assert UseCase.objects.get(slug="older").include_reasoning is True

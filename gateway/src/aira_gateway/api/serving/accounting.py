@@ -30,8 +30,9 @@ from aira_gateway.embedding import describe_vectors
 from aira_gateway.persistence.recorder import record_request
 from aira_gateway.pipeline.dispatch import passed_over_by
 from aira_gateway.shielding import uninterrupted
-from aira_gateway.state import budgets_of, pricing_of, settings_of
+from aira_gateway.state import budgets_of, drains_of, pricing_of, settings_of
 from aira_gateway.technical import technical_of
+from aira_gateway.upstreams.base import UpstreamError
 
 _log = get_logger("aira_gateway")
 
@@ -220,41 +221,59 @@ async def accounting(
       `hold` released the reservation the settle was about to book — resolving it twice.
     - Nothing produced means the reservation is released, not settled, so a caller who hung up or
       an upstream outage never consumes a request limit.
+    - The request is **counted from here until its row is handed over** (`Drains`): a stopping
+      server cancels every request still running once its grace period is over, and waits for
+      their exits before it closes what they need — the writer, the counters, the vendors' clients.
     """
     state = Accounting(model=prepared.model, trail=trail)
     # For the refusal boundary, which writes the row of a refusal raised in here: what was spent
     # before it belongs on that row.
     request.state.accounted = state
     record = True
-    # Inside `hold`, not around it: outside, `hold` would release the reservation on the way out
-    # and the settle would book it a second time.
-    async with budgets_of(request).hold(prepared.reservation):
-        try:
-            yield state
-        except asyncio.CancelledError, GeneratorExit:
-            # The caller left: nobody else will write a row, so this exit must.
-            technical_of(request).mark("caller_left")
-            raise
-        except REFUSALS:
-            record = False
-            raise
-        except BaseException as exc:
-            state.failed(500, Outcome.INTERNAL_ERROR)
-            technical_of(request).failed(exc)
-            raise
-        finally:
-            await uninterrupted(
-                _settle_and_record(
-                    request,
-                    trail,
-                    prepared,
-                    state,
-                    api=api,
-                    operation=operation,
-                    started=started,
-                    record=record,
+    with drains_of(request).held():
+        # Inside `hold`, not around it: outside, `hold` would release the reservation on the way
+        # out and the settle would book it a second time.
+        async with budgets_of(request).hold(prepared.reservation):
+            try:
+                yield state
+            except asyncio.CancelledError, GeneratorExit:
+                # The caller left: nobody else will write a row, so this exit must.
+                technical_of(request).mark("caller_left")
+                raise
+            except REFUSALS as exc:
+                record = False
+                _spent_before_failing(exc, state)
+                raise
+            except BaseException as exc:
+                state.failed(500, Outcome.INTERNAL_ERROR)
+                technical_of(request).failed(exc)
+                raise
+            finally:
+                await uninterrupted(
+                    _settle_and_record(
+                        request,
+                        trail,
+                        prepared,
+                        state,
+                        api=api,
+                        operation=operation,
+                        started=started,
+                        record=record,
+                    )
                 )
-            )
+
+
+def _spent_before_failing(error: Exception, state: Accounting) -> None:
+    """What the provider had reported using when it failed (`UpstreamError.spent`), settled as the
+    floor it is (`UsageBasis.PARTIAL`): a Claude answer that broke off after `message_start` was
+    billed for its input, an embedding batch for the texts before the one that failed. Priced as
+    the model that failed — for a chain, the last one tried — and carried by the refusal's row.
+    """
+    if not isinstance(error, UpstreamError) or error.spent is None or state.produced:
+        return
+    chain = passed_over_by(error)
+    state.spent(chain.failed[-1].model if chain and chain.failed else state.model, error.spent)
+    state.usage_basis = UsageBasis.PARTIAL
 
 
 async def _settle_and_record(
@@ -271,10 +290,14 @@ async def _settle_and_record(
     model = state.model or prepared.model
     cost: int | None = None
     technical = technical_of(request)
-    if state.produced and not technical.reached("provider_first_chunk"):
+    if (
+        state.produced
+        and state.usage_basis is not UsageBasis.PARTIAL
+        and not technical.reached("provider_first_chunk")
+    ):
         # An answer read whole has no first chunk of its own: it arrived, finished, just now. A
         # stream marked both as it read them — or never saw its end, which is no reason to claim
-        # one now.
+        # one now, and neither is an answer that broke off with its usage reported.
         technical.mark("provider_finished")
     try:
         if state.unreported is not None and not state.produced:
@@ -356,12 +379,13 @@ async def _count_what_was_left(request: Request, state: Accounting) -> None:
 async def release_reservation(request: Request) -> None:
     """Give back an allowance reserved for a request that was never dispatched.
 
-    `accounting`'s `hold` covers every refusal raised **inside** the block. This covers the window
-    before it: the allowance is reserved at the end of the pre-dispatch sequence (`FRD-126`), and
-    anything refused between that point and dispatch used to keep it until it expired — a streamed
-    request whose chain had nothing left to offer (`FRD-302` FR-6a), an embedding whose model is
-    not released, a model the catalogue cannot address. Rare one at a time, and an outage is not
-    one at a time: it is every request of that use case, each holding a slice of the month.
+    `accounting`'s `hold` covers every refusal raised **inside** the block, and every verb enters it
+    the moment the pre-dispatch sequence has reserved (`FRD-126`) — a stream before its chain is
+    opened (`StreamAccounting.dispatching`). This is the backstop for the window between the two,
+    where a refusal used to keep the allowance until it expired: a streamed request whose chain had
+    nothing left to offer (`FRD-302` FR-6a), an embedding whose model is not released. No verb
+    refuses there today; the next one written might, and an outage is not one at a time: it is
+    every request of that use case, each holding a slice of the month.
 
     Idempotent, because the ordinary path has already resolved the reservation and a refusal then
     reaches this as well. A failure here never replaces the refusal the caller is owed.

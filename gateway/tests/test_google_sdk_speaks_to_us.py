@@ -353,6 +353,75 @@ def test_the_json_array_ends_in_the_error_element(breaking_url: str) -> None:
     assert info["metadata"]["request_id"] == response.headers["x-aira-request-id"]
 
 
+# == an answer holding a character a line reader splits at =========================================
+
+#: An answer as text pasted from a word processor or a PDF often reads: a line separator, a
+#: paragraph separator and a next-line control, which JSON writes as they are and Python splits a
+#: line at.
+SEPARATED = "erste Zeile\u2028zweiter Absatz\u2029dritte\u0085Ende"
+
+
+class _Separates:
+    """A model whose answer holds every one of them."""
+
+    is_test_double = True
+
+    def models(self) -> list[UpstreamModel]:
+        return [
+            UpstreamModel(
+                "separates-1", "1", ("generateContent", "streamGenerateContent"), provider="test"
+            )
+        ]
+
+    async def generate(self, request):  # noqa: ANN001, ANN201
+        raise NotImplementedError
+
+    async def stream_generate(self, request):  # noqa: ANN001, ANN201
+        yield CanonicalChunk(text_delta=SEPARATED)
+        yield CanonicalChunk(
+            text_delta="",
+            finish_reason="stop",
+            usage=CanonicalUsage(prompt_tokens=1, completion_tokens=4),
+        )
+
+    async def embed(self, request):  # noqa: ANN001, ANN201
+        return [[0.0]]
+
+
+@pytest.fixture(scope="module")
+def separating_url() -> Iterator[str]:
+    app = _app()
+    app.state.providers = ProviderRegistry([_Separates()])
+    catalogued = ModelRead(model="separates-1", capabilities=["generate"], approved=True)
+    with _served(app, catalogued) as url:
+        yield url
+
+
+def test_the_sdk_reads_an_answer_that_holds_a_line_separator(separating_url: str) -> None:
+    """The SDK reads a stream line by line, with httpx's line reader, which ends a line wherever
+    Python's `splitlines` does — at U+2028, U+2029 and U+0085 too. Written as they are inside an
+    element, they cut it in two, and the SDK raises on the first half as JSON it cannot parse,
+    mid-answer. Escaped, the element stays on its line and the text arrives as the model wrote it.
+    Both of the SDK's readers: the synchronous one and the asynchronous one."""
+    client = genai.Client(
+        api_key="not-checked-here",
+        http_options=types.HttpOptions(base_url=separating_url, api_version="v1beta"),
+    )
+    read = "".join(
+        chunk.text or ""
+        for chunk in client.models.generate_content_stream(model="separates-1", contents="hallo")
+    )
+
+    async def read_async() -> str:
+        stream = await client.aio.models.generate_content_stream(
+            model="separates-1", contents="hallo"
+        )
+        return "".join([chunk.text or "" async for chunk in stream])
+
+    assert read == SEPARATED
+    assert asyncio.run(read_async()) == SEPARATED
+
+
 # == an attachment, as the SDK encodes it ==========================================================
 
 #: A PNG whose bytes fall on the two letters the base64 alphabets disagree about, so the SDK's

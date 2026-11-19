@@ -45,12 +45,21 @@ def new_id() -> str:
 #: before the first statement on every connection in the pool, including one the pool re-opens.
 _UTC_SESSION = {"options": "-c timezone=UTC"}
 
-#: What every engine is built with, whatever it connects to: its errors name the statement and not
-#: the values bound into it. SQLAlchemy writes those values into the text of a database error, and
-#: the places that log one log that text — a failed audit row would carry a subject, an address and
-#: the start of a prompt and its answer into a log that has no retention clock and no role gate
-#: (`FRD-406`), and a failed configuration event the values the consumer logs by name only.
-_ENGINE_OPTIONS: dict[str, Any] = {"hide_parameters": True}
+#: What every engine is built with, whatever it connects to.
+_ENGINE_OPTIONS: dict[str, Any] = {
+    # Its errors name the statement and not the values bound into it. SQLAlchemy writes those
+    # values into the text of a database error, and the places that log one log that text — a
+    # failed audit row would carry a subject, an address and the start of a prompt and its answer
+    # into a log that has no retention clock and no role gate (`FRD-406`), and a failed
+    # configuration event the values the consumer logs by name only.
+    "hide_parameters": True,
+    # A pooled connection is tried before it is handed out, and replaced if the server has closed
+    # it. A database restart, a failover or a proxy reaping idle connections leaves the pool
+    # holding dead ones, and without the test the next unit of work on each finds out by failing:
+    # the consumer's next event, the audit writer's next row, the next request. One round trip
+    # per checkout is the price.
+    "pool_pre_ping": True,
+}
 
 
 def build_engine(url: str) -> AsyncEngine:

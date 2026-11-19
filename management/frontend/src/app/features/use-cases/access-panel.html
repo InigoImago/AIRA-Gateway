@@ -89,7 +89,9 @@
           </li>
         }
       </ul>
-    } @else if (query().trim().length >= 2 && !searching() && !searchFailed()) {
+    } @else if (query().trim().length >= 2 && !searching() && !searchFailed() && !picked()) {
+      <!-- Not under a pick: choosing an entry closes the list and puts its name in the box, and
+           that is no answer about what matches. -->
       <p class="muted" style="margin: 0.4rem 0 0" data-testid="access-no-match">
         Nothing matches “{{ query() }}”.
         @if (source() === 'local') {

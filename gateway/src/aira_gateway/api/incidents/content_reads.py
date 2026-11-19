@@ -17,7 +17,7 @@ from sqlalchemy import ColumnElement, and_, func, or_, select
 from aira_common.permissions import Permission
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.incidents.common import router
-from aira_gateway.api.reporting.common import parse_cursor
+from aira_gateway.api.reporting.common import parse_cursor, refuse_control_characters
 from aira_gateway.auth.dependencies import require_principal
 from aira_gateway.auth.principal import Principal
 from aira_gateway.db.models import PayloadAccess
@@ -81,6 +81,7 @@ async def content_reads(
             "PERMISSION_DENIED",
         )
 
+    refuse_control_characters(use_case=use_case, reader=reader)
     # The filters without the cursor, so the total counts every page rather than what is left.
     if kind and kind not in ACCESS_KINDS:
         # Named, as every refused filter on this surface is: a filter that matched nothing would

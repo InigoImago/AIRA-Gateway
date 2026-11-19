@@ -39,6 +39,7 @@ from aira_gateway.api.serving import (
     REFUSALS,
     catalog_of,
     declared_model,
+    ensure_body_is_encodable,
     guard_before_work,
     json_body,
     record_pipeline_calls,
@@ -286,6 +287,9 @@ async def dry_run(
         body = await json_body(request)
     except ValueError:
         return _error(400, "Request body is not valid JSON.", "INVALID_ARGUMENT")
+    # Before the schema: the pipeline is a mapping it does not type, and a value in it that nothing
+    # can encode would reach a model call as our 500 rather than the caller's 400.
+    ensure_body_is_encodable(body)
     try:
         payload = DryRunRequest.model_validate(body)
     except ValidationError as exc:

@@ -320,7 +320,9 @@ In words, and the order is the point:
    was given, and the request's technical record — when each step was reached, what reached the
    caller, and the codes the provider and the connection gave — which is where a technician looks
    first.
-9. **The answer is rendered** in whichever dialect the caller used.
+9. **The answer is sent** in whichever dialect the caller used. It is built before the reservation
+   is settled and the row written, so an answer that cannot be written is recorded as the `500` its
+   caller got rather than as served; a stream is written as it arrives.
 
 Typical cost of all of this, measured: **48 ms of gateway CPU** for a chat request, **93 ms** for
 an agentic one, against a model that takes seconds ([`DEPLOYMENT.md`](DEPLOYMENT.md) §1a).
@@ -353,9 +355,11 @@ delay is whatever schedule runs it — every ten seconds in the Compose stack �
 plus the gateway's caches of grants, roles, rate limits and suspensions, five seconds each.
 
 The event is written in the same database transaction as the change it describes, so no event
-exists for a change that rolled back and none is lost for one that committed. While Kafka is
-unreachable, changes wait in the outbox and the gateway serves on the read-model it holds; neither
-plane leaves rotation over it (§6).
+exists for a change that rolled back and none is lost for one that committed. On the gateway's
+side, an event its database cannot take at the moment — restarting, failing over — is held and
+tried again until it applies, and the consumer moves past an event only once it was applied or
+skipped for what it carries. While Kafka is unreachable, changes wait in the outbox and the gateway
+serves on the read-model it holds; neither plane leaves rotation over it (§6).
 
 **One deliberate exception.** The incident kill switch is written straight to the gateway. A
 control that depends on the event bus fails exactly when the bus is the problem.
@@ -895,7 +899,9 @@ answers after each use case's period (default 7 days) and keeps the rows, unless
 bucket (bounding, not fail-open) and budgets to the Postgres path (enforcing but racy); `/readyz`
 answers 200 with `degraded: true`, and the degradation is frozen onto each audit row so a request
 can be read in the light of the conditions it met. **Postgres alone decides readiness, on both
-planes.** Kafka is reported (`required: false`) and, when no broker answers, only sets `degraded`:
+planes.** The gateway tests a pooled connection before it hands it out, so a database that
+restarted or failed over costs it no request, configuration event or audit row once it answers
+again. Kafka is reported (`required: false`) and, when no broker answers, only sets `degraded`:
 the gateway serves on the read-model it holds and Management's changes wait in its outbox, so a bus
 outage costs configuration changes, not traffic. A cluster counts as reachable while any broker
 answers.
@@ -1048,7 +1054,17 @@ Two details worth knowing:
   and then verified properly against that realm. Each realm brings its own audience and keys. The
   Management API trusts exactly one realm.
 - **Verification costs no round trip.** The only network call is fetching the signing keys, and that
-  answer is cached and shared by every request.
+  answer is cached for five minutes and shared by every request. One request at a time fetches it
+  again; the others are verified against the keys already held meanwhile.
+- **An identity provider that is down or hangs holds up only its own tokens.** When the keys cannot
+  be fetched — refused, timed out, or answered with something that is not a key set — the last set
+  fetched keeps verifying for up to an hour, and the fetch is retried after a second, doubling to
+  thirty, rather than by every request. A key the provider withdrew during that hour is still
+  accepted until it ends; a set the provider *answers* replaces the kept one at once. With no set
+  held, a request waits for the one fetch under way and no longer than its timeout, and between
+  retries it is refused at once. In the gateway, tokens are verified on a few threads of their own,
+  so a fetch that hangs delays neither API-key requests, nor the audit trail, nor the readiness
+  check.
 
 ### 8.4 From groups to permissions — why roles are not in the token
 

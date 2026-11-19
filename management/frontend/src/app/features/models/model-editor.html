@@ -1041,7 +1041,7 @@
               data-testid="model-long-input-price"
               inputmode="decimal"
               [ngModel]="longInputPrice()"
-              (ngModelChange)="longInputPrice.set($event)"
+              (ngModelChange)="typeLongPrice('input', $event)"
               autocomplete="off"
             />
           </div>
@@ -1053,7 +1053,7 @@
               data-testid="model-long-output-price"
               inputmode="decimal"
               [ngModel]="longOutputPrice()"
-              (ngModelChange)="longOutputPrice.set($event)"
+              (ngModelChange)="typeLongPrice('output', $event)"
               autocomplete="off"
             />
           </div>
@@ -1065,7 +1065,7 @@
               data-testid="model-long-cached-price"
               inputmode="decimal"
               [ngModel]="longCachedPrice()"
-              (ngModelChange)="longCachedPrice.set($event)"
+              (ngModelChange)="typeLongPrice('cached_input', $event)"
               autocomplete="off"
             />
           </div>
@@ -1077,7 +1077,7 @@
               data-testid="model-long-cache-write-price"
               inputmode="decimal"
               [ngModel]="longCacheWritePrice()"
-              (ngModelChange)="longCacheWritePrice.set($event)"
+              (ngModelChange)="typeLongPrice('cache_write', $event)"
               autocomplete="off"
             />
           </div>

@@ -53,7 +53,8 @@ def budgets_of(request: Request) -> BudgetService:
 
 
 def drains_of(request: Request) -> Drains:
-    """The streams still being read after their caller left, and what stops them (`ADR-0041`)."""
+    """The requests being accounted for, which a stopping server waits for, and what stops the
+    streams still read after their caller left (`ADR-0041`)."""
     drains: Drains = request.app.state.drains
     return drains
 

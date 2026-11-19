@@ -237,7 +237,9 @@ class ReportingService:
             totals = await self._totals(session, scope, start, end, person)
             # `people_limited_to` applies to the two splits **keyed on a human** and to nothing
             # else: `by_member` by credential subject, `by_person` by name (`FRD-606`). Both, or
-            # the same figures reappear one column over.
+            # the same figures reappear one column over. Where it is not set, `person` narrows them
+            # as it narrows every other figure: a split by member beside one person's totals must
+            # not be the whole use case.
             grouped = {
                 name: await self._grouped(
                     session,
@@ -245,7 +247,7 @@ class ReportingService:
                     start,
                     end,
                     column,
-                    people_limited_to if about_people else person,
+                    (people_limited_to or person) if about_people else person,
                 )
                 for name, column, about_people in (
                     ("use_case", RequestLog.use_case, False),

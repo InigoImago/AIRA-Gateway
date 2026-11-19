@@ -17,7 +17,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from aira_common.errors import ErrorDetail, ErrorResponse
 from aira_common.logging import get_logger
 from aira_common.observability import trace_context_fields
-from aira_gateway.api.gemini.errors import GeminiHTTPError, gemini_error_response
+from aira_gateway.api.gemini.errors import (
+    GeminiHTTPError,
+    gemini_error_response,
+    internal_error_response,
+)
 from aira_gateway.api.gemini.refusals import refusal_response as gemini_refusal
 from aira_gateway.api.kira import is_kira_path
 from aira_gateway.api.kira.errors import VALIDATION_ERROR as KIRA_VALIDATION_ERROR
@@ -47,6 +51,12 @@ GEMINI_BASE = "/v1beta"
 #: `INVALID_ARGUMENT` is its word for "fix the request".
 _KIRA_ROUTING_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
 _AIRA_ROUTING_CODES = {404: "not_found", 405: "method_not_allowed"}
+
+#: The header an unhandled error's answer carries, saying the connection ends with it. It does end:
+#: the exception goes on to the server after this answer, and the server closes the connection. A
+#: client not told so — every SDK's pool, and a proxy's pool of connections to this gateway — puts
+#: the connection back, and the next request sent on it fails with a reset that never reached here.
+CONNECTION_CLOSES = {"connection": "close"}
 
 _log = get_logger("aira_gateway")
 
@@ -156,7 +166,8 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     `ServerErrorMiddleware`, outside the whole stack. So what the middleware adds to every other
     response is added here, from its own definitions rather than second copies that could drift:
     the security headers, the trace id — which the log line below carries, and a failure is what
-    somebody quotes it for (`FRD-117` FR-4) — the KIRA surface's headers, and the CORS headers.
+    somebody quotes it for (`FRD-117` FR-4) — the KIRA surface's headers, and the CORS headers. And
+    one only this response needs: that the connection ends with it (`CONNECTION_CLOSES`).
     """
     # A bug between the reservation and the accounting block would otherwise hold a slice of the
     # use case's month until it expired; `accounting` records the row for the failures it sees.
@@ -176,9 +187,7 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
         response = kira_error_response(500, kira_code_for_status(500), "Internal server error.")
         response.headers.update(surface_headers(request))
     elif _gemini(request):
-        response = gemini_error_response(
-            500, "Internal error while processing the request.", "INTERNAL"
-        )
+        response = internal_error_response()
     else:
         envelope = ErrorResponse(
             error=ErrorDetail(code="internal_error", message="Internal server error.")
@@ -189,6 +198,7 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     trace_id = trace_context_fields().get("trace_id")
     if trace_id:
         response.headers.setdefault(TraceIdMiddleware.HEADER.decode("ascii"), trace_id)
+    response.headers.update(CONNECTION_CLOSES)
     # And the cross-origin headers, or a browser reports a network error instead of this 500.
     await apply_cors(request, response)
     return response

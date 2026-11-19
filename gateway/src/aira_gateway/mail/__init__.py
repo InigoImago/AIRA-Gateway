@@ -7,6 +7,6 @@ notifier    the background round that owes and sends them
 """
 
 from aira_gateway.mail.notifier import MailNotifier, build_notifier
-from aira_gateway.mail.transport import MailUndeliverable, SmtpRelay
+from aira_gateway.mail.transport import MailUndeliverable, RelayUnavailable, SmtpRelay
 
-__all__ = ["MailNotifier", "MailUndeliverable", "SmtpRelay", "build_notifier"]
+__all__ = ["MailNotifier", "MailUndeliverable", "RelayUnavailable", "SmtpRelay", "build_notifier"]

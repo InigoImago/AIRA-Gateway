@@ -24,7 +24,7 @@ import {
   ThinkingModeName,
 } from '../../core/api/models';
 import { errorMessage } from '../../core/api/error-message';
-import { displayCount } from '../../core/ui/money';
+import { ambiguousAmount, displayCount } from '../../core/ui/money';
 import { MeService, perMillion } from '../../core/api/me.service';
 import { Provenance, UseCaseService } from '../../core/api/use-case.service';
 import { InfoHint } from '../../core/ui/info-hint';
@@ -82,6 +82,9 @@ interface PriceSource {
 
 const PRICE_FIELDS: readonly PriceField[] = ['input', 'output', 'cached_input', 'cache_write'];
 
+/** A price field of the form: the four ordinary ones, and the same four above a prompt length. */
+type PriceKey = PriceField | `long_${PriceField}`;
+
 /** A list price at the installation's rate, to the catalog's six places. Strings both ways: a
  *  float would store 2.7600000000000002 for $3 at 0.92. */
 export function convert(price: string, rate: string): string {
@@ -117,12 +120,20 @@ interface Whereabouts {
   platform: string;
 }
 
-/** Why a typed price cannot be stored, naming the field and the limit — or `null` if it can. */
-function priceProblem(label: string, value: string): string | null {
+/**
+ * Why a price cannot be stored, naming the field and the limit — or `null` if it can.
+ *
+ * `typed` is whether a person wrote it: only typed text can mean a thousands separator. A price the
+ * console filled from a list or a bill is written with a point and means it, so a converted `1.725`
+ * is not asked about.
+ */
+function priceProblem(label: string, value: string, typed: boolean): string | null {
   if (!value) return null;
   if (!AMOUNT.test(value)) {
     return `${label}: '${value}' is not an amount. A price is an amount per million tokens, with a point before its decimals: 0.075.`;
   }
+  const ambiguous = typed ? ambiguousAmount(value) : null;
+  if (ambiguous) return `${label}: ${ambiguous}`;
   const [whole, fraction = ''] = value.split(/[.,]/);
   if (whole.replace(/^0+(?=\d)/, '').length > PRICE_DIGITS) {
     return `${label}: at most ${PRICE_DIGITS} digits before the decimal point — the catalog stores up to 999999.999999.`;
@@ -278,6 +289,8 @@ export class ModelEditor {
   protected readonly fromReference = signal<ReferenceFill | null>(null);
   /** Where each price in the form came from; a field typed by hand has none (`FRD-509`). */
   protected readonly priceSources = signal<Partial<Record<PriceField, PriceSource>>>({});
+  /** The price fields a person has typed into since the console last filled them. */
+  private readonly typedPrices = signal<ReadonlySet<PriceKey>>(new Set());
   /** What the billing account said as a whole: why it was not asked, or could not answer. */
   protected readonly billingNote = signal<string | null>(null);
   protected readonly askingBilling = signal(false);
@@ -734,6 +747,7 @@ export class ModelEditor {
       this.longOutputPrice.set(at(longer?.output ?? null));
       this.longCachedPrice.set(at(longer?.cached_input ?? null));
       this.longCacheWritePrice.set(at(longer?.cache_write ?? null));
+      this.typedPrices.set(new Set());
       if (longer) filled.push(`the price above ${displayCount(longer.threshold)} tokens`);
     }
     this.fromReference.set({
@@ -785,6 +799,7 @@ export class ModelEditor {
       if (price.currency !== this.currency()) continue;
       found += 1;
       this.priceSignal(field).set(price.perMillion);
+      this.untype(field);
       sources[field] = {
         kind: 'billing',
         text: `${price.contract ? 'contract price' : 'list price'} on billing account ${answer.billingAccount} — ${price.skuName} (${price.region})`,
@@ -809,6 +824,31 @@ export class ModelEditor {
     const sources = { ...this.priceSources() };
     delete sources[field];
     this.priceSources.set(sources);
+    this.typedPrices.update((typed) => new Set(typed).add(field));
+  }
+
+  /** A price above a prompt length, typed by hand. */
+  protected typeLongPrice(field: PriceField, value: string): void {
+    this.longPriceSignal(field).set(value);
+    this.typedPrices.update((typed) => new Set(typed).add(`long_${field}`));
+  }
+
+  /** The console wrote this field: what is in it now is no longer somebody's typing. */
+  private untype(key: PriceKey): void {
+    this.typedPrices.update((typed) => {
+      const kept = new Set(typed);
+      kept.delete(key);
+      return kept;
+    });
+  }
+
+  private longPriceSignal(field: PriceField) {
+    return {
+      input: this.longInputPrice,
+      output: this.longOutputPrice,
+      cached_input: this.longCachedPrice,
+      cache_write: this.longCacheWritePrice,
+    }[field];
   }
 
   private priceSignal(field: PriceField) {
@@ -1148,11 +1188,12 @@ export class ModelEditor {
     const output = this.outputPrice().trim();
     const cached = this.cachedPrice().trim();
     const cacheWrite = this.cacheWritePrice().trim();
+    const typed = this.typedPrices();
     const priced = [
-      priceProblem('Input price', input),
-      priceProblem('Output price', output),
-      priceProblem('Cached input price', cached),
-      priceProblem('Cache write price', cacheWrite),
+      priceProblem('Input price', input, typed.has('input')),
+      priceProblem('Output price', output, typed.has('output')),
+      priceProblem('Cached input price', cached, typed.has('cached_input')),
+      priceProblem('Cache write price', cacheWrite, typed.has('cache_write')),
     ].find(Boolean);
     if (priced) return priced;
     // Half a price — or a cache rate without its base — produces a cost figure that looks
@@ -1174,11 +1215,12 @@ export class ModelEditor {
     const output = this.longOutputPrice().trim();
     const cached = this.longCachedPrice().trim();
     const cacheWrite = this.longCacheWritePrice().trim();
+    const typed = this.typedPrices();
     const problem = [
-      priceProblem('Long-prompt input price', input),
-      priceProblem('Long-prompt output price', output),
-      priceProblem('Long-prompt cached input price', cached),
-      priceProblem('Long-prompt cache write price', cacheWrite),
+      priceProblem('Long-prompt input price', input, typed.has('long_input')),
+      priceProblem('Long-prompt output price', output, typed.has('long_output')),
+      priceProblem('Long-prompt cached input price', cached, typed.has('long_cached_input')),
+      priceProblem('Long-prompt cache write price', cacheWrite, typed.has('long_cache_write')),
     ].find(Boolean);
     if (problem) return problem;
     if (threshold === null && !input && !output && !cached && !cacheWrite) return null;
@@ -1403,6 +1445,7 @@ export class ModelEditor {
     this.billingRequest = null;
     this.askingBilling.set(false);
     this.priceSources.set({});
+    this.typedPrices.set(new Set());
     this.billingNote.set(null);
   }
 

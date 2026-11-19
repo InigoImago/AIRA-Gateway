@@ -22,6 +22,7 @@ from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 from aira_gateway.upstreams.base import UpstreamError
 from aira_gateway.upstreams.vertex.billing import (
+    MAX_PAGES,
     BillingPrices,
     kind_of,
     model_phrase,
@@ -340,6 +341,33 @@ async def test_an_unreachable_billing_api_says_why() -> None:
 
     assert caught.value.diagnosis is not None
     assert caught.value.diagnosis.reason == "CONNECT_TIMEOUT"
+
+
+async def test_a_listing_that_keeps_paging_is_refused_rather_than_followed() -> None:
+    """`nextPageToken` is the vendor's to send. A listing that always returned one held the lookup
+    open, asking page after page, with nothing to stop it; it is followed up to `MAX_PAGES`, and
+    one still going is refused rather than read as complete — a price looked up in half a list
+    would say the account has none."""
+    asked: list[httpx.Request] = []
+
+    def endless(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        page = int(parse_qs(request.url.query.decode()).get("pageToken", ["0"])[0] or 0)
+        # It ends — at two and a half million entries, far past any account — so a listing
+        # followed without a bound fails here rather than hanging the suite.
+        more = {"nextPageToken": str(page + 1)} if page < 500 else {}
+        return httpx.Response(200, json={"billingAccountServices": [], **more})
+
+    lookup = BillingPrices(
+        account=ACCOUNT,
+        tokens=StaticTokenSource("t"),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(endless)),
+        currency="EUR",
+    )
+
+    with pytest.raises(UpstreamError, match="did not end"):
+        await lookup.prices("gemini-2.5-flash", "europe-west1")
+    assert len(asked) == MAX_PAGES
 
 
 # ---- FR-3: the endpoint --------------------------------------------------------------------------

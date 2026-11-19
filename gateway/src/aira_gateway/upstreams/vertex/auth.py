@@ -20,10 +20,18 @@ import jwt
 
 from aira_common.tokens import AccessToken
 from aira_gateway.upstreams.diagnosis import Diagnosis, from_response, from_transport
+from aira_gateway.upstreams.exchange import timeout
 
 #: The OAuth scope Vertex AI accepts. It is broad; what the token can reach is bounded by the
 #: service account's IAM roles, not by the scope.
 SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+#: How long one call to an identity service may take — Google's token endpoint, its token exchange
+#: and impersonation, an OIDC provider, a local token URL, the metadata server. Its own allowance,
+#: not the model calls' it shares a client with: that one is minutes, because a model may think
+#: that long, and an identity service that has not answered in seconds is down. A request with no
+#: valid token waits for these calls — up to three in a row under workload identity federation.
+IDENTITY_TIMEOUT = timeout(10.0)
 
 #: How long the signed assertion is valid: it is a bearer credential in flight, and Google rejects
 #: anything over an hour.
@@ -170,6 +178,7 @@ class GoogleServiceAccountAcquirer:
                     "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
                     "assertion": self._assertion(int(time.time())),
                 },
+                timeout=IDENTITY_TIMEOUT,
             )
         except httpx.HTTPError as exc:
             # A proxy that inspects TLS meets the token endpoint first; say so (`FRD-141`).

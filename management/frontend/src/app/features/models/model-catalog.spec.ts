@@ -3989,6 +3989,55 @@ describe('ModelEditor — what a model costs this installation (FRD-509)', () =>
     expect(harness.editor.inputPrice()).toBe('');
   });
 
+  /**
+   * A typed price is read one way or not at all. The field takes a comma as the decimal mark, so a
+   * reranker's `1,000` per million units — the figure the hint under the field asks for — was saved
+   * as one, and every ranking billed at a thousandth of its price.
+   */
+  it('asks which amount a typed "1,000" or "2.500" is, and saves neither unasked', async () => {
+    const harness = picked({ currency: 'EUR', reference: of(AT_RATE) });
+    await harness.fixture.whenStable();
+
+    harness.type('model-input-price', '1,000');
+    expect(harness.editor.formError()).toContain('Input price: “1,000” could be 1000 or 1.00');
+    expect(harness.editor.canSave()).toBe(false);
+
+    harness.type('model-input-price', '1000');
+    harness.type('model-long-input-price', '2.500');
+    expect(harness.editor.formError()).toContain(
+      'Long-prompt input price: “2.500” could be 2500 or 2.50',
+    );
+  });
+
+  it('takes a price it filled itself as it wrote it, three places or not', () => {
+    // 1.875 and 3.125 at 0.92 are 1.725 and 2.875: decimals the console wrote, which nobody
+    // typed with a thousands separator in mind.
+    const listed: ReferenceEntry = {
+      ...SONNET,
+      prices: {
+        input: '1.875',
+        output: '15',
+        cached_input: null,
+        cache_write: null,
+        long_context: {
+          threshold: 200000,
+          input: '3.125',
+          output: '22.5',
+          cached_input: null,
+          cache_write: null,
+        },
+      },
+    };
+    const harness = picked({
+      currency: 'EUR',
+      reference: of({ ...AT_RATE, entries: [listed] }),
+    });
+
+    expect(harness.editor.inputPrice()).toBe('1.725');
+    expect(harness.editor.longInputPrice()).toBe('2.875');
+    expect(harness.editor.formError() ?? '').not.toContain('could be');
+  });
+
   it('converts in decimals, not in floats', () => {
     expect(convert('3', '0.92')).toBe('2.76');
     expect(convert('0.0375', '0.92')).toBe('0.0345');

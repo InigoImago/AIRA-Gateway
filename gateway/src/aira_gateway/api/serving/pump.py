@@ -11,8 +11,12 @@ a context that never set it, and closing the reader's task is what closes the up
 inside the task that opened it.
 
 A drain holds its request open after the caller has gone, so a stopping server must be able to cut
-it short: :class:`Drains` counts the requests reading to their end, and the application's shutdown
-stops them — each then books what it knows and writes its row — before the audit writer closes.
+it short. And a stopping server cuts short more than drains: once its grace period is over it
+cancels every request still running, and each of those still has its exit to run — settle, count
+at the vendor, write the row. So :class:`Drains` counts **every request being accounted for**, from
+the moment it enters `accounting` until its row is handed over, and the application's shutdown
+stops the reads and waits for those exits before it closes the writer, the counters, the vendors'
+clients and the database they need.
 """
 
 from __future__ import annotations
@@ -32,7 +36,9 @@ _log = get_logger("aira_gateway")
 PUMP_DEPTH = 1
 
 #: How long a stopping server waits for the requests it cut short to book and record themselves.
-#: They have stopped reading, so what is left is a settlement and a row each.
+#: They have stopped reading, so what is left is a count at the vendor, a settlement and a row each.
+#: With the image's five seconds for running requests it stays inside the ten a container is given
+#: to stop before it is killed.
 DRAINS_STOP_SECONDS = 3.0
 
 _CHUNK: Final = "chunk"
@@ -91,6 +97,7 @@ class Pump:
         if self._outcome is not None:
             return self._outcome == _END
         stopped = asyncio.ensure_future(stop.wait())
+        item: asyncio.Future[tuple[str, Any]] | None = None
         try:
             async with asyncio.timeout(seconds):
                 while True:
@@ -98,9 +105,6 @@ class Pump:
                     await asyncio.wait({item, stopped}, return_when=asyncio.FIRST_COMPLETED)
                     if not item.done():
                         # Stopped. The item is abandoned, not lost: the reader is closed next.
-                        item.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await item
                         return False
                     kind, _ = item.result()
                     if kind != _CHUNK:
@@ -108,9 +112,14 @@ class Pump:
         except TimeoutError:
             return False
         finally:
-            stopped.cancel()
-            with suppress(asyncio.CancelledError):
-                await stopped
+            # Whichever way the read ended — stopped, out of time, cancelled — the wait for the next
+            # chunk ends with it: the reader is closed next and fills its queue no more, and a wait
+            # left behind would hold this stream and its request until the collector found it.
+            for waiting in (item, stopped):
+                if waiting is not None and not waiting.done():
+                    waiting.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await waiting
 
     async def aclose(self) -> None:
         """Stop reading and hand the upstream's connection back — inside the reader's own task,
@@ -158,7 +167,8 @@ async def _closed(source: AsyncIterator[CanonicalChunk]) -> None:
 
 
 class Drains:
-    """The requests still reading an upstream their caller left, and the signal that stops them."""
+    """The requests being accounted for, and the signal that stops those still reading an upstream
+    their caller left."""
 
     def __init__(self) -> None:
         #: Set when the application stops: every drain returns, and its request books what it knows.
@@ -169,7 +179,8 @@ class Drains:
 
     @contextmanager
     def held(self) -> Iterator[None]:
-        """Count one request from its drain to its row, so a stop can wait for it."""
+        """Count one request from the moment it is accounted for until its row is handed over, so
+        a stop can wait for it."""
         self._active += 1
         self._idle.clear()
         try:
@@ -180,8 +191,9 @@ class Drains:
                 self._idle.set()
 
     async def stop(self, seconds: float = DRAINS_STOP_SECONDS) -> None:
-        """Cut every drain short, and wait — at most ``seconds`` — for their requests to be
-        accounted for, so their rows reach the audit writer before it closes."""
+        """Cut every drain short, and wait — at most ``seconds`` — for every request still being
+        accounted for to finish: its count at the vendor reaches a client that is still open, and
+        its row reaches the audit writer before it closes."""
         self.stopping.set()
         with suppress(TimeoutError):
             async with asyncio.timeout(seconds):

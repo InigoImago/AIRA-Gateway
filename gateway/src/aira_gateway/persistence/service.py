@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aira_gateway.audit import UsageBasis
@@ -11,27 +12,45 @@ from aira_gateway.core.canonical import CanonicalUsage
 from aira_gateway.db.models import RequestLog
 from aira_gateway.persistence.sanitize import printable
 
-#: Widths of the `request_logs` columns whose content the caller chooses (see `_fits`).
-MODEL_COLUMN = 128  # `.model`, `.requested_model`
-OPERATION_COLUMN = 64  # `.operation`
-SUBJECT_COLUMN = 255  # `.subject`, `.username` — a token's `sub` and `preferred_username`
+#: Every text column of `request_logs` and the width it holds, `None` for text without one —
+#: **read from the model**, so a column a migration widens is wider here too, and a column added
+#: later is held to its width without anybody remembering to (see `_fits`).
+TEXT_COLUMNS: dict[str, int | None] = {
+    column.key: column.type.length
+    for column in RequestLog.__table__.columns
+    if isinstance(column.type, String)
+}
+
+#: The widths of the columns a caller chooses the content of: the model and the method from the
+#: URL, the subject and the name from the token.
+MODEL_COLUMN = TEXT_COLUMNS["model"]  # also `.requested_model`
+OPERATION_COLUMN = TEXT_COLUMNS["operation"]
+SUBJECT_COLUMN = TEXT_COLUMNS["subject"]  # also `.username`
 
 #: The largest count a 32-bit `request_logs` column holds: the token counts, the latency and the
 #: request's size (see `_count`).
 COUNT_CEILING = 2**31 - 1
 
 
-def _fits(value: str | None, width: int = MODEL_COLUMN) -> str | None:
-    """``value``, in a form the column can store — **a row that does not fit is a lost row**.
+def _fits(value: str | None, width: int | None = MODEL_COLUMN) -> str | None:
+    """``value``, in a form its column can store — **a row that does not fit is a lost row**.
 
-    The model name and method come from the caller's URL and the subject from their token, and two
-    shapes fail the INSERT on Postgres after the request was handled: a value wider than the column
-    and a NUL byte. SQLite enforces neither, so the hermetic suite cannot see it. Control characters
-    are removed **before** the cut, so the width counts characters that survive. Sanitised rather
-    than refused: a slightly less faithful row beats no row (`FRD-122`).
+    Every text of an audit row passes here on its way in (:meth:`RequestLogService.record`): the
+    caller chooses the model and the method in the URL, the subject in the token and the words its
+    refusal quotes, and an installation the name of a server and its region. Two shapes fail the
+    INSERT on Postgres after the request was handled — a NUL in any text, and a value wider than
+    its `varchar` — and the row that would have recorded the request is what is lost. SQLite
+    enforces neither, so the hermetic suite cannot see it.
+
+    A column with a width holds one line — a name, an identifier, a code — and keeps no control
+    character; they are removed **before** the cut, so the width counts characters that survive.
+    One without, the message a caller was given, loses only the NUL. Sanitised rather than refused:
+    a slightly less faithful row beats no row (`FRD-122`).
     """
     if value is None:
         return None
+    if width is None:
+        return value.replace("\x00", "")
     return printable(value)[:width]
 
 
@@ -114,17 +133,17 @@ class RequestLogService:
             # The id the caller was given in `X-AIRA-Request-Id`, so the row is found by it.
             **({"id": row_id} if row_id else {}),
             error=_bounded_message(error),
-            subject=str(_fits(subject, SUBJECT_COLUMN)),
-            username=_fits(username, SUBJECT_COLUMN),
+            subject=subject,
+            username=username,
             auth_method=auth_method,
             use_case=use_case,
             source_ip=source_ip,
             credential=credential,
             issuer=issuer,
             api=api,
-            operation=str(_fits(operation, OPERATION_COLUMN)),
-            model=str(_fits(model)),
-            requested_model=_fits(requested_model),
+            operation=operation,
+            model=model,
+            requested_model=requested_model,
             model_selection=model_selection,
             status=status,
             outcome=outcome,
@@ -155,6 +174,12 @@ class RequestLogService:
             cost_nanos=cost_nanos,
             request_bytes=_count(request_bytes),
         )
+        # Column by column rather than argument by argument: nothing reaches a text column of the
+        # row without passing `_fits`, whatever was added to it since.
+        for name, width in TEXT_COLUMNS.items():
+            value = getattr(entry, name)
+            if isinstance(value, str):
+                setattr(entry, name, _fits(value, width))
         self._session.add(entry)
         await self._session.commit()
         # No refresh: `expire_on_commit=False` leaves the entry populated, and re-selecting it on a

@@ -13,13 +13,32 @@ spent and nothing of what running ones set aside, so a counter rebuilt from it a
 reservation still open — and each of their settlements then subtracts a reservation the counter no
 longer holds. Each reservation is therefore also written, under its own id and with a deadline,
 beside the counter; a rebuild adds those still open, and settling or releasing one removes it.
+
+**A correction is never lost to an unreachable store.** One the store cannot take is held by this
+ledger and sent before anything else is asked of the store. Dropped, it would leave its reservation
+open beside the counter, and every rebuild would add the request's estimate back on top of the
+figure Postgres already holds, until the reservation's deadline. A correction moves the counter only
+while its reservation is open, so one sent twice moves it once.
+
+**A rebuild and a booking are told apart by Postgres' own request count.** A booking commits to
+Postgres and then corrects the counter, and a rebuild reads Postgres and then builds — so a rebuild
+can fall between a booking's two halves and count it twice, or read before the commit and build
+after the correction and count it not at all. Every booking counts a request, so a row's request
+count orders its readings: the counter keeps the one it was built on (its basis), and a correction
+brings the row as its booking left it. A correction for a booking the basis already holds takes back
+only what the reservation set aside; the row it brings is kept beside the counter, and a rebuild
+builds on whichever of it and its own seed is later.
 """
 
 from __future__ import annotations
 
+import time
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from aira_common.counters import ScriptRunner
+from aira_common.counters import CountersNotAsked, CountersUnavailable, ScriptArg, ScriptRunner
+from aira_common.logging import get_logger
 
 #: How long a counter is trusted before it is rebuilt from Postgres — far shorter than any budget
 #: period. A counter can drift (a correction that cannot reach Redis leaves the request's high
@@ -34,12 +53,24 @@ COUNTER_TTL_SECONDS = 300
 
 #: How long a reservation in flight is carried into a rebuilt counter. Longer than any request
 #: holds one — a stream drained after its caller left included — so a rebuild forgets only a
-#: reservation whose request is gone; one that could never be removed (Redis away when it settled)
-#: over-counts for at most this long, in the direction that refuses rather than spends.
+#: reservation whose request is gone. One whose correction never reached the store — held past this
+#: long, or by a process that ended — over-counts for at most this long, in the direction that
+#: refuses rather than spends.
 RESERVATION_LIFETIME_SECONDS = 3600
+
+#: The most corrections one process holds for an unreachable store; past it the oldest gives way.
+#: Only a reservation made before the store went away has a correction to hold — a request admitted
+#: while it is away reserves nothing there — so this is far more than one instance has in flight.
+HELD_CORRECTIONS_LIMIT = 10_000
+
+#: How many held corrections one call sends before its own work, so the first request after an
+#: outage is not the one that pays for all of it; the next calls send the rest.
+RESEND_PER_CALL = 256
 
 #: The limit argument that means "no cap on this dimension".
 NO_LIMIT = -1
+
+_log = get_logger("aira_gateway.budgets")
 
 # Both scripts work on one hash per (scope, period): tokens / requests / cost. Redis stores and
 # increments 64-bit integers exactly; only the comparison passes through Lua's double, which is
@@ -49,7 +80,16 @@ _RESERVE = """
 local key = KEYS[1]
 local open = KEYS[2]
 if redis.call('EXISTS', key) == 0 then
-  redis.call('HSET', key, 'tokens', ARGV[1], 'requests', ARGV[2], 'cost', ARGV[3])
+  -- Built on the later of two readings of Postgres: the seed, read before this script ran, and the
+  -- row as the last booking left it, kept beside the counter by that booking's correction. A seed
+  -- read just before a booking would miss it otherwise, the correction having found no counter.
+  -- The request count says which reading is later; the counter keeps it as its basis.
+  local base = {ARGV[1], ARGV[2], ARGV[3]}
+  local booked = redis.call('HMGET', KEYS[3], 'tokens', 'requests', 'cost')
+  if booked[2] and tonumber(booked[2]) > tonumber(base[2]) then
+    base = booked
+  end
+  redis.call('HSET', key, 'tokens', base[1], 'requests', base[2], 'cost', base[3], 'basis', base[2])
   -- Postgres knows what finished requests spent; the reservations still open are added back, or
   -- their settlements subtract from the rebuilt counter what it never held. Each entry is
   -- `deadline:tokens:requests:cost`; one past its deadline belongs to no running request.
@@ -99,21 +139,39 @@ end
 return ''
 """
 
-# Correcting or releasing a reservation. A missing key is left alone: the next reservation reseeds
-# it from Postgres, which by then holds the settled figure. The reservation leaves the open set
-# first, whether or not the counter is there: resolved, it is in Postgres or nowhere, and a rebuild
-# that added it back would count it twice.
+# Correcting or releasing a reservation, or adding a figure no reservation held. A missing key is
+# left alone: the next reservation reseeds it from Postgres, which by then holds the settled figure.
+# The reservation leaves the open set first, whether or not the counter is there: resolved, it is in
+# Postgres or nowhere, and a rebuild that added it back would count it twice. Where Postgres booked
+# something (ARGV[10] set), the row as the booking left it (ARGV[9..11]) is kept beside the counter
+# while it is the latest known, for a rebuild whose seed was read before it.
 _ADJUST = """
 local key = KEYS[1]
-if ARGV[5] ~= '' then
-  redis.call('HDEL', KEYS[2], ARGV[5])
+local booked = ARGV[10] ~= ''
+if booked then
+  local known = redis.call('HGET', KEYS[3], 'requests')
+  if not known or tonumber(ARGV[10]) > tonumber(known) then
+    redis.call('HSET', KEYS[3], 'tokens', ARGV[9], 'requests', ARGV[10], 'cost', ARGV[11])
+    redis.call('EXPIRE', KEYS[3], ARGV[4])
+  end
+end
+-- Only an open reservation moves the counter: settled or released once, it is closed, and a second
+-- resolution — or the same correction sent again after its reply was lost — moves nothing.
+if ARGV[5] ~= '' and redis.call('HDEL', KEYS[2], ARGV[5]) == 0 then
+  return 0
 end
 if redis.call('EXISTS', key) == 0 then
   return 0
 end
-redis.call('HINCRBY', key, 'tokens', ARGV[1])
-redis.call('HINCRBY', key, 'requests', ARGV[2])
-redis.call('HINCRBY', key, 'cost', ARGV[3])
+-- A counter whose basis already holds this booking has it once: only what the reservation set
+-- aside comes back out (ARGV[6..8]).
+local tokens, requests, cost = ARGV[1], ARGV[2], ARGV[3]
+if booked and tonumber(redis.call('HGET', key, 'basis') or -1) >= tonumber(ARGV[10]) then
+  tokens, requests, cost = ARGV[6], ARGV[7], ARGV[8]
+end
+redis.call('HINCRBY', key, 'tokens', tokens)
+redis.call('HINCRBY', key, 'requests', requests)
+redis.call('HINCRBY', key, 'cost', cost)
 
 -- Clamp at zero: a negative counter would grant free headroom for the rest of the period.
 local fields = {'tokens', 'requests', 'cost'}
@@ -157,6 +215,10 @@ class Limits:
     cost_nanos: int | None = None
 
 
+#: Nothing moved: what a figure no reservation held has set aside.
+_NOTHING = Amounts()
+
+
 def _cap(limit: int | None) -> int:
     """A limit as the script's argument: `NO_LIMIT` for none, never below zero for one."""
     return NO_LIMIT if limit is None else max(0, limit)
@@ -171,11 +233,37 @@ def _open_key(scope_key: str, period_key: str) -> str:
     return f"budget:{scope_key}:{period_key}:open"
 
 
+def _booked_key(scope_key: str, period_key: str) -> str:
+    """Where the row as the latest booking left it in Postgres is kept, beside the counter."""
+    return f"budget:{scope_key}:{period_key}:booked"
+
+
+def _keys(scope_key: str, period_key: str) -> list[str]:
+    return [
+        _key(scope_key, period_key),
+        _open_key(scope_key, period_key),
+        _booked_key(scope_key, period_key),
+    ]
+
+
+#: A correction the store could not take: the script's keys and arguments, and when it was held.
+type _Held = tuple[list[str], list[ScriptArg], float]
+
+
 class BudgetLedger:
     """Atomic reserve / settle / release over the shared counter store."""
 
-    def __init__(self, runner: ScriptRunner) -> None:
+    def __init__(
+        self, runner: ScriptRunner, *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self._runner = runner
+        # Injectable so a held correction's age can be tested without waiting an hour.
+        self._clock = clock
+        #: Corrections the store could not take, oldest first (module docstring).
+        self._held: deque[_Held] = deque()
+        #: Held corrections sent, and held ones given way to the limit, since the store went away.
+        self._resent = 0
+        self._dropped = 0
 
     async def reserve(
         self,
@@ -197,12 +285,20 @@ class BudgetLedger:
         and carried by nothing. Raises :class:`~aira_common.counters.CountersUnavailable` if Redis
         cannot be reached; the caller then falls back to the Postgres path (`FRD-405` §4.3).
         """
+        # What was held goes first: the decision below reads the counters it corrects. A store
+        # that refuses one of those was never sent this reservation.
+        try:
+            await self._send_held()
+        except CountersUnavailable as exc:
+            if isinstance(exc, CountersNotAsked):
+                raise
+            raise CountersNotAsked(str(exc)) from exc
         now = int(at)
         deadline = now + RESERVATION_LIFETIME_SECONDS
         entry = f"{deadline}:{amounts.tokens}:{amounts.requests}:{amounts.cost_nanos}"
         breached = await self._runner.run(
             _RESERVE,
-            [_key(scope_key, period_key), _open_key(scope_key, period_key)],
+            _keys(scope_key, period_key),
             [
                 seed.tokens,
                 seed.requests,
@@ -223,18 +319,104 @@ class BudgetLedger:
         return breached or None
 
     async def adjust(
-        self, scope_key: str, period_key: str, *, amounts: Amounts, reservation: str = ""
+        self,
+        scope_key: str,
+        period_key: str,
+        *,
+        amounts: Amounts,
+        reservation: str = "",
+        reserved: Amounts = _NOTHING,
+        booked: Amounts | None = None,
     ) -> None:
-        """Move a counter by ``amounts`` — a correction after settling, or a release. Settling or
-        releasing ``reservation`` also closes it, so no rebuild adds it back."""
+        """Move a counter by ``amounts`` — a correction after settling, a release, or a figure no
+        reservation held. Settling or releasing ``reservation`` also closes it, so no rebuild adds
+        it back, and moves the counter only while it is open: a second resolution moves nothing.
+
+        ``booked`` is the counter's row in Postgres as this booking left it, for a booking of at
+        least one request. A counter whose basis already holds it takes back only ``reserved``,
+        what the reservation set aside (module docstring). Raises
+        :class:`~aira_common.counters.CountersUnavailable` if Redis cannot be reached.
+        """
         await self._runner.run(
             _ADJUST,
-            [_key(scope_key, period_key), _open_key(scope_key, period_key)],
-            [
-                amounts.tokens,
-                amounts.requests,
-                amounts.cost_nanos,
-                COUNTER_TTL_SECONDS,
-                reservation,
-            ],
+            _keys(scope_key, period_key),
+            _correction(amounts, reservation, reserved, booked),
         )
+
+    async def resolve(
+        self,
+        scope_key: str,
+        period_key: str,
+        *,
+        amounts: Amounts,
+        reservation: str,
+        reserved: Amounts,
+        booked: Amounts | None = None,
+    ) -> None:
+        """Settle or release ``reservation`` on one counter: now, or once the store answers again.
+
+        Never lost to an unreachable store, and never raises for one: a correction the store cannot
+        take is held and sent before the next thing this ledger asks of it. One that reached the
+        store although its reply did not, sent again, moves nothing (`adjust`).
+        """
+        keys = _keys(scope_key, period_key)
+        arguments = _correction(amounts, reservation, reserved, booked)
+        try:
+            await self._send_held()
+            await self._runner.run(_ADJUST, keys, arguments)
+        except BaseException as exc:
+            # Held whatever stopped it — the store away, or a cancellation that landed before or
+            # after the script ran.
+            self._hold(keys, arguments)
+            if not isinstance(exc, CountersUnavailable):
+                raise
+
+    def _hold(self, keys: list[str], arguments: list[ScriptArg]) -> None:
+        if len(self._held) >= HELD_CORRECTIONS_LIMIT:
+            # The oldest gives way: its reservation is carried by every rebuild until its deadline.
+            self._held.popleft()
+            self._dropped += 1
+            if self._dropped == 1:
+                _log.warning("budget_corrections_dropped", limit=HELD_CORRECTIONS_LIMIT)
+        self._held.append((keys, arguments, self._clock()))
+
+    async def _send_held(self) -> None:
+        """Send the corrections held for the store, oldest first, until it refuses one again."""
+        sent = 0
+        while self._held and sent < RESEND_PER_CALL:
+            keys, arguments, since = self._held.popleft()
+            if self._clock() - since > RESERVATION_LIFETIME_SECONDS:
+                continue  # its reservation is past its deadline, which no rebuild carries
+            try:
+                await self._runner.run(_ADJUST, keys, arguments)
+            except BaseException:
+                self._held.appendleft((keys, arguments, since))
+                raise
+            sent += 1
+            self._resent += 1
+        if sent and not self._held:
+            _log.info("budget_corrections_resent", resent=self._resent, dropped=self._dropped)
+            self._resent = self._dropped = 0
+
+
+def _correction(
+    amounts: Amounts, reservation: str, reserved: Amounts, booked: Amounts | None
+) -> list[ScriptArg]:
+    """`_ADJUST`'s arguments: the movement, the counter's lifetime, the reservation it closes, what
+    that reservation set aside (moved back alone where the basis holds the booking), and the row as
+    the booking left it — empty where nothing was booked."""
+    withdrawal = reserved.negated()
+    row: list[ScriptArg] = (
+        ["", "", ""] if booked is None else [booked.tokens, booked.requests, booked.cost_nanos]
+    )
+    return [
+        amounts.tokens,
+        amounts.requests,
+        amounts.cost_nanos,
+        COUNTER_TTL_SECONDS,
+        reservation,
+        withdrawal.tokens,
+        withdrawal.requests,
+        withdrawal.cost_nanos,
+        *row,
+    ]
