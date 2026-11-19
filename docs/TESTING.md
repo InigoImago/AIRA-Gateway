@@ -181,9 +181,11 @@ seed → relay → Kafka → gateway, and it is the same target `make showcase` 
 
 **Some tests interrupt the stack on purpose**, the way an outage looks from outside: one restarts
 its PostgreSQL, so both planes, the relay and Keycloak lose every connection at once; one pauses
-Keycloak and restarts the gateway under it; one stops the local model. Each waits for the stack to
-answer again before it returns — after a run that was interrupted, `docker unpause` and `docker
-start` on the stack's Keycloak and model containers bring them back. One test makes a client in
+Keycloak and restarts the gateway under it; one stops the local model; and one stops Kafka and
+then PostgreSQL for a few minutes each, until the workers' health has turned and turned back. Each
+waits for the stack to answer again before it returns — after a run that was interrupted,
+`docker unpause` and `docker start` on the stack's Keycloak, Kafka, PostgreSQL and model
+containers bring them back. One test makes a client in
 Keycloak's `master` realm, the only test that writes there, and removes it again.
 
 **A second stack beside the first** — its own `AIRA_STACK` and moved `AIRA_PUBLISH_*_PORT` values in

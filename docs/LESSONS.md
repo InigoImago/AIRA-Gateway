@@ -33,6 +33,15 @@ reading code.
   decided by type and SQLSTATE, never by message text, and only what fails the same way every time
   is skipped. A position — an offset, a commitment to a candidate — moves only past work that is
   done.
+
+  *And what holds must say that it holds.* The consumer waited for a broker and held an event
+  through a database outage — both right — and its container read "Up" throughout: the image's one
+  check asked a server the worker does not have, so Compose switched it off. The relay and the
+  retention sweep failed every run inside a shell loop's `|| true`. **Health is the process's own
+  statement of progress, written only where it did its job** — never on a timer, never from a
+  connection that is merely open, which a consumer stuck on one event keeps — and it carries the
+  reason, because "no progress for 104 s" sends an operator looking and "waiting for Kafka" does
+  not.
 - **One shared resource is one shared fate.** An identity provider that hung stalled the audit
   writer and readiness, because token checks waited on the event loop's default executor, which
   both share. A token refresh under one lock held up every Vertex request while the token in hand

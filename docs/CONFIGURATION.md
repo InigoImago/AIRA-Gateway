@@ -412,11 +412,21 @@ every interface of the machine.
 Compose reads a few more of its own, none of them a setting:
 
 - `AIRA_RELAY_INTERVAL` (default `10`) and `AIRA_RETENTION_INTERVAL` (default `3600`) — the seconds
-  between two runs of the outbox relay and of the retention sweep, which the stack runs in a loop.
-  Anywhere else, a scheduler of the platform's runs both.
+  between two runs of the outbox relay and of the retention sweep, passed to each as `--interval`:
+  both loop by themselves in the stack. Under a scheduler of the platform's, the schedule decides.
 - `AIRA_CONSOLE_PORT` — the console's port as a **browser** sees it, handed to the Keycloak realm
   import for the client's redirect URIs. It defaults to `AIRA_PUBLISH_FRONTEND_PORT`, and matters
   when a forwarder or a tunnel remaps that port.
+
+The images' healthcheck, `python -m aira_common.healthcheck`, reads two of its own, both set where
+they need to be and neither a setting:
+
+- `AIRA_HEARTBEAT_FILE` (default `/tmp/aira-heartbeat`) — where a worker writes its heartbeat and
+  the check reads it. Move it only where `/tmp` cannot be written, and for the worker and the check
+  alike: they find the file by this name.
+- `AIRA_HEALTH_PORT` — the port whose `/healthz` the check asks when there is no heartbeat, set in
+  each image: `8001` in the gateway's, `8002` in Management's. Change it only with the port the
+  server listens on.
 
 ---
 

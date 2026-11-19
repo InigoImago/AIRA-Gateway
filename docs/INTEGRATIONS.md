@@ -667,7 +667,10 @@ from them. Without a stage the names are the ones above.
   the outbox is one queue across the nine topics, so that event and every later change on every
   topic stay pending, and each run tries again. The consumer does not start without all of its
   topics: it waits for them, one `consumer_waiting_for_kafka` line per attempt, applying nothing.
-  Neither `/readyz` notices, and the console shows every change as saved. A missing `Write` ACL stops the relay the same way, at once.
+  Neither `/readyz` notices, and the console shows every change as saved; the consumer's
+  container and the relay's read unhealthy, each saying why — the consumer that it is waiting for
+  Kafka, the relay that its last run failed.
+  A missing `Write` ACL stops the relay the same way, at once.
   `make kafka-topics` creates the topics in this repository's own broker and
   `make kafka-topics-external` in yours (`PLAINTEXT` only), both idempotently, and both create
   exactly the topics the code publishes to.

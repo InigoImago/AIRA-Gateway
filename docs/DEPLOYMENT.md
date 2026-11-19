@@ -228,8 +228,8 @@ processes serve the APIs, one is the console, and three are workers.
 | 1   | **Gateway API** (data plane)       | `uvicorn aira_gateway.main:app`                          | HTTP :8001 | yes                                                                                        |
 | 2   | **Management API** (control plane) | `uvicorn aira_management.config.asgi:application`        | HTTP :8002 | yes                                                                                        |
 | 3   | **Config consumer**                | `python -m aira_gateway.consumer.worker`                 | —          | **yes** — the gateway serves a use case only once its configuration has arrived            |
-| 4   | **Outbox relay**                   | `python manage.py relay`, scheduled                      | —          | **yes** — without it no configuration reaches the gateway                                  |
-| 5   | **Retention pruner**               | `python -m aira_gateway.retention`, scheduled            | —          | **yes** — nothing deletes stored prompts otherwise                                         |
+| 4   | **Outbox relay**                   | `python manage.py relay --loop`, or `relay` scheduled    | —          | **yes** — without it no configuration reaches the gateway                                  |
+| 5   | **Retention pruner**               | `python -m aira_gateway.retention --loop`, or scheduled  | —          | **yes** — nothing deletes stored prompts otherwise                                         |
 | 6   | **Console** (SPA)                  | the built bundle behind nginx, which proxies `/api` and `/gw` | HTTP :8080 | yes, for the UI                                                                       |
 
 The migrations are `alembic upgrade head` (gateway) and `python manage.py migrate` (Management).
@@ -260,9 +260,52 @@ All six run from **three images**, built from this repository:
 | `aira-frontend`   | `management/frontend/Dockerfile` | the built SPA behind nginx, which also proxies `/api` and `/gw`                    |
 
 Both Python images are multi-stage (build with `uv`, ship only the resolved virtualenv), run as a
-non-root user (uid 10001) and carry a `HEALTHCHECK`. The worker containers switch that check off,
-because they serve no HTTP, and in Compose their loops carry on after a failed run (`|| true`) —
-their logs are where a failure shows.
+non-root user (uid 10001) and carry one `HEALTHCHECK` for every process they run — what it reports
+is below.
+
+### What a container's health says
+
+Every long-running container reports its own health, and the Compose files switch none of them
+off. The two Python images run one command, `python -m aira_common.healthcheck`. A worker serves no
+HTTP, so it writes a **heartbeat** — a small file, `/tmp/aira-heartbeat` — each time it makes
+progress, with the age the heartbeat may reach before the worker counts as stuck and, while it
+makes none, why; the command judges the file by that age and says the worker's reason. A server
+writes none, and the command asks its `/healthz` instead, on `AIRA_HEALTH_PORT` (`8001` in the
+gateway's image, `8002` in Management's).
+
+| Container | Healthy means | Unhealthy after | Turns unhealthy while |
+| --- | --- | --- | --- |
+| `gateway`, `management` | `/healthz` answers | 5 failed checks, 15 s apart | the process does not answer — liveness only; readiness is `/readyz` |
+| `gateway-consumer` | it applied or skipped an event, or is idle with its partitions assigned and its broker answering | 90 s without that | it waits for Kafka, holds an event the database cannot take, has no partition, or its broker has not answered for 30 s |
+| `management-relay` | a run finished: it published, found nothing pending, or another run held the outbox | five pauses, at least 120 s (`--max-age`) | runs fail — Kafka or PostgreSQL away, a topic missing — or a run hangs |
+| `gateway-retention` | a sweep finished | two pauses and 10 minutes — 2 h 10 min at the hourly default (`--max-age`) | sweeps fail — PostgreSQL away — or a sweep hangs |
+| `frontend` | nginx serves the console | 5 failed checks | nginx does not answer |
+
+The age is measured from the last progress, and Docker marks the container `unhealthy` once its
+own five checks after that have failed — so a consumer cut off from Kafka reads unhealthy about
+three minutes after its broker last answered, and healthy again within fifteen seconds of its first
+progress. The first 60 seconds of a container are its start period, for the first progress to
+arrive. Every check prints why, and Docker keeps the last five:
+
+```bash
+docker inspect --format '{{json .State.Health.Log}}' aira-gateway-consumer
+# … "Output":"consumer: no progress for 104 s, longer than the 90 s it may take — its broker has
+#   not answered a fetch for aira.usecases partition 0 in 30 s\n" …
+```
+
+The worker's log tells the same story: `worker_unhealthy` once when its silence outgrows the age,
+with the reason (*waiting for Kafka*, *an event is being applied or held for retry*, *its last pass
+failed: …*), and `worker_healthy` at its first progress and the first after such a silence. A loop
+that fails a run says `worker_pass_failed` with the error, and goes on.
+
+**Outside Compose** the same command works as a Kubernetes `exec` liveness probe. Give the probe
+`failureThreshold × periodSeconds` above the longest pass a worker may need: a liveness probe
+**restarts** what it finds unhealthy, and a retention sweep restarted midway rolls back and starts
+again. Docker Compose only reports.
+
+A worker run on a schedule instead — `manage.py relay` or `python -m aira_gateway.retention`
+without `--loop`, from cron or a CronJob — does one pass, exits with its status and keeps no
+heartbeat: the scheduler's own record of the exit status is its health.
 
 Background work also runs **inside every gateway process**, not in a container of its own: the
 audit writer, which takes each request's row off the request path (§1a); the probe of every
@@ -652,10 +695,10 @@ What matters operationally about those stacks:
   with published passwords, its Vault runs in `-dev` mode and keeps nothing, and the applications
   run with `AIRA_ENVIRONMENT=local`, which switches the hardening checks off; a value that cannot
   be read, or a model outside the permitted regions, still stops a start.
-- **The relay and the retention pruner run as loops** — the relay every `AIRA_RELAY_INTERVAL`
-  seconds (default 10), the pruner every `AIRA_RETENTION_INTERVAL` seconds (default 3600) — so
-  configuration propagates and payloads expire on their own. Outside Compose they are scheduled
-  jobs (§6).
+- **The relay and the retention pruner run as loops of their own** (`--loop`) — the relay every
+  `AIRA_RELAY_INTERVAL` seconds (default 10), the pruner every `AIRA_RETENTION_INTERVAL` seconds
+  (default 3600) — so configuration propagates and payloads expire on their own, and each
+  container reads unhealthy when its runs stop finishing (§1).
 - `make logs-apps` follows the gateway, its consumer, Management, the relay and the console;
   `make logs-apps FOLLOW= TAIL=500` prints once and returns, as CI does on a failure. The retention
   pruner is not in that list: `docker logs aira-gateway-retention`.
@@ -1343,15 +1386,17 @@ Operations:
 - [ ] Both migration commands run on every deploy, before the new code starts
 - [ ] All nine Kafka topics exist and are **compacted** (§3.3) — `make kafka-topics` creates them
       only in this repository's own broker
-- [ ] The consumer runs as a long-lived process and is restarted on failure
-- [ ] **The retention pruner is scheduled.** `python -m aira_gateway.retention` does one pass and
-      exits. If nothing runs it, **nothing is ever deleted** and the period configured per use
-      case is a promise nobody keeps. The reference stack runs it hourly in a loop; outside
-      Compose use cron, a systemd timer or a CronJob.
-- [ ] **The relay is scheduled.** `manage.py relay` publishes pending rows once and exits — a cron
-      job, systemd timer or Kubernetes CronJob every minute is the intended shape; the reference
-      stack loops every 10 seconds. Without it, nothing a user configures in the UI ever reaches
-      the gateway. One run publishes at most 500 events, oldest first, and says how many are still
+- [ ] The consumer runs as a long-lived process and is restarted on failure, and its container's
+      health is watched: it reads unhealthy while no configuration is being applied (§1)
+- [ ] **The retention pruner runs.** `python -m aira_gateway.retention --loop` sweeps hourly and
+      keeps a heartbeat; without `--loop` it does one pass and exits, for cron, a systemd timer or a
+      CronJob. If nothing runs it, **nothing is ever deleted** and the period configured per use
+      case is a promise nobody keeps.
+- [ ] **The relay runs.** `manage.py relay --loop` publishes, pauses ten seconds (`--interval`) and
+      runs again, and keeps a heartbeat; without `--loop` it publishes pending rows once and exits,
+      for a scheduler — every minute is the intended shape then. Without it, nothing a user
+      configures in the UI ever reaches the gateway. One run publishes at most 500 events, oldest
+      first, and says how many are still
       pending. Runs never overlap: each takes a PostgreSQL advisory lock and leaves at once when
       another holds it — so its database connection must be a session, not a transaction-pooled
       one — and a CronJob may say so too (`concurrencyPolicy: Forbid`). A send that fails stops the
@@ -1445,6 +1490,15 @@ relay and the consumer have run after the upgrade, and the old one until then.
 A new topic in a release is created before the release's code runs (§3.3); the topic step is
 idempotent, and it creates every topic that release's code uses.
 
+**Workers started with commands of your own.** The relay and the retention sweep loop by
+themselves, `python manage.py relay --loop` and `python -m aira_gateway.retention --loop`, each
+with `--interval` for the pause. A deployment that wraps the one-pass commands in a shell loop of
+its own, or switches the workers' healthcheck off, goes on working as before and reports nothing
+about them: switch to `--loop`, and remove the override and any check built beside it — a file
+the loop touches, a look for an open connection to the broker — since the image's check reads the
+workers' heartbeat (§1). The consumer's command does not change; remove only a
+`healthcheck: disable: true`.
+
 **A stopping gateway waits five seconds for its requests**, then cuts short every request still
 running — a model's answer usually takes longer, so on a deploy that is most streams — and the
 streams it is still reading for callers who left. It then waits up to three seconds more while each
@@ -1527,7 +1581,7 @@ Stated plainly, because a deployment guide that hides them wastes your time:
 
 | Gap                                                            | Consequence                                                                                                   | Status                                                                                                                                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **No Kubernetes/Helm**                                         | Compose only; no manifests or charts                                                                          | Planned (see `docs/ROADMAP.md`)                                                                                                                                                                                 |
+| **No Kubernetes/Helm**                                         | Compose only; no manifests or charts. The images' healthcheck works as an `exec` liveness probe (§1)          | Planned (see `docs/ROADMAP.md`)                                                                                                                                                                                 |
 | **Several gateway instances**                                  | One gateway container per Compose stack; Management stays a single instance by decision                       | Open: `container_name` blocks `--scale`, and the two-version schema rule (§6a) is not enforced                                                                                                                 |
 | ~~**Images are not published**~~                               | —                                                                                                             | **Closed** (§1b): pushing an annotated tag publishes `aira-gateway`, `aira-management` and `aira-frontend` to GHCR at `vX.Y.Z` (plus `sha-<commit>` and `latest`), behind every CI gate, with the tag's message as the release notes. The version lives in the Git tags only — `make next-version`. **Running them is closed too**: `docker-compose.release.yml` pulls them (`RELEASE=vX.Y.Z` on every target that starts the applications in containers) and `docker-compose.external.yml` runs them against infrastructure you provide |
 | ~~**Vault is not used by any code**~~                          | —                                                                                                             | **Closed**: `aira_common.secrets` reads AppRole + KV-v2 and ranks Vault above the environment for both planes                                                                                                   |

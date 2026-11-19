@@ -61,3 +61,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0050 | [The gateway sends the mail, and asks the directory for the address when it sends](ADR-0050-the-gateway-sends-the-mail.md) | **Accepted** | 2026-10-29 |
 | 0051 | [A thinking block goes back onto the history it was made on, on every turn](ADR-0051-a-thinking-block-goes-back-onto-its-own-history.md) | **Accepted** | 2026-11-02 |
 | 0052 | [A fallback chain belongs to its use case, one per kind of request](ADR-0052-a-fallback-chain-belongs-to-its-use-case.md) | **Accepted** | 2026-11-03 |
+| 0053 | [A worker states its own health, in a heartbeat it writes on progress](ADR-0053-a-worker-states-its-own-health.md) | **Accepted** | 2026-11-19 |

@@ -5,6 +5,73 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Every process reports its own health (2026-11-19)
+
+An operability ticket. The three processes the images run without a server — the configuration
+consumer, the outbox relay and the retention sweep — ran with `healthcheck: disable: true`, because
+the image's one check asked a `/healthz` they do not serve, and the relay and the sweep in shell
+loops whose `|| true` swallowed every failure. A consumer waiting for Kafka or holding an event the
+database could not take, a relay failing every run, a sweep failing every hour: each container read
+"Up". Installations had built checks of their own in Compose — a file the shell loop touched, a look
+in `/proc/net/tcp` for a broker connection, which a consumer stuck on one event keeps.
+
+**What changed** (`FRD-153`, `ADR-0053`):
+
+- `aira_common.heartbeat`: a worker writes `{worker, max_age_seconds, started_at, written_at,
+  reason}` when it makes progress, beside the file and renamed over it, at most once a second, and
+  while it makes none it writes why. `python -m aira_common.healthcheck` judges the file by the age
+  it carries and prints the worker's reason; with no file it asks the server's `/healthz` on
+  `AIRA_HEALTH_PORT`, never through a proxy. Both images run it.
+- The consumer beats on start, after each event, and every 15 s while idle **only while its broker
+  answers its fetches**. Not while it waits for Kafka, holds an event, has no partition, or hears
+  nothing for 30 s. Maximum age 90 s.
+- `relay --loop` and `retention --loop` (`aira_common.periodic`): a finished pass beats, a failed one
+  is said and the loop goes on, SIGTERM ends it between passes. A relay run closes its database
+  connections after it, as the process per run did.
+- The shipped Compose files switch no healthcheck off and loop no shell; a tools test holds both.
+  The integration job's limit went from 40 to 50 minutes for the outages its suite now takes.
+
+**What the round found.**
+
+- *The package's root cost the check a third of a second.* `python -m` imports `aira_common`'s
+  `__init__` first, which imported the settings, OpenTelemetry and an HTTP client: 338 ms of import
+  every fifteen seconds, inside the one core a gateway instance has. Nothing imported those names
+  from the root. It imports nothing now, and the check loads in 25 ms.
+- *"No progress for 104 s" is not a reason.* The first version of the file carried only the time,
+  so the check could say *that* a worker was stuck and not *why*, though the worker knew. The file
+  carries the worker's own reason now, and a start writes "no progress yet" over the file an earlier
+  run left, so a worker never falls back to asking a server it does not have.
+- *A pause must wake after the turn, not at it.* The loop woke at the very moment the heartbeat
+  went stale, when its age equals the maximum and is not yet older, and said nothing until the next
+  pass — an hour later for the sweep. It wakes a second after, and again until it has been said.
+- *aiokafka keeps the assignment when the broker goes away.* Seen live: with Kafka stopped the
+  consumer kept `aira.anomaly-rules` partition 0 and stopped getting fetch answers, which is the
+  only difference from a quiet topic — the reason the idle beat asks for answers, not for an
+  assignment or a connection.
+- `STAB-BG-5`'s anchor matched one level shallower than the loop it guards once the loop's body
+  moved in, and its mutant no longer compiled; re-anchored.
+- *A live test must not read a start as an outage.* Proving the Kafka test could fail, the first run
+  replaced the consumer with one built with `HB-3`'s defect and stopped Kafka seven seconds later —
+  before that consumer had joined — and the test failed reading *no progress since it started*,
+  which says nothing about the defect. Each outage test now waits for the workers to make progress
+  first. Run again, the defective consumer stayed healthy through the whole outage and the test
+  failed on exactly that: *the consumer reads unhealthy: not within 240s*.
+
+**Measured.** 23 mutations `HB-1`–`HB-23`, all caught. Live, on a stack of its own built from this
+tree: every long-running container `healthy` 2 minutes after `make up-full`, with nothing about
+health in Compose. Kafka stopped — the consumer beat for the 30 s its broker may be silent, then
+said so; Docker marked it and the relay `unhealthy` about three minutes after the stop, and both
+`healthy` within 10 s of Kafka's return; the event written meanwhile arrived. PostgreSQL stopped —
+the relay (*failed to resolve host 'postgres'*), a sweep looping every two seconds beside the
+stack's own, and a consumer handed an event straight from the broker (*held for retry*) each read
+unhealthy with its reason; back, the relay beat within 4 s and the held event was applied. The
+three tests take 6 minutes.
+
+**Not built**, from the same ticket: how long the oldest pending outbox event has waited in
+Management's readiness, and metrics of the workers' progress (`FRD-153` §6).
+
+---
+
 ## The two rounds on a stack of their own: what the live layers now hold (2026-11-19)
 
 Before the stability fixes and the directory account in `master` landed, the owner asked whether the

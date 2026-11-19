@@ -8,23 +8,42 @@ for an incident and the most sensitive thing AIRA holds. Two clocks, deliberatel
 - **Record retention** — installation-wide, off by default (``AIRA_LOG_RETENTION_DAYS``). When set,
   whole rows older than that are removed.
 
-Run it periodically: ``python -m aira_gateway.retention``.
+Run it periodically: ``python -m aira_gateway.retention`` sweeps once, for a scheduler, and
+``python -m aira_gateway.retention --loop`` sweeps again after every pause until SIGTERM, keeping
+the heartbeat its container's healthcheck reads (`FRD-153`).
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
+import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aira_common.heartbeat import Heartbeat
 from aira_common.logging import get_logger
+from aira_common.periodic import Wait, run_every
+from aira_gateway.db.errors import loggable
 from aira_gateway.db.models import RequestLog, RetentionRun, UseCaseRead
 
+if TYPE_CHECKING:
+    from aira_gateway.config import GatewaySettings
+
 DEFAULT_RETENTION_DAYS = 7
+
+#: The pause between two sweeps of ``--loop``, unless ``--interval`` names another.
+DEFAULT_INTERVAL_SECONDS = 3600.0
+#: What a sweep may take, on top of two pauses, before the heartbeat of a looping sweep is stale:
+#: one sweep that fails is not yet a sweep that has stopped, and two in a row are.
+SWEEP_ALLOWANCE_SECONDS = 600.0
 
 _log = get_logger("aira_gateway.retention")
 
@@ -163,13 +182,85 @@ class RetentionService:
         return _affected(result)
 
 
-async def _run() -> PruneResult:  # pragma: no cover - thin process wrapper
-    from aira_gateway.config import GatewaySettings, configure_process
+def max_age_for(interval: float) -> float:
+    """How old a looping sweep's heartbeat may grow: two pauses, and the time a sweep takes."""
+    return 2 * interval + SWEEP_ALLOWANCE_SECONDS
+
+
+class SweepFailed(Exception):
+    """A sweep that did not finish, said without the values its statement was about."""
+
+
+Prune = Callable[[], Awaitable[PruneResult]]
+
+
+def sweep_once(prune: Prune) -> None:
+    """One sweep, its outcome printed. A database's failure is raised as :class:`SweepFailed`, its
+    message cut as every database error this plane logs is (:func:`loggable`)."""
+    try:
+        result = asyncio.run(prune())
+    except SQLAlchemyError as exc:
+        raise SweepFailed(f"{type(exc).__name__}: {loggable(exc)}") from exc
+    print(f"[retention] {result}", flush=True)
+
+
+def sweep_forever(
+    prune: Prune,
+    *,
+    interval: float | None = None,
+    max_age: float | None = None,
+    stop: threading.Event | None = None,
+    wait: Wait | None = None,
+) -> None:
+    """Sweep now and again after every pause until SIGTERM; a finished sweep is a heartbeat."""
+    pause = DEFAULT_INTERVAL_SECONDS if interval is None else interval
+    heartbeat = Heartbeat("retention", max_age_for(pause) if max_age is None else max_age, log=_log)
+    run_every(
+        pause,
+        lambda: sweep_once(prune),
+        heartbeat=heartbeat,
+        log=_log,
+        expected=(SweepFailed,),
+        stop=stop,
+        wait=wait,
+    )
+
+
+def arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m aira_gateway.retention",
+        description="Remove stored payloads and rows past their retention: once, or with --loop "
+        "again after every pause.",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Sweep again after every pause until SIGTERM, and keep the heartbeat the container's "
+        "healthcheck reads.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=None,
+        help=f"Seconds between two sweeps with --loop (default {DEFAULT_INTERVAL_SECONDS:g}).",
+    )
+    parser.add_argument(
+        "--max-age",
+        type=float,
+        default=None,
+        dest="max_age",
+        help="Seconds without a finished sweep before the container reads unhealthy, with --loop "
+        f"(default two intervals and {SWEEP_ALLOWANCE_SECONDS:g}).",
+    )
+    parsed = parser.parse_args(argv)
+    if not parsed.loop and (parsed.interval is not None or parsed.max_age is not None):
+        parser.error("--interval and --max-age apply to --loop")
+    return parsed
+
+
+async def _prune(settings: GatewaySettings) -> PruneResult:  # pragma: no cover - process wrapper
     from aira_gateway.db.base import build_engine, build_sessionmaker
 
-    settings = GatewaySettings()
-    # An erasure nobody can see afterwards is the one thing this sweep must not be (`FRD-615`).
-    configure_process(settings)
     engine = build_engine(settings.database_url(use_sqlite=False))
     try:
         service = RetentionService(
@@ -183,8 +274,22 @@ async def _run() -> PruneResult:  # pragma: no cover - thin process wrapper
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin process wrapper
-    result = asyncio.run(_run())
-    print(f"[retention] {result}")
+    from aira_gateway.config import GatewaySettings, configure_process
+
+    parsed = arguments(argv)
+    settings = GatewaySettings()
+    # An erasure nobody can see afterwards is the one thing this sweep must not be (`FRD-615`).
+    configure_process(settings)
+    if not parsed.loop:
+        result = asyncio.run(_prune(settings))
+        print(f"[retention] {result}")
+        return 0
+    try:
+        sweep_forever(lambda: _prune(settings), interval=parsed.interval, max_age=parsed.max_age)
+    except ValueError as exc:
+        # What the loop refuses before its first sweep: a pause or an age that cannot work.
+        print(f"retention: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 

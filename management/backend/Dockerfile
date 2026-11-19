@@ -9,7 +9,7 @@
 # One image serves three roles, all sharing this codebase and configuration:
 #   - the HTTP API            (default command, uvicorn on the ASGI app)
 #   - schema migrations       (`python manage.py migrate`)
-#   - the outbox relay        (`python manage.py relay`, run periodically)
+#   - the outbox relay        (`python manage.py relay --loop`, or once per run of a scheduler)
 
 # ---- build ---------------------------------------------------------------------------------
 FROM python:3.14-slim-bookworm AS builder
@@ -58,15 +58,20 @@ COPY --from=builder --chown=aira:aira /app/.venv /app/.venv
 # not part of the installed package.
 COPY --from=builder --chown=aira:aira /app/management/backend/manage.py /app/manage.py
 
+# `AIRA_HEALTH_PORT`: where the healthcheck asks a process that keeps no heartbeat — the API's own
+# `/healthz`.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DJANGO_SETTINGS_MODULE=aira_management.config.settings
+    DJANGO_SETTINGS_MODULE=aira_management.config.settings \
+    AIRA_HEALTH_PORT=8002
 
 USER aira
 EXPOSE 8002
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-    CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/healthz').read()"]
+# **One check for every process this image runs**, as in the gateway's: the relay's heartbeat when
+# it keeps one, the API's `/healthz` otherwise.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+    CMD ["python", "-m", "aira_common.healthcheck"]
 
 CMD ["uvicorn", "aira_management.config.asgi:application", "--host", "0.0.0.0", "--port", "8002"]

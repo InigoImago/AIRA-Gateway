@@ -588,17 +588,18 @@ control that depends on the event bus fails exactly when the bus is the problem.
 |---|---|---|---|
 | `gateway` | `aira-gateway` · `uvicorn` | 8001 | The API clients call, the anomaly evaluator, and — where a relay is named — the mail notifier |
 | `gateway-consumer` | same image · `python -m aira_gateway.consumer.worker` | — | Applies config events to the read-model |
-| `gateway-retention` | same image · `python -m aira_gateway.retention` | — | Clears expired stored content; one pass, then exits |
+| `gateway-retention` | same image · `python -m aira_gateway.retention --loop` | — | Clears expired stored content, hourly |
 | `management` | `aira-management` · Django | 8002 | Control-plane REST API |
-| `management-relay` | same image · `manage.py relay` | — | Publishes the pending outbox to Kafka; one pass, then exits |
+| `management-relay` | same image · `manage.py relay --loop` | — | Publishes the pending outbox to Kafka, every 10 seconds |
 | `frontend` | `aira-frontend` · nginx | 8080 (published on 4200) | The SPA, plus `/api` and `/gw` proxies |
 
-The two one-pass jobs are scheduled from outside: the Compose stack wraps each in a shell loop
-(the relay every 10 seconds, retention hourly), and a deployment runs them from cron, a systemd
-timer or a CronJob ([`DEPLOYMENT.md`](DEPLOYMENT.md) §6). Migrations and topic creation run as
-one-shot containers before the long-lived ones (`gateway-migrate`, `management-migrate`,
-`kafka-topics`). Running the stack, from a laptop to your own infrastructure:
-[`deployment/`](deployment/README.md).
+The relay and the retention sweep loop by themselves, and without `--loop` each does one pass and
+exits, for cron, a systemd timer or a CronJob ([`DEPLOYMENT.md`](DEPLOYMENT.md) §6). Each
+worker — these two and the consumer — writes a heartbeat when it makes progress, and the images'
+one healthcheck reads it; the servers answer `/healthz` ([`DEPLOYMENT.md`](DEPLOYMENT.md) §1).
+Migrations and topic creation run as one-shot containers before the long-lived ones
+(`gateway-migrate`, `management-migrate`, `kafka-topics`). Running the stack, from a laptop to your
+own infrastructure: [`deployment/`](deployment/README.md).
 
 ---
 

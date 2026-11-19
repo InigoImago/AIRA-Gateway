@@ -435,15 +435,14 @@ services:
     networks: [aira]
     restart: unless-stopped
 
-  # Same image, second process: applies the config events into the gateway's read-model.
+  # Same image, second process: applies the config events into the gateway's read-model. Its
+  # health is the heartbeat it writes on progress — the image's own check reads it — so it reads
+  # unhealthy while it waits for Kafka or holds an event the database cannot take.
   gateway-consumer:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     build: *gateway-build
     container_name: ${AIRA_STACK:-aira}-gateway-consumer
     command: ["python", "-m", "aira_gateway.consumer.worker"]
-    # A worker, not a server — the image's HTTP healthcheck would never pass.
-    healthcheck:
-      disable: true
     environment: *gateway-env
     depends_on:
       gateway-migrate:
@@ -469,19 +468,14 @@ services:
     networks: [aira]
     restart: unless-stopped
 
-  # `manage.py relay` publishes the pending outbox rows once and exits — it is not a daemon.
-  # This loop is the development-grade scheduler; in a real deployment use a cron job, a systemd
-  # timer or a Kubernetes CronJob (docs/DEPLOYMENT.md §6).
+  # `manage.py relay --loop` publishes the pending outbox rows, pauses, and runs again until it is
+  # stopped. A run that finished is a heartbeat, which the image's own check reads; a run that
+  # failed is said in the log and is none (docs/DEPLOYMENT.md §1).
   management-relay:
     image: aira-management:${AIRA_IMAGE_TAG:-dev}
     build: *management-build
     container_name: ${AIRA_STACK:-aira}-management-relay
-    command:
-      - /bin/sh
-      - -c
-      - 'while true; do python manage.py relay || true; sleep ${AIRA_RELAY_INTERVAL:-10}; done'
-    healthcheck:
-      disable: true
+    command: ["python", "manage.py", "relay", "--loop", "--interval", "${AIRA_RELAY_INTERVAL:-10}"]
     environment: *management-env
     depends_on:
       management-migrate:
@@ -492,18 +486,14 @@ services:
     restart: unless-stopped
 
   # Stored prompts and responses are personal data; nothing removes them unless something runs
-  # this. Hourly here — in a real deployment use a cron job, a systemd timer or a Kubernetes
-  # CronJob, the same as the relay (docs/DEPLOYMENT.md §6).
+  # this. Hourly, as a loop of its own, with the same heartbeat as the relay: a sweep that finished
+  # is one, a sweep that failed is said and is none.
   gateway-retention:
     image: aira-gateway:${AIRA_IMAGE_TAG:-dev}
     build: *gateway-build
     container_name: ${AIRA_STACK:-aira}-gateway-retention
     command:
-      - /bin/sh
-      - -c
-      - 'while true; do python -m aira_gateway.retention || true; sleep ${AIRA_RETENTION_INTERVAL:-3600}; done'
-    healthcheck:
-      disable: true
+      ["python", "-m", "aira_gateway.retention", "--loop", "--interval", "${AIRA_RETENTION_INTERVAL:-3600}"]
     environment: *gateway-env
     depends_on:
       gateway-migrate:

@@ -462,14 +462,28 @@ alembic upgrade head
 ```
 
 Then start the gateway, the control plane, the console and the gateway's config consumer as
-long-running processes, and **schedule the other two**, which each do one pass and exit:
+long-running processes, and the other two as well, each looping by itself — or schedule them, and
+each does one pass and exits:
 
-- **the relay** (`python manage.py relay`) — every minute is the intended shape, and the Compose
-  services loop every ten seconds. Without it nothing configured in the console reaches the
-  gateway.
-- **the retention sweep** (`python -m aira_gateway.retention`) — hourly is right. It is what deletes
-  expired prompts, and if it does not run, nothing is deleted and your retention policy is a
-  sentence in a document.
+- **the relay** — `python manage.py relay --loop` runs every ten seconds (`--interval`); without
+  `--loop`, every minute from a scheduler is the intended shape. Without it nothing configured in
+  the console reaches the gateway.
+- **the retention sweep** — `python -m aira_gateway.retention --loop` runs hourly; without
+  `--loop`, hourly from a scheduler. It is what deletes expired prompts, and if it does not run,
+  nothing is deleted and your retention policy is a sentence in a document.
+
+### Health
+
+Every long-running process reports its own health through the image's healthcheck,
+`python -m aira_common.healthcheck`, and needs no check of yours. The gateway and the control plane
+answer `/healthz`. The consumer, and the relay and the sweep with `--loop`, write a heartbeat
+each time they make progress — an event applied, a run or a sweep finished — and read unhealthy
+once it is older than they allow: 90 seconds for the consumer, two minutes for the relay, two
+hours and ten minutes for the sweep. So the consumer reads unhealthy while it waits for Kafka or
+holds an event the database cannot take, and the relay while its runs fail. The reason is in
+`docker inspect --format '{{json .State.Health.Log}}' <container>`, and the whole table is in
+[`DEPLOYMENT.md` §1](../DEPLOYMENT.md#what-a-containers-health-says). Under a scheduler, a pass's
+exit status is its health, and the scheduler has it.
 
 ---
 
@@ -526,7 +540,8 @@ not write — both are visible in the gateway's log.
 
 - [ ] `/readyz` reports `"source": "vault"` and no plaintext credential remains in any env file
 - [ ] `AIRA_ENVIRONMENT` is not `local`, and both planes started anyway
-- [ ] The relay and the retention sweep are scheduled, and each has run once
+- [ ] The relay and the retention sweep run — looping, or scheduled — and each has run once
+- [ ] Every container reads `healthy` (`docker ps`), and nothing switches a healthcheck off
 - [ ] All nine topics exist and are compacted
 - [ ] Every model in the catalog is approved deliberately, not by the migration that approved
       pre-existing rows

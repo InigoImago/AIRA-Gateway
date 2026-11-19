@@ -56,8 +56,8 @@ COMPOSE_ONLY = {
     "AIRA_VERSION",
     "AIRA_IMAGE_REGISTRY",
     "AIRA_PULL_POLICY",
-    # Read by the compose file's **own shell**, in the `while true; do … sleep ${…}` commands that
-    # drive the relay and the retention sweep. Not settings, and not meant to be.
+    # Read by Compose into the `--interval` of the relay's and the retention sweep's own loops. Not
+    # settings, and not meant to be: the pause is an argument of the command that runs the loop.
     "AIRA_RELAY_INTERVAL",
     "AIRA_RETENTION_INTERVAL",
     # Which host ports this stack publishes, and what its containers are called. Read by Compose

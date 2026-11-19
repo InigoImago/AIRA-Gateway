@@ -167,7 +167,9 @@ jobs:
   stack:
     name: Stack — integration (strict data mode ${{ matrix.strict_data_mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Fifty, not forty: the suite stops the stack's Kafka and then its PostgreSQL and waits for each
+    # worker's health to follow — about eight minutes of a run that took twenty-seven before them.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:

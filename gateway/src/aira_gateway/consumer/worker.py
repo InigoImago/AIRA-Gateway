@@ -1,22 +1,26 @@
 """Gateway configuration-consumer worker (`FRD-204`).
 
 Consumes the configuration topics and applies each event into the read-model via
-:func:`apply_event`. Client construction is integration-tested (``# pragma: no cover``); the loop
-and the per-message handling are unit-tested against a fake broker.
+:func:`apply_event`, and says how that is going in a heartbeat its container's healthcheck reads
+(`FRD-153`). Client construction is integration-tested (``# pragma: no cover``); the loop, the
+per-message handling and the heartbeat are unit-tested against a fake broker.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 from aiokafka.errors import KafkaError
 from aiokafka.structs import TopicPartition
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aira_common.heartbeat import Heartbeat
 from aira_common.integration_debug import watch
 from aira_common.kafka import (
     CONFIG_TOPICS,
@@ -45,6 +49,15 @@ GROUP_ID = CONSUMER_GROUP
 #: long it was away, and one that is coming back is not hammered meanwhile.
 RETRY_FIRST_SECONDS = 1.0
 RETRY_LONGEST_SECONDS = 30.0
+
+#: How old the consumer's heartbeat may grow before its container reads unhealthy (`FRD-153`).
+MAX_AGE_SECONDS = 90.0
+#: How often an idle consumer that is in contact with its broker says so.
+IDLE_BEAT_SECONDS = 15.0
+#: How long an assigned partition may go without an answer to a fetch before the consumer counts as
+#: out of contact with its broker. A broker holds a fetch at most half a second when nothing is new,
+#: so a reachable one answers many times a second.
+BROKER_SILENCE_SECONDS = 30.0
 
 Sleep = Callable[[float], Awaitable[None]]
 
@@ -175,6 +188,88 @@ async def apply_one_message(
             return event_type
 
 
+class Health:
+    """What the consumer says about itself in its heartbeat (`FRD-153`).
+
+    **A beat is progress**: the consumer started, applied or skipped an event, or is idle with its
+    partitions assigned and its broker answering. **Nothing else is**, and no beat is written while
+    it waits for a broker at start, holds an event for retry — a database that never comes back
+    holds every later event with it — has no partition to read, or hears nothing from the broker it
+    is assigned to; after :data:`MAX_AGE_SECONDS` of that its container reads unhealthy.
+    """
+
+    def __init__(
+        self,
+        heartbeat: Heartbeat,
+        *,
+        clock: Callable[[], float] = time.time,
+        tick: Sleep = asyncio.sleep,
+    ) -> None:
+        self._heartbeat = heartbeat
+        self._clock = clock
+        self._tick = tick
+        self._started = False
+        self._applying = False
+
+    def started(self) -> None:
+        """The broker accepted the consumer."""
+        self._started = True
+        self._heartbeat.beat()
+
+    @contextlib.contextmanager
+    def applying(self) -> Iterator[None]:
+        """An event is in hand — applied, held for retry, or its offset committed."""
+        self._applying = True
+        try:
+            yield
+        finally:
+            self._applying = False
+
+    def applied(self) -> None:
+        """An event was applied or deliberately skipped, and its offset committed or said."""
+        self._heartbeat.beat()
+
+    def check(self, consumer: Any) -> None:
+        """One look at the consumer between events: a beat, or the reason there is none."""
+        reason = self._idle_is_not_progress(consumer)
+        if reason is None:
+            self._heartbeat.beat()
+        else:
+            self._heartbeat.missed(reason)
+
+    def _idle_is_not_progress(self, consumer: Any) -> str | None:
+        if not self._started:
+            return "waiting for Kafka"
+        if self._applying:
+            return "an event is being applied or held for retry"
+        assigned = consumer.assignment()
+        if not assigned:
+            return "no partition is assigned to it"
+        # aiokafka stamps a partition each time its broker answers a fetch for it, events or none,
+        # with the wall clock in milliseconds.
+        now_ms = self._clock() * 1000.0
+        for partition in sorted(assigned):
+            answered_ms = consumer.last_poll_timestamp(partition)
+            if answered_ms is None or now_ms - answered_ms > BROKER_SILENCE_SECONDS * 1000.0:
+                return (
+                    f"its broker has not answered a fetch for {partition.topic} "
+                    f"partition {partition.partition} in {BROKER_SILENCE_SECONDS:.0f} s"
+                )
+        return None
+
+    async def watch(self, consumer: Any) -> None:
+        """Look every :data:`IDLE_BEAT_SECONDS`, for as long as the consumer runs."""
+        while True:
+            await self._tick(IDLE_BEAT_SECONDS)
+            try:
+                self.check(consumer)
+            except Exception as exc:  # noqa: BLE001 - a look that fails is not progress, and is said
+                _log.warning(
+                    "consumer_health_unreadable", error=str(exc), error_type=type(exc).__name__
+                )
+                self._heartbeat.missed(f"its state could not be read: {exc!r}")
+
+
 async def consume_forever(
     consumer: Any,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -182,6 +277,7 @@ async def consume_forever(
     group: str = GROUP_ID,
     *,
     sleep: Sleep = asyncio.sleep,
+    health: Health | None = None,
 ) -> int:
     """Start the consumer, apply everything that arrives, and stop it. Returns messages seen.
 
@@ -195,25 +291,38 @@ async def consume_forever(
     moves past an event :func:`apply_one_message` is still holding, and a restart in that window
     loses it. A stop before the commit delivers the event again, which every handler takes twice
     without harm.
+
+    ``health``, when given, is told of every step and looks at the consumer between events
+    (:class:`Health`).
     """
     seen = 0
+    looking = asyncio.create_task(health.watch(consumer)) if health is not None else None
     try:
         await _start(consumer, target, group, sleep)
+        if health is not None:
+            health.started()
         async for message in consumer:
             seen += 1
-            # `apply_one_message` swallows its own failures, so `applied` carries the difference.
-            with watch(
-                "kafka",
-                "consumer.receive",
-                topic=getattr(message, "topic", None),
-                partition=getattr(message, "partition", None),
-                offset=getattr(message, "offset", None),
-            ) as call:
-                applied = await apply_one_message(sessionmaker, message, sleep=sleep)
-                call.note(event_type=applied, applied=applied is not None)
-            await _commit(consumer, message)
+            with health.applying() if health is not None else contextlib.nullcontext():
+                # `apply_one_message` swallows its own failures; `applied` carries the difference.
+                with watch(
+                    "kafka",
+                    "consumer.receive",
+                    topic=getattr(message, "topic", None),
+                    partition=getattr(message, "partition", None),
+                    offset=getattr(message, "offset", None),
+                ) as call:
+                    applied = await apply_one_message(sessionmaker, message, sleep=sleep)
+                    call.note(event_type=applied, applied=applied is not None)
+                await _commit(consumer, message)
+            if health is not None:
+                health.applied()
         return seen
     finally:
+        if looking is not None:
+            looking.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await looking
         # Also after a start that failed: a client left open is reported by its finaliser while
         # the interpreter shuts down, as a traceback about something else entirely.
         await consumer.stop()
@@ -302,9 +411,15 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
 
     options = consumer_options(settings)
     consumer = AIOKafkaConsumer(*subscriptions(settings.kafka_stage), **options)
+    heartbeat = Heartbeat("consumer", MAX_AGE_SECONDS, log=_log)
+    heartbeat.start()
     try:
         await consume_forever(
-            consumer, sessionmaker, settings.kafka_bootstrap_servers, options["group_id"]
+            consumer,
+            sessionmaker,
+            settings.kafka_bootstrap_servers,
+            options["group_id"],
+            health=Health(heartbeat),
         )
     finally:
         await engine.dispose()

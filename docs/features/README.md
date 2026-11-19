@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**118 of 122 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**119 of 123 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -63,6 +63,7 @@ status that goes stale in the copy nobody opens.
 | [150](FRD-150-each-plane-its-own-credentials.md) | Each plane its own database user and Kafka identity, on one Vault path | 7 (deployment) | ✅ Built |
 | [151](FRD-151-a-models-reasoning-in-opencode.md) | A model's reasoning, shown in OpenCode | 8 | ✅ Built |
 | [152](FRD-152-claudes-thinking-travels-with-the-turn.md) | Claude's thinking travels with the turn that continues it | 8 | ✅ Built |
+| [153](FRD-153-every-process-reports-its-health.md) | Every process reports its own health | 7 (deployment) | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

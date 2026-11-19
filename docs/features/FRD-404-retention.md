@@ -84,10 +84,12 @@ An index on `(use_case, created_at)` keeps the scan from walking a table that on
 
 ### 4.3 Scheduling
 
-The pruner is a one-shot process, like the outbox relay: it does one pass and exits. The
-reference stack runs it in a loop container (`AIRA_RETENTION_INTERVAL`, hourly); a real
-deployment should use cron, a systemd timer or a Kubernetes CronJob. **If nothing schedules it,
-nothing is deleted** — the period configured in the UI is a promise that only this process keeps.
+The pruner does one pass and exits, like the outbox relay — or, with `--loop`, sweeps again after
+every pause until SIGTERM (`FRD-153`). The reference stack runs `--loop` hourly
+(`AIRA_RETENTION_INTERVAL`), and a sweep that finished is a heartbeat its container's healthcheck
+reads; under cron, a systemd timer or a Kubernetes CronJob, the one-pass form is scheduled. **If
+nothing runs it, nothing is deleted** — the period configured in the UI is a promise that only
+this process keeps.
 
 ## 5. Testing & Acceptance
 

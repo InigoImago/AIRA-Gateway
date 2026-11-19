@@ -18,6 +18,9 @@ a crash after publish but before marking re-publishes on the next run — the co
 - **What has been delivered is kept for `KEPT_AFTER_DAYS`, then deleted.** A published row is a
   copy of something the gateway already has, with names in it; it is kept long enough to compare
   what was sent with what arrived. A parked one is kept as long, counted from when it was parked.
+- **With `--loop` it runs again after every pause, until SIGTERM** (`FRD-153`), and a run that
+  finished — published, found nothing pending, or left the outbox to the run holding it — is a
+  heartbeat its container's healthcheck reads. A run that failed is said, and is none.
 """
 
 from __future__ import annotations
@@ -29,11 +32,13 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
+from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.db import Error as DatabaseError
+from django.db import connection, connections
 from django.utils import timezone
 
 from aira_common.counts import display_count
+from aira_common.heartbeat import Heartbeat
 from aira_common.kafka import (
     MAX_EVENT_BYTES,
     AiokafkaProducer,
@@ -42,6 +47,8 @@ from aira_common.kafka import (
     RecordRefused,
     encode_event,
 )
+from aira_common.logging import get_logger
+from aira_common.periodic import run_every
 from aira_management.apps.outbox.models import KEPT_AFTER_DAYS, OutboxEvent
 from aira_management.config.runtime import get_settings
 
@@ -52,6 +59,22 @@ BATCH = 500
 
 #: The advisory lock one relay run holds. Any fixed number; this one spells "AIRA".
 RELAY_LOCK = 0x41495241
+
+#: The pause between two runs of `relay --loop`, unless `--interval` names another.
+DEFAULT_INTERVAL_SECONDS = 10.0
+#: The least age a looping relay's heartbeat may reach: a broker or database restarting fails a few
+#: runs in a row, and that is not yet a relay that has stopped.
+LEAST_MAX_AGE_SECONDS = 120.0
+#: How a run fails in a way its message says all about — a run that stopped at an event, a database
+#: that did not answer. Anything else is logged with its traceback, as a run on its own prints it.
+RUN_FAILURES = (CommandError, DatabaseError)
+
+_log = get_logger("aira_management.relay")
+
+
+def max_age_for(interval: float) -> float:
+    """How old a looping relay's heartbeat may grow: five pauses, and never under two minutes."""
+    return max(5 * interval, LEAST_MAX_AGE_SECONDS)
 
 
 def build_producer() -> Producer:
@@ -138,9 +161,58 @@ def sweep(now: Any) -> int:
 
 
 class Command(BaseCommand):
-    help = "Publish unsent outbox events to Kafka."
+    help = "Publish unsent outbox events to Kafka: once, or again after every pause with --loop."
+
+    def add_arguments(self, parser: CommandParser) -> None:
+        parser.add_argument(
+            "--loop",
+            action="store_true",
+            help="Run again after every pause until SIGTERM, and keep the heartbeat the "
+            "container's healthcheck reads.",
+        )
+        parser.add_argument(
+            "--interval",
+            type=float,
+            default=None,
+            help=f"Seconds between two runs with --loop (default {DEFAULT_INTERVAL_SECONDS:g}).",
+        )
+        parser.add_argument(
+            "--max-age",
+            type=float,
+            default=None,
+            dest="max_age",
+            help="Seconds without a finished run before the container reads unhealthy, with "
+            f"--loop (default five intervals, at least {LEAST_MAX_AGE_SECONDS:g}).",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        interval, max_age = options["interval"], options["max_age"]
+        if not options["loop"]:
+            if interval is not None or max_age is not None:
+                raise CommandError("--interval and --max-age apply to --loop")
+            self._run()
+            return
+        interval = DEFAULT_INTERVAL_SECONDS if interval is None else interval
+        max_age = max_age_for(interval) if max_age is None else max_age
+        try:
+            heartbeat = Heartbeat("relay", max_age, log=_log)
+            run_every(
+                interval, self._run_in_loop, heartbeat=heartbeat, log=_log, expected=RUN_FAILURES
+            )
+        except ValueError as exc:
+            # What the loop refuses before its first run: a pause or an age that cannot work.
+            raise CommandError(str(exc)) from exc
+
+    def _run_in_loop(self) -> None:
+        try:
+            self._run()
+        finally:
+            # **A run's connection is not the next run's.** One the database closed — a restart, a
+            # failover — fails every query on it, so a loop that kept it would fail every run after
+            # it; the run-per-process this loop replaces could not.
+            connections.close_all()
+
+    def _run(self) -> None:
         with exclusive_run() as acquired:
             if not acquired:
                 self.stdout.write("another relay run holds the outbox; nothing done")

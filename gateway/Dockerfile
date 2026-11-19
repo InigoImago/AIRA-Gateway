@@ -7,9 +7,10 @@
 # shares `aira_common` with the management backend; the lockfile lives at the root and covers
 # all members.
 #
-# The same image runs both gateway processes — the HTTP service (default command) and the Kafka
-# config consumer (`python -m aira_gateway.consumer.worker`) — because they share a codebase and
-# configuration. Migrations run from here too (`alembic upgrade head`).
+# The same image runs every gateway process — the HTTP service (default command), the Kafka config
+# consumer (`python -m aira_gateway.consumer.worker`) and the retention sweep
+# (`python -m aira_gateway.retention --loop`) — because they share a codebase and configuration.
+# Migrations run from here too (`alembic upgrade head`).
 
 # ---- build ---------------------------------------------------------------------------------
 FROM python:3.14-slim-bookworm AS builder
@@ -62,15 +63,22 @@ COPY --from=builder --chown=aira:aira /app/.venv /app/.venv
 COPY --from=builder --chown=aira:aira /app/gateway/alembic.ini /app/gateway/alembic.ini
 COPY --from=builder --chown=aira:aira /app/gateway/migrations /app/gateway/migrations
 
+# `AIRA_HEALTH_PORT`: where the healthcheck asks a process that keeps no heartbeat — the API's own
+# `/healthz`.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    AIRA_HEALTH_PORT=8001
 
 USER aira
 EXPOSE 8001
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-    CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/healthz').read()"]
+# **One check for every process this image runs.** A worker writes a heartbeat when it makes
+# progress, and the check judges it by the age the worker wrote into it; the API keeps none, and the
+# check asks its `/healthz`. It prints why, which `docker inspect` keeps. The start period covers a
+# worker's first progress — the consumer's broker accepting it, the first sweep finishing.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+    CMD ["python", "-m", "aira_common.healthcheck"]
 
 # A stopping container waits this long for running requests, then cancels the ones still running —
 # most streams, since a model's answer usually takes longer — and the application's shutdown cuts
