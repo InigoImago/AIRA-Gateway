@@ -1,0 +1,102 @@
+name: Known vulnerabilities
+
+# **The newest release, every night, against that night's vulnerability data** (`FRD-154`).
+#
+# A vulnerability is almost always published after the code that has it, so the report a release
+# carries is true of the day it was made and of no day after. This reads the documents the newest
+# Release attached (`FRD-148`) again every night and **fails when something is to act on**: critical
+# or high with a fixed version, or listed by CISA as exploited. GitHub mails a failed scheduled run
+# to whoever last changed its schedule, which is the alarm. Critical or high without a fix is listed
+# without failing, and a vulnerability accepted in `.github/accepted-vulnerabilities.toml` is listed
+# as accepted until its date.
+#
+# A workflow of its own, because its answer changes with a database and not with a commit. In
+# `ci.yml` it would gate every push on whatever was published that morning. A scheduled run uses
+# the default branch, so the tool and the acceptances are `main`'s, and the documents are the
+# Release's own: nothing here is rebuilt, and nothing can be written.
+
+on:
+  schedule:
+    # 04:17 UTC: off the top of the hour, when GitHub's scheduled runs queue longest.
+    - cron: "17 4 * * *"
+  # A run on demand: after an acceptance or a release, to see the answer before the night does.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A run asked for by hand while the night's is going waits for it, rather than racing it.
+concurrency:
+  group: known-vulnerabilities
+  cancel-in-progress: false
+
+jobs:
+  newest-release:
+    name: Check the newest release for known vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The release tools need Python and nothing from PyPI.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      # The Release GitHub calls the latest: neither a draft nor a pre-release, and the one a reader
+      # of the repository is offered. Its tag was chosen by whoever pushed it, so it is checked for
+      # the spelling of a release version before any later step can read it.
+      - name: Find the newest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="$(gh release view --json tagName --jq .tagName)"
+          if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the newest release is not named as a release version (vX.Y.Z)"
+            exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      # The documents and their checksums, which the check compares before reading anything.
+      - name: Download what it contains
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$TAG" --dir "$RUNNER_TEMP/sboms" \
+            --pattern 'aira-*.cdx.json' --pattern 'aira-*.cdx.json.sha256'
+
+      # Pinned like the release job's: the same Grype answers the night as answered the release.
+      # Its database is fetched when the check starts, never from a cache.
+      - name: Install Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: v0.121.3
+          cache-db: false
+
+      # Fails when something is to act on (status 1) and when the check could not be made
+      # (status 2): either way the night's mail says so.
+      - name: Check it against tonight's vulnerability data
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: |
+          python tools/release_vulnerabilities.py "$TAG" --grype "$GRYPE" \
+            --sboms "$RUNNER_TEMP/sboms" \
+            --accepted .github/accepted-vulnerabilities.toml \
+            --out "$RUNNER_TEMP/report" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      # The report is in the run's summary too; this keeps the file, for whoever answers the mail.
+      - name: Keep the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: known-vulnerabilities
+          path: ${{ runner.temp }}/report
+          if-no-files-found: ignore
+          retention-days: 30

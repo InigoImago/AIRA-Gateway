@@ -193,7 +193,8 @@ FRDs: ~~`FRD-600-governance-views`~~ — never written; the governance view is `
 **Goal:** Production polish and a path off the developer machine.
 
 **Partly delivered.** Capacity is measured (`FRD-136`), releases are published and run from the
-registry (`FRD-137`, `FRD-138`) and say what they contain (`FRD-148`, SBOMs), what a role may do is
+registry (`FRD-137`, `FRD-138`) and say what they contain (`FRD-148`, SBOMs) and what of it is known
+to be vulnerable, at the release and every night after (`FRD-154`), what a role may do is
 a set of permissions an installation can change (`FRD-614`), the stages may share a Kafka cluster
 and a Redis Sentinel (`FRD-623`), and each plane has its own database user and Kafka identity
 (`FRD-150`).

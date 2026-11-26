@@ -82,13 +82,23 @@ class Notes:
     body: str
 
     def markdown(
-        self, *, version: str, commits: list[str], images: list[str], assets: Sequence[str] = ()
+        self,
+        *,
+        version: str,
+        commits: list[str],
+        images: list[str],
+        assets: Sequence[str] = (),
+        vulnerabilities: str = "",
     ) -> str:
         """The GitHub Release body: what the tagger wrote, then what the range contains.
 
         The prose comes first and the generated part second, on purpose. A commit list is evidence,
         not a description — it answers *what moved* and never *why it matters*, and a release whose
         notes are only a commit list is the thing this module was written to stop.
+
+        `vulnerabilities` is the section `release_vulnerabilities.py` wrote (`FRD-154`), with its
+        own heading: what was known about the images on the day they were published, before the
+        files that carry the full list.
         """
         sections = [self.body.strip()]
         if commits:
@@ -101,6 +111,8 @@ class Notes:
                 + " Each carries its SBOM and provenance as attestations: "
                 + "`docker buildx imagetools inspect <image> --format '{{ json .SBOM }}'`."
             )
+        if vulnerabilities.strip():
+            sections.append(vulnerabilities.strip())
         if assets:
             sections.append(
                 "## Attached\n\n"
@@ -274,6 +286,11 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="a file attached to the release, to list in the notes; repeatable",
     )
+    parser.add_argument(
+        "--vulnerabilities",
+        type=Path,
+        help="the known-vulnerabilities section release_vulnerabilities.py wrote",
+    )
     arguments = parser.parse_args(argv)
 
     if parse(arguments.version) is None:
@@ -299,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
             commits=commits_since(previous(arguments.version), arguments.version),
             images=arguments.image,
             assets=arguments.asset,
+            vulnerabilities=(
+                arguments.vulnerabilities.read_text() if arguments.vulnerabilities else ""
+            ),
         ),
         end="",
     )

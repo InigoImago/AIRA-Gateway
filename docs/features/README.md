@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**122 of 125 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**123 of 126 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -64,6 +64,7 @@ status that goes stale in the copy nobody opens.
 | [151](FRD-151-a-models-reasoning-in-opencode.md) | A model's reasoning, shown in OpenCode | 8 | ✅ Built |
 | [152](FRD-152-claudes-thinking-travels-with-the-turn.md) | Claude's thinking travels with the turn that continues it | 8 | ✅ Built |
 | [153](FRD-153-every-process-reports-its-health.md) | Every process reports its own health | 7 (deployment) | ✅ Built |
+| [154](FRD-154-known-vulnerabilities-in-a-release.md) | A release is checked for known vulnerabilities, when it is made and every night after | 7 | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

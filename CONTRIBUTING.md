@@ -47,6 +47,10 @@ read before changing anything substantial.
    opens your editor on `docs/RELEASE-TEMPLATE.txt`; five rules refuse an annotation that says
    nothing, and a rejected one is deleted again so the version number is not spent. Details and the
    two failures that produced the rules: [`docs/DEPLOYMENT.md` §1b](docs/DEPLOYMENT.md#1b-releasing-cutting-a-version-and-publishing-the-images).
+   **Every release is read for known vulnerabilities, and the newest one again every night**
+   (`FRD-154`). When the night's run fails, update what the report names and release, or accept
+   the finding in `.github/accepted-vulnerabilities.toml`, with a reason and a date at most a year
+   ahead.
 
 ## Testing
 

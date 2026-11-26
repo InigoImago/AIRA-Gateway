@@ -514,16 +514,26 @@ against the gateway), the integration job, the browser job (with the Windows sig
 once with strict data mode on and once off — *and* the description check all pass on the tagged
 commit — the job that pushes the images declares `needs` on all six, and every later release job
 waits for it, so a green release is a green commit by construction. A **GitHub Release** is created
-last, carrying your words, then the commits since the previous release, then the image references,
-then the files attached to it: the OpenCode budget plugin as an archive (below), and the software
-bills of materials below — each beside its `.sha256`, and each, like every image, **signed**
-(below).
+last. It carries, in order:
+- your words;
+- the commits since the previous release;
+- the image references;
+- what was known to be vulnerable in them that day (below);
+- the files attached to it: the OpenCode budget plugin as an archive, the software bills of
+  materials and the vulnerability report (all below).
 
-The release is four jobs, cut by what each may write: one checks the description and writes
-nothing; one pushes the images and can write packages, running Docker's build actions and nothing
-else from outside GitHub; one describes the images and writes nothing; and the last writes the
-Release and signs what it names, running GitHub's own actions alone. Every action is pinned to the
-commit of a release, no job keeps the token in its clone, and none of them restores a cache.
+Each file sits beside its `.sha256`, and each, like every image, is **signed** (below).
+
+The release is five jobs, cut by what each may write:
+- one checks the description and writes nothing;
+- one pushes the images and can write packages, running Docker's build actions and nothing else
+  from outside GitHub;
+- one describes the images, and one reads that description for known vulnerabilities; neither
+  writes anything;
+- the last writes the Release and signs what it names, running GitHub's own actions alone.
+
+Every action is pinned to the commit of a release, no job keeps the token in its clone, and none of
+them restores a cache. The nightly check below is held to the same rules.
 
 Each image lands under three tags:
 
@@ -565,12 +575,79 @@ documents are what runs.
 The two formats come from two scanners (BuildKit's and Syft), so they can differ slightly in what
 each counts as a package. BuildKit's documents beside the images are not signed beyond the
 registry's own integrity; the files on the Release are, like the images (below). Releases up to
-`v0.1.7` have no documents. Feeding one to a scanner — Dependency-Track, Trivy, Grype — and deciding
-what a finding means for an installation is the reader's step:
+`v0.1.7` have no documents. The release reads them for known vulnerabilities itself (next section).
+You can feed them to a scanner of your own as well; Dependency-Track, for one, keeps watching what
+it was given. What a finding means for your installation is yours to decide:
 
 ```bash
 grype sbom:aira-gateway-vX.Y.Z.cdx.json
 ```
+
+### Known vulnerabilities — at the release, and every night after
+
+The release reads its own documents with Grype, against that day's vulnerability database. What it
+found is attached as `aira-vulnerabilities-vX.Y.Z.md`, signed and beside its `.sha256`. The notes
+carry the counts per document and every finding to act on. Every finding is in one group:
+
+| Group | What it is | What follows |
+| --- | --- | --- |
+| to act on | critical or high with a fixed version, or listed by CISA as exploited, whatever its severity | the nightly check fails |
+| to watch | critical or high with no fixed version yet | listed; it moves to *to act on* on the night a fix appears |
+| accepted | named in `.github/accepted-vulnerabilities.toml`, until its date | listed with its reason |
+| the rest | medium and below | counted per document |
+
+**A finding does not stop a release.** By the time the documents exist, the images are pushed, and
+removing a finding takes an update and a new release whatever the check answers. So the release
+says what it carries, and the night keeps saying it. A check that could not be made does not stop it
+either: the database out of reach, say, or a checksum that does not match. The notes then say *not
+checked*, and why.
+
+**Every night** at 04:17 UTC, the workflow *Known vulnerabilities* reads the newest Release's
+documents again, against that night's data: a vulnerability is almost always published after the
+code that has it. It **fails** when something is to act on, or when the check could not be made.
+GitHub mails a failed scheduled run to whoever last changed its schedule.
+- The run's summary is the report, and the file is kept for 30 days.
+- *Run workflow* on the workflow's page starts a check by hand.
+
+When it fails, answer each finding to act on in one of two ways:
+
+- **Update it.** The report names the version that fixes it. A Python package is raised in
+  `uv.lock`, an npm package of the console in `management/frontend/package-lock.json`, and a GitHub
+  Action where it is pinned. An operating-system package (Debian, Alpine) is replaced when the
+  image's base is rebuilt with the fix: its maintainers do that after the distribution publishes the
+  fix, and every release builds from the newest base. Then release. From the next night the newest
+  release is the one that carries the update.
+- **Or accept it**, with a reason a reviewer can check and a date at most a year ahead:
+
+  ```toml
+  [[accepted]]
+  vulnerability = "CVE-2026-12345"
+  package = "libexpat1"
+  documents = ["aira-gateway", "aira-management"]   # optional; every document when left out
+  reason = "Only reachable by parsing XML, which neither service does."
+  until = 2027-02-28
+  ```
+
+  The night reads the file from `main`, so an acceptance holds from the next run on. A release reads
+  it from the commit it was made from. From the day after `until`, the finding counts again.
+
+What it does not see:
+
+- **Releases other than the newest.** An installation on an older version checks its own, with
+  Grype on the path. Exit status 1 means something to act on, 2 that the check could not be made:
+
+  ```bash
+  v=vX.Y.Z
+  gh release download "$v" --repo InigoImago/AIRA-Gateway -p 'aira-*.cdx.json*' -D "sboms-$v"
+  python tools/release_vulnerabilities.py "$v" --sboms "sboms-$v" --out "report-$v"
+  ```
+
+- **What the documents do not list** (above).
+- **A schedule GitHub switched off.** In a public repository, GitHub disables a schedule after 60
+  days without activity in the repository, and says so by mail. One click turns it on again.
+
+The reports and run summaries are as public as the repository. So are the documents, which anybody
+can read with the same scanner.
 
 ### The OpenCode budget plugin, attached
 

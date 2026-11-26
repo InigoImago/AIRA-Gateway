@@ -606,13 +606,86 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  vulnerabilities:
+    name: Check what the release contains for known vulnerabilities
+    # What was known about the release on the day it was made (`FRD-154`): the documents the
+    # inventory just wrote, read by Grype against that day's vulnerability database. **Reported, not
+    # refused** (`ADR-0055`): the images are pushed by now, and removing a finding takes an update —
+    # a new commit and a new release — whatever this job answers. So the report is attached and
+    # signed, its counts are in the notes, and a check that could not be made says so in both
+    # rather than holding back a Release whose images exist. The alarm is the nightly check
+    # (`known-vulnerabilities.yml`). A job of its own, because Grype is fetched by a third party's
+    # action, and nothing here can write.
+    needs: [inventory]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.ref_name }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Refuse a tag name that is not a release version
+        run: |
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::the pushed tag is not a release version (vX.Y.Z)"
+            exit 1
+          fi
+
+      # The tool and the accepted vulnerabilities as the tagged commit has them.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The release tools need Python and nothing from PyPI.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Collect the documents the inventory wrote
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-sboms
+          path: ${{ runner.temp }}/sboms
+
+      # Grype fetches its database itself when the check starts, never from a cache: a cache is
+      # written by an ordinary push, and a database restored from one is as old as that push.
+      - name: Install Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: v0.121.3
+          cache-db: false
+
+      - name: Check what the release contains for known vulnerabilities
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: |
+          python tools/release_vulnerabilities.py "$TAG" --grype "$GRYPE" \
+            --sboms "$RUNNER_TEMP/sboms" \
+            --accepted .github/accepted-vulnerabilities.toml \
+            --out "$RUNNER_TEMP/vulnerabilities" \
+            --notes "$RUNNER_TEMP/vulnerabilities/notes.md" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --report-only
+
+      - name: Hand the report to the release job
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-vulnerabilities
+          path: ${{ runner.temp }}/vulnerabilities
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish the release notes, signed
     # After the images, never before, and it is what makes a release legible: the tag's own
     # message, then the commits since the previous release, then the three image references. A
     # failed build therefore leaves a tag with no Release against it — visibly unfinished, rather
     # than a version that silently names nothing.
-    needs: [publish, inventory]
+    needs: [publish, inventory, vulnerabilities]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -663,6 +736,17 @@ jobs:
           name: release-sboms
           path: ${{ runner.temp }}/assets
 
+      - name: Collect the vulnerability report
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-vulnerabilities
+          path: ${{ runner.temp }}/vulnerabilities
+
+      # Attached and signed like every other file the release carries; the section beside it goes
+      # into the notes (`FRD-154`).
+      - name: Attach the vulnerability report
+        run: cp "$RUNNER_TEMP"/vulnerabilities/aira-vulnerabilities-* "$RUNNER_TEMP/assets/"
+
       # The OpenCode budget plugin as an archive, attached to the Release: an address that does not
       # move and needs no credentials, for a rollout that puts it on workstations. GitHub's npm
       # registry would need a token even to install a public package. Packed here, from the tagged
@@ -680,6 +764,7 @@ jobs:
           subject-path: |
             ${{ runner.temp }}/assets/*.tar.gz
             ${{ runner.temp }}/assets/*.cdx.json
+            ${{ runner.temp }}/assets/*.md
 
       - name: Sign the gateway image
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -718,6 +803,7 @@ jobs:
             --image "ghcr.io/$owner/aira-management:$version" \
             --image "ghcr.io/$owner/aira-frontend:$version" \
             "${assets[@]}" \
+            --vulnerabilities "$RUNNER_TEMP/vulnerabilities/notes.md" \
             > "$RUNNER_TEMP/notes.md"
           # **The title comes from the same tool as the body.** It was a second
           # `git tag --format` here, and that one was never checked — so when the tag arrived

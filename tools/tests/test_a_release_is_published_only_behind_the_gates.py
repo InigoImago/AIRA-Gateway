@@ -12,7 +12,9 @@ Asserted against the parsed YAML wherever the structure carries the meaning, bec
 **And what a release is built from, and who could have changed it** (`ADR-0043`): every action is
 pinned to a commit, no checkout leaves the token in the clone, a job that can write runs only code
 it has to trust, no release job restores a cache, and every file and image a release names is
-signed before the release exists.
+signed before the release exists. Those hold for **every workflow** in `.github/workflows`, the
+nightly check of known vulnerabilities among them (`FRD-154`), so a workflow added later is held
+to them without anybody having to list it.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOWS = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
 MAKEFILE = ROOT / "Makefile"
 
 #: `yaml.safe_load` turns the key `on:` into the boolean `True`, which is why this is spelled as a
@@ -33,11 +36,20 @@ MAKEFILE = ROOT / "Makefile"
 ON = True
 
 #: The jobs that release a version, as opposed to the jobs that check a commit.
-RELEASE_JOBS = {"described", "publish", "inventory", "release"}
+RELEASE_JOBS = {"described", "publish", "inventory", "vulnerabilities", "release"}
 
 
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text())
+
+
+def _every_job() -> list[tuple[str, dict, dict]]:
+    """Every job of every workflow, as `(workflow/job, job, workflow)`."""
+    jobs = []
+    for path in WORKFLOWS:
+        workflow = yaml.safe_load(path.read_text())
+        jobs += [(f"{path.name}/{name}", body, workflow) for name, body in workflow["jobs"].items()]
+    return jobs
 
 
 def _job(name: str) -> dict:
@@ -126,7 +138,7 @@ def test_no_script_has_a_value_the_pusher_chooses_written_into_it() -> None:
     environment instead, where the shell treats a quoted `"$TAG"` as data."""
     spliced = [
         f"{job}: {step.get('name', step.get('run', '')[:40])!r} has {expression}"
-        for job, body in _workflow()["jobs"].items()
+        for job, body, _ in _every_job()
         for step in body.get("steps", [])
         for expression in re.findall(r"\$\{\{[^}]*\}\}", str(step.get("run", "")))
         if " ".join(expression.split()) not in SPLICEABLE
@@ -283,6 +295,7 @@ def test_every_published_image_carries_the_commit_it_was_built_from() -> None:
 RELEASE_PERMISSIONS = {
     "publish": {"contents": "read", "packages": "write"},
     "inventory": {"contents": "read", "packages": "read"},
+    "vulnerabilities": {"contents": "read"},
     "release": {"contents": "write", "id-token": "write", "attestations": "write"},
 }
 
@@ -295,9 +308,10 @@ def test_each_release_job_asks_for_exactly_what_it_uses() -> None:
     for job, expected in RELEASE_PERMISSIONS.items():
         granted = jobs[job].get("permissions")
         assert granted == expected, f"{job} asks for {granted}, not {expected}"
-    assert _workflow()["permissions"] == {"contents": "read"}, (
-        "the workflow's default permissions widened; only the release jobs may write"
-    )
+    for path in WORKFLOWS:
+        assert yaml.safe_load(path.read_text())["permissions"] == {"contents": "read"}, (
+            f"{path.name}'s default permissions widened; only the release jobs may write"
+        )
     others = sorted(j for j, body in jobs.items() if "permissions" in body)
     assert others == sorted(RELEASE_PERMISSIONS), f"{others} ask for permissions of their own"
 
@@ -447,6 +461,8 @@ def test_every_file_the_release_job_wrote_is_attached_and_named(tmp_path: pathli
         "aira-gateway-v1.2.3.cdx.json.sha256",
         "aira-source-v1.2.3.cdx.json",
         "aira-source-v1.2.3.cdx.json.sha256",
+        "aira-vulnerabilities-v1.2.3.md",
+        "aira-vulnerabilities-v1.2.3.md.sha256",
     ]
 
     notes, create = _published(tmp_path, files)
@@ -548,7 +564,8 @@ _PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}$")
 def _uses_lines() -> list[tuple[str, str | None]]:
     return [
         (match["ref"], match["tag"])
-        for line in WORKFLOW.read_text().splitlines()
+        for path in WORKFLOWS
+        for line in path.read_text().splitlines()
         if (match := _USES.match(line))
     ]
 
@@ -561,7 +578,7 @@ def test_every_action_is_pinned_to_the_commit_of_a_release() -> None:
     uses = _uses_lines()
     parsed = [
         str(step["uses"])
-        for body in _workflow()["jobs"].values()
+        for _, body, _ in _every_job()
         for step in body.get("steps", [])
         if "uses" in step
     ]
@@ -584,12 +601,12 @@ def test_no_checkout_leaves_the_token_in_the_clone() -> None:
     workflow pushes to the repository, so no checkout keeps it."""
     checkouts = [
         (job, step)
-        for job, body in _workflow()["jobs"].items()
+        for job, body, _ in _every_job()
         for step in body.get("steps", [])
         if str(step.get("uses", "")).startswith("actions/checkout@")
     ]
 
-    assert len(checkouts) >= len(_workflow()["jobs"]), "a job checks out without the action"
+    assert len(checkouts) >= len(_every_job()), "a job checks out without the action"
     for job, step in checkouts:
         assert step.get("with", {}).get("persist-credentials") is False, (
             f"{job} leaves the token in its clone, for every later step to read"
@@ -612,9 +629,8 @@ def test_a_job_that_can_write_runs_only_code_it_has_to_trust() -> None:
     action beside it. The job that pushes images runs Docker's actions and nothing else from outside
     GitHub; the job that writes the Release and can mint the workflow's identity runs GitHub's
     alone; Syft's installer and uv's run only where nothing can be written."""
-    default = _workflow()["permissions"]
-    for job, body in _workflow()["jobs"].items():
-        granted = body.get("permissions", default)
+    for job, body, workflow in _every_job():
+        granted = body.get("permissions", workflow["permissions"])
         owners = {
             str(step["uses"]).split("/")[0] for step in body.get("steps", []) if "uses" in step
         }
@@ -665,9 +681,17 @@ def test_every_file_and_image_a_release_names_is_signed_before_it_exists() -> No
     files = [(index, given) for index, given in signing if "subject-path" in given]
     assert files, "the files a rollout downloads are signed by nobody"
     paths = " ".join(str(given["subject-path"]) for _, given in files)
-    for pattern in ("${{ runner.temp }}/assets/*.tar.gz", "${{ runner.temp }}/assets/*.cdx.json"):
+    for pattern in (
+        "${{ runner.temp }}/assets/*.tar.gz",
+        "${{ runner.temp }}/assets/*.cdx.json",
+        "${{ runner.temp }}/assets/*.md",
+    ):
         assert pattern in paths, f"`{pattern}` is attached and not signed"
-    made = max(names.index("Pack the OpenCode plugin"), names.index(_names_of_download()))
+    made = max(
+        names.index("Pack the OpenCode plugin"),
+        names.index("Attach the vulnerability report"),
+        *(names.index(name) for name in _names_of_downloads()),
+    )
     assert made < min(index for index, _ in files), "files are signed before they exist"
 
     signed = {
@@ -684,5 +708,84 @@ def test_every_file_and_image_a_release_names_is_signed_before_it_exists() -> No
         assert subject in signed, f"{image} is published without a signature over its digest"
 
 
-def _names_of_download() -> str:
-    return str(_step("release", "actions/download-artifact").get("name"))
+def _names_of_downloads() -> list[str]:
+    return [
+        str(step.get("name"))
+        for step in _job("release")["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+
+
+# == what was known to be vulnerable when the release was made (FRD-154) ========================
+
+
+def test_the_release_is_checked_for_known_vulnerabilities_after_its_inventory() -> None:
+    """The check reads the documents the inventory wrote, nothing rebuilt; the Release waits for it,
+    attaches its report among the files it signs, and carries its section in the notes."""
+    check = _step("vulnerabilities", "release_vulnerabilities.py")
+    run = str(check["run"])
+    taken = _step("vulnerabilities", "actions/download-artifact")["with"]
+    handed = _step("inventory", "actions/upload-artifact")["with"]
+
+    assert _job("vulnerabilities")["needs"] == ["inventory"]
+    assert "vulnerabilities" in _job("release")["needs"]
+    assert taken["name"] == handed["name"] and taken["path"] == "${{ runner.temp }}/sboms"
+    assert '--sboms "$RUNNER_TEMP/sboms"' in run
+    assert '--grype "$GRYPE"' in run and check["env"]["GRYPE"] == "${{ steps.grype.outputs.cmd }}"
+    assert '--notes "$RUNNER_TEMP/vulnerabilities/notes.md"' in run
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in run
+
+    report = _step("vulnerabilities", "actions/upload-artifact")["with"]
+    collected = _step("release", "Collect the vulnerability report")["with"]
+    assert report["name"] == collected["name"]
+    assert report["path"] == collected["path"] == "${{ runner.temp }}/vulnerabilities"
+    attach = str(_step("release", "Attach the vulnerability report")["run"])
+    assert '"$RUNNER_TEMP"/vulnerabilities/aira-vulnerabilities-* "$RUNNER_TEMP/assets/"' in attach
+    notes = str(_step("release", "Publish the release notes")["run"])
+    assert '--vulnerabilities "$RUNNER_TEMP/vulnerabilities/notes.md"' in notes
+
+
+def test_a_known_vulnerability_is_reported_and_does_not_refuse_the_release() -> None:
+    """`ADR-0055`: by the time the check runs the images are pushed, and removing a finding takes an
+    update and a new release whatever this job answers — so it reports, and the night alarms."""
+    run = str(_step("vulnerabilities", "release_vulnerabilities.py")["run"])
+
+    assert "--report-only" in run
+
+
+def test_the_release_reads_the_acceptances_of_the_commit_it_was_made_from() -> None:
+    """The acceptances are part of the tagged commit, so a release's report is reproducible from
+    it — and the checkout leaves no token behind for Grype's installer to read."""
+    run = str(_step("vulnerabilities", "release_vulnerabilities.py")["run"])
+
+    assert "--accepted .github/accepted-vulnerabilities.toml" in run
+    assert _step("vulnerabilities", "actions/checkout")["with"]["persist-credentials"] is False
+
+
+def _grype_installs() -> list[tuple[str, dict]]:
+    return [
+        (job, step)
+        for job, body, _ in _every_job()
+        for step in body.get("steps", [])
+        if str(step.get("uses", "")).startswith("anchore/scan-action/download-grype@")
+    ]
+
+
+def test_grype_is_pinned_to_one_exact_version_and_restores_no_database() -> None:
+    """A scanner that changes under the check changes what it finds, unannounced — and the release
+    and the night must read with the same one, or a finding appears overnight that is only a new
+    Grype. Its database is never restored from a cache: a cache is as old as the push that wrote
+    it, and a release builds from nothing an ordinary push left."""
+    installs = _grype_installs()
+
+    assert {job.split("/")[0] for job, _ in installs} == {
+        "ci.yml",
+        "known-vulnerabilities.yml",
+    }
+    versions = set()
+    for job, step in installs:
+        assert re.fullmatch(r"anchore/scan-action/download-grype@[0-9a-f]{40}", step["uses"]), job
+        versions.add(step["with"]["grype-version"])
+        assert step["with"].get("cache-db") is False, f"{job} restores Grype's database"
+    (version,) = versions
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", version)

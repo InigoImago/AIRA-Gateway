@@ -41,8 +41,9 @@ Every release now carries a **software bill of materials** in two places:
 - **Signing** (cosign, Sigstore) — *answered since by `ADR-0043`*: the Release's files and each
   image's digest carry a signed build provenance from GitHub's attestation store. BuildKit's own
   SBOM and provenance stay as they were, unsigned beyond the registry's own integrity.
-- **A vulnerability report.** An SBOM is the inventory a scanner reads; scanning it, and deciding
-  what a finding means for an installation, is the reader's.
+- ~~**A vulnerability report.**~~ *Answered since by `FRD-154`*: the release reads its documents with
+  Grype and attaches the report, and the newest release is read again every night. Deciding what a
+  finding means for one installation stays the reader's.
 - **Reproducible SBOMs.** Syft writes a timestamp and a serial number into each document, so two
   runs differ; the checksum states what was published, not what a rerun would produce.
 - **Republishing past releases.** From the next release on; `v0.1.7` and older have none.

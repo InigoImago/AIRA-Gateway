@@ -1,0 +1,25 @@
+# Known vulnerabilities somebody decided to live with for a while, and why (`FRD-154`).
+#
+# `tools/release_vulnerabilities.py` reads this when a release is made and every night after. A
+# vulnerability named here is listed as **accepted** instead of *to act on* or *to watch*, until
+# the date given; the day after, it counts again, and the nightly check fails on it if it is to be
+# acted on. An entry is a decision a reviewer can check, so each one says:
+#
+#   vulnerability  the id as the report writes it (a CVE where there is one, else GHSA-…)
+#   package        the package it was found in, as the report names it
+#   documents      optional: the documents it holds for — aira-gateway, aira-management,
+#                  aira-frontend, aira-source; every document when left out
+#   reason         why it does not need an update now: not reachable in how AIRA uses the package,
+#                  mitigated elsewhere, an update that breaks something and is being worked on
+#   until          the date it is looked at again, at most a year ahead
+#
+# A key the check does not know is refused rather than ignored: a misspelt `untill` would otherwise
+# accept a vulnerability for ever. An entry that matches nothing any more is named in the report,
+# so it can be removed.
+#
+# [[accepted]]
+# vulnerability = "CVE-2026-12345"
+# package = "libexpat1"
+# documents = ["aira-gateway", "aira-management"]
+# reason = "Only reachable by parsing XML, which neither service does."
+# until = 2027-02-28

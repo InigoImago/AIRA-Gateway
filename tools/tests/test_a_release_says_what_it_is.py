@@ -213,6 +213,25 @@ def test_an_attached_file_is_named_after_the_images() -> None:
     assert "sha256sum -c" in rendered
 
 
+def test_what_was_known_to_be_vulnerable_is_said_before_the_files_that_list_it() -> None:
+    """The section the vulnerability check wrote (`FRD-154`), verbatim, after the images it is about
+    and before the attached report that lists it whole."""
+    notes = _read("Tag-driven releases\n\nWhat it means for you.\n")
+    section = "## Known vulnerabilities\n\nChecked 2026-11-26. **0 to act on**, 1 to watch.\n"
+
+    rendered = notes.markdown(
+        version="v1.2.3",
+        commits=[],
+        images=["ghcr.io/x/aira-gateway:v1.2.3"],
+        assets=["aira-vulnerabilities-v1.2.3.md"],
+        vulnerabilities=section,
+    )
+    assert section.strip() in rendered
+    assert rendered.index("## Images") < rendered.index("## Known vulnerabilities")
+    assert rendered.index("## Known vulnerabilities") < rendered.index("## Attached")
+    assert "## Known vulnerabilities" not in notes.markdown(version="v1.2.3", commits=[], images=[])
+
+
 def test_notes_with_nothing_to_add_are_just_the_description() -> None:
     """A first release has no previous tag to compare against, and listing four hundred commit
     subjects would not improve it. An empty section is worse than no section.

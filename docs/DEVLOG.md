@@ -5,6 +5,83 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## A release is checked for known vulnerabilities, when it is made and every night (2026-11-26)
+
+The owner asked for every release, and the newest release every night, to be read with its SBOMs
+for known vulnerabilities, so that we know none of the libraries carries a serious one. `FRD-148`
+had named a vulnerability report a non-goal: the documents were attached to every release since
+`v0.1.8`, and nothing read them. Asked, the owner chose:
+- a finding is **reported, not refused**, at the release;
+- the night **fails on a critical or high finding with a fixed version, or one CISA lists as
+  exploited**.
+
+**What changed** (`FRD-154`, `ADR-0055`):
+
+- `tools/release_vulnerabilities.py` reads a release's documents with Grype. It checks each against
+  its checksum first, and fetches the database once with automatic updates off, so all four are
+  read against one dated set of data.
+  - It puts every finding in one group: *to act on*, *to watch*, *accepted* or *the rest*.
+  - It writes the report, the notes' section and the run's summary.
+  - Exit status 0, 1 (something to act on) or 2 (not checked); `--report-only` for the release.
+  - Standard library only, like the other release tools.
+- `ci.yml` has a read-only `vulnerabilities` job between the inventory and the Release. The report
+  is attached and signed with the other files, and its section is in the notes
+  (`release_notes.py --vulnerabilities`).
+- `.github/workflows/known-vulnerabilities.yml` runs every night at 04:17 UTC and on demand. It
+  reads the documents of the newest Release and fails on something to act on or on a check not
+  made. The report is in the run's summary and kept for 30 days.
+- `.github/accepted-vulnerabilities.toml` holds the acceptances: vulnerability (or an alias),
+  package, optional documents, reason, and `until`, a year ahead at most. Unknown keys are refused.
+- Grype 0.121.3 is installed through `anchore/scan-action/download-grype` v7.4.2. Both pins are more
+  than two weeks old, identical in both workflows, and restore no cached database.
+- The rules of `ADR-0043` are now checked for **every** workflow file, not only `ci.yml`: actions
+  pinned to commits, no token in a clone, nothing from a third party beside a permission that
+  writes, a read-only default.
+
+**What the round found.**
+
+- *`grype db update` answering is not a database.* Measured with the pinned binary where Anchore's
+  service could not be reached: `db update` exits 1, and so does a scan without a database. The tool
+  also asks `db status`, because a database Grype calls invalid must stop the check whatever
+  `update` said. A check that was not made writes **Not checked** in the report, the notes and the
+  summary, and never *0 to act on* (`KV22`, `KV23`).
+- *Refusing at the release would leave a version half published.* The documents describe the
+  pushed digests, so they exist only after the push. A refusal there leaves the images under the
+  version and `latest`, unsigned and named by no Release, and the only way out is the new commit and
+  tag an update needs anyway. A refusal before the push would need every image built twice, and
+  would make every acceptance a re-tag behind forty minutes of gates (`ADR-0055`).
+- *Without "with a fix" the night is red most mornings.* Debian lists advisories with no fixed
+  version for months. Failing on them would mean writing an acceptance for each, or a mail every
+  morning that nobody reads. They are *to watch*, and move to *to act on* by themselves on the
+  night a fix is published.
+- *A tag name is written into `$GITHUB_ENV`.* The night reads the newest Release's tag from the
+  API. A name with a newline would set any variable a later step reads (`BASH_ENV` among them), so
+  the step refuses anything not spelt like a version before writing it. A test runs the step with a
+  stand-in `gh` that answers such a name (`KV44`).
+- *The source document lists the development tools.* `uv.lock` is read whole, so `pytest` and
+  `ruff` are in `aira-source`. A Python finding there that no image ships says *development tools
+  only*. An npm finding says *the console's bundle*, and an Action *the CI workflow*.
+- *GitHub's code-scanning alerts were not built.* An accepted finding would have to leave the upload
+  and close as *fixed*, which it is not; it needs a job that can write security events; and none of
+  it can be tried before it runs on GitHub (`FRD-154` §13).
+- *A scheduled workflow stops after 60 days without activity* in a public repository. GitHub says
+  so by mail; the deployment guide says so too.
+
+**Measured.**
+
+- `make ci`, exit 0: 8679 Python tests passed and 2 skipped, 1843 console specs, coverage 97.41 %.
+- `make mutants`: 46 new properties (`KV1`–`KV46`), each broken and caught. The 68 earlier ones
+  whose file or test this round touched were run again; all caught.
+- actionlint 1.7.12 on both workflows: no finding beyond the one style note (`SC2129`) that `main`'s
+  `ci.yml` already has.
+- The pinned Grype binary, checked against its release's checksums, behaves as the tool expects
+  when its database cannot be fetched (above).
+- **Not measured here**: what Grype finds in `v0.1.16`. The sandbox could not reach Anchore's
+  database service, so the published documents were not read against real data. The first night
+  after this reaches `main` does that, or a run started by hand.
+- **Not verifiable before it runs on GitHub**: the schedule and its mail, `gh release` and the
+  installer action on a runner.
+
 ## Every event a structured line, and each line safe to send (2026-11-25)
 
 The owner connected Stage T's OTLP export to Graylog — logs over gRPC, no traces — and filed tickets
