@@ -37,11 +37,16 @@ COPY management/frontend/ ./
 RUN npm run build
 
 # ---- runtime -------------------------------------------------------------------------------
-# **nginx's stable line**, which the image's maintainers rebuild whenever Alpine ships a fix, so a
-# release build carries the patched OpenSSL and libraries of its day. A line is rebuilt only until
-# the next stable one replaces it, so this tag follows nginx's current stable line: check it at
-# every release, because an image whose line has ended keeps building and stops being patched.
+# **nginx's stable line**, which the image's maintainers rebuild as Alpine ships fixes. A line is
+# rebuilt only until the next stable one replaces it, so this tag follows nginx's current stable
+# line: check it at every release, because an image whose line has ended keeps building and stops
+# being patched.
 FROM nginx:1.30-alpine AS runtime
+
+# **Alpine's fixes of the day, not of the base's last rebuild.** The maintainers rebuild on their
+# schedule, and a fix Alpine published since — a library's security update — would otherwise wait
+# for it. A release builds from nothing, so this takes whatever Alpine's repository holds then.
+RUN apk upgrade --no-cache
 
 # `AIRA_CSP_CONNECT_SRC` is deliberately **not** given a value here. The entrypoint derives it
 # from `AIRA_OIDC_ISSUER`, and a baked default would win over that derivation silently: a probe

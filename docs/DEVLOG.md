@@ -5,6 +5,30 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The first check of a release found 19 to act on, and v0.1.17 answers 18 (2026-11-26)
+
+The nightly check of known vulnerabilities ran on GitHub for the first time, started by hand
+before `v0.1.17` was tagged, against `v0.1.16`. It ran through: Grype installed, the database
+fetched, the report written. It failed as it should, with **19 to act on** and 76 to watch.
+The first `v0.1.17` run was cancelled before anything was published, and the tag was set again
+after these updates:
+
+- **The console's Alpine packages**: `zlib` (critical) and four OpenSSL and one `libxml2`
+  advisories. The base `nginx:1.30-alpine` already carried the OpenSSL and `libxml2` fixes, but not
+  `zlib` 1.4, which Alpine 3.24 published after the base was last rebuilt. The console's build now
+  takes Alpine's updates of the day (`apk upgrade --no-cache`).
+- **The console's npm packages**: `@angular/router` three times, fixed from 22.2.1, and `zod`, which
+  Angular's CLI brings. The framework is updated to 22.2.6 and the CLI and build to 22.2.7, the
+  newest patch releases at least two weeks old; `zod` follows to 4.6.6. npm refused to update the
+  packages one by one, because each names the others' exact version as a peer. They were
+  re-resolved together, with every other locked package kept where it was, and the toolchain
+  under the CLI moved with it.
+- **`pyasn1`** 0.6.5, four advisories. It is in the development tools only, through
+  `google-genai`'s authentication.
+- **Not answered: the Python interpreter**, 3.14.10 in both Python images. Its fix is 3.14.11,
+  which no official `python:3.14-slim-bookworm` image carries yet. It stays *to act on*: the
+  release notes and the night say so until the base is rebuilt.
+
 ## A release is checked for known vulnerabilities, when it is made and every night (2026-11-26)
 
 The owner asked for every release, and the newest release every night, to be read with its SBOMs

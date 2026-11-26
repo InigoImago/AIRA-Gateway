@@ -613,9 +613,10 @@ When it fails, answer each finding to act on in one of two ways:
 
 - **Update it.** The report names the version that fixes it. A Python package is raised in
   `uv.lock`, an npm package of the console in `management/frontend/package-lock.json`, and a GitHub
-  Action where it is pinned. An operating-system package (Debian, Alpine) is replaced when the
-  image's base is rebuilt with the fix: its maintainers do that after the distribution publishes the
-  fix, and every release builds from the newest base. Then release. From the next night the newest
+  Action where it is pinned. The console's Alpine packages take the fix at the next
+  release, since its build installs every Alpine update of the day. The Python images' Debian
+  packages and the Python interpreter come with their base image: they are fixed once its
+  maintainers rebuild it, and every release builds from the newest. Then release. From the next night the newest
   release is the one that carries the update.
 - **Or accept it**, with a reason a reviewer can check and a date at most a year ahead:
 
@@ -689,9 +690,10 @@ that does not was not, whatever its checksum says. Releases up to `v0.1.7` are n
 ### Things worth knowing before the next release
 
 - **The bases are lines, and a line ends.** The console is served by nginx's **stable** line
-  (`nginx:1.30-alpine`), which its maintainers rebuild whenever Alpine ships a fix, so a release
-  build carries the patched OpenSSL and libraries of its day — until nginx publishes the next
-  stable line, once a year in spring, and stops rebuilding this one. Move the `FROM` in
+  (`nginx:1.30-alpine`), which its maintainers rebuild as Alpine ships fixes. The build also takes
+  every Alpine update published since the base's last rebuild, so a release carries the patched
+  OpenSSL and libraries of its day. That holds until nginx publishes the next stable line, once a
+  year in spring, and stops rebuilding this one. Move the `FROM` in
   `management/frontend/Dockerfile` when that happens: a check refuses a mainline line, and cannot
   know that a stable one has ended. The installer both Python images are built with is pinned to
   a uv release **and its digest**, and raised by hand in both Dockerfiles at once.

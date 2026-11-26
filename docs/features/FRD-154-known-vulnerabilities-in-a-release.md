@@ -287,6 +287,18 @@ longer has it. Three things argue against it for now:
 The run's summary and the mail answer the owner's question; the alerts are an addition worth
 making once somebody reads them.
 
+**The first run on GitHub**, started by hand on 2026-11-26 against `v0.1.16`, ran through: Grype
+installed, the database fetched (built 2026-11-25), the report written, and the run failed as it
+should, with **19 to act on** and 76 to watch. The 19:
+- the console's Alpine packages: `zlib`, critical, and four OpenSSL and one `libxml2` advisories;
+- `@angular/router` three times and `zod`, in the console's npm packages;
+- the Python interpreter, 3.14.10, in both Python images;
+- `pyasn1` four times, in the development tools only.
+
+`v0.1.17` answers all but the interpreter, whose fixed release no official image carries yet. It
+updates Angular to 22.2.6 and its tools to 22.2.7, `zod` to 4.6.6 and `pyasn1` to 0.6.5, and the
+console's build takes Alpine's updates of the day (`apk upgrade`).
+
 **Verified by hand** with Grype 0.121.3 and its own binary, checked against the release's
 checksums:
 - the tool's behaviour without a database: `grype db update` exits 1 when the database cannot be
