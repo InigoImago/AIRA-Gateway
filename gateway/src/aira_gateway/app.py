@@ -15,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from aira_common.clock import zone_named
 from aira_common.counters import DegradationLog, ScriptRunner, build_runner
-from aira_common.logging import get_logger
-from aira_common.observability import redact_query_string
+from aira_common.logging import get_logger, process_named
+from aira_common.logging.access import AccessLog
+from aira_common.logging.lifecycle import say_stopped, say_stopping
+from aira_common.observability import flush_telemetry, redact_query_string
 from aira_gateway import __version__
 from aira_gateway.anomalies import AnomalyService
 from aira_gateway.anomalies.suspensions import SuspensionService
@@ -51,6 +53,7 @@ from aira_gateway.middleware import (
     SecurityHeadersMiddleware,
     TraceIdMiddleware,
     UseCasePathMiddleware,
+    describe_access,
 )
 from aira_gateway.persistence.redaction import build_redactor
 from aira_gateway.persistence.writer import RequestLogWriter
@@ -81,6 +84,8 @@ _log = get_logger("aira_gateway")
 
 def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     """Create and configure a Gateway FastAPI application."""
+    # Named before the settings are read: reading them from Vault writes this process's first lines.
+    process_named("api")
     settings = settings or GatewaySettings()
     # Before anything is built or a port opened: the convenience defaults are safe locally and are
     # the whole attack surface anywhere else (`security.py`).
@@ -119,6 +124,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     # The body limit is innermost: it wraps `receive`, which nothing above it calls, so nothing is
     # buffered earlier — and every layer below adds its headers to its 413 as well.
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    # One access line per request (`FRD-631` FR-5): inside the use-case path, so it sees the route
+    # the request matched; inside the trace, so the line carries its id; around the ceiling, so a
+    # refused body is a line too.
+    app.add_middleware(AccessLog, describe=describe_access)
     # Outside the ceiling, so it refuses on the path every route sees: `/uc/<slug>/kira/…` is a KIRA
     # request when it is too large, too, and is audited as one.
     app.add_middleware(UseCasePathMiddleware)
@@ -267,6 +276,7 @@ def _lifespan(
         if app.state.mail is not None:
             await app.state.mail.start()
         yield
+        say_stopping(service=settings.app_name)
         # First: every request still being accounted for — one the server cut when its grace period
         # ran out, a stream read on after its caller left — books what it knows while the vendors'
         # clients are open, and hands its row to the writer before the writer closes.
@@ -281,6 +291,9 @@ def _lifespan(
         # The upstream connection pools: one `httpx.AsyncClient` per configured provider.
         await app.state.providers.aclose()
         await engine.dispose()
+        # Last: what the export still holds, this line among it (`FRD-631` FR-4).
+        say_stopped(service=settings.app_name)
+        flush_telemetry()
 
     return lifespan
 

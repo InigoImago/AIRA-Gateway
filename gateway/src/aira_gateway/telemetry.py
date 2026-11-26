@@ -134,5 +134,5 @@ def instrument_outgoing_calls(engine: AsyncEngine | None = None) -> OutgoingCall
         # second engine would need `engines=[...]` here; this reports `False` rather than pretend.
         sqlalchemy_instrumentor.instrument(engine=engine.sync_engine if engine else None)
 
-    _log.info("outgoing_calls_instrumented", http=http, database=database)
+    _log.info("outgoing_calls_instrumented", http_calls=http, database_calls=database)
     return OutgoingCallsTraced(http=http, database=database)

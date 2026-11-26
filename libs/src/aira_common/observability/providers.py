@@ -9,7 +9,7 @@ import logging
 import os
 
 from opentelemetry import metrics, trace
-from opentelemetry._logs import set_logger_provider
+from opentelemetry._logs import get_logger_provider, set_logger_provider
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -26,6 +26,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from opentelemetry.util.types import Attributes
 
 from aira_common.observability.diagnostics import route_sdk_diagnostics
+from aira_common.observability.early import discard_early_records, release_early_records
 from aira_common.observability.export import watched_export
 
 #: Requests kept out of the traces: the health probes. A probe has no caller, use case or outcome,
@@ -49,6 +50,51 @@ PROPAGATORS_ENV = "OTEL_PROPAGATORS"
 SIGNAL_PATHS = {"traces": "/v1/traces", "metrics": "/v1/metrics", "logs": "/v1/logs"}
 
 _configured = False
+
+#: The signals this process exports, once :func:`configure_observability` has run.
+_signals: frozenset[str] = frozenset()
+
+#: The one logger whose records the OTLP handler ships: every line rendered by the pipeline,
+#: AIRA's own and a library's alike (`aira_common.logging`). A library's raw record would arrive a
+#: second time, unrendered, beside its rendering.
+EXPORTED_LOGGER = "aira.app"
+
+
+class OnlyRenderedLines(logging.Filter):
+    """Let through the records of :data:`EXPORTED_LOGGER` and nothing else."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name == EXPORTED_LOGGER
+
+
+def exported_signals() -> frozenset[str]:
+    """Which OTLP signals this process exports: ``traces``, ``metrics``, ``logs``."""
+    return _signals
+
+
+def flush_telemetry(timeout_millis: int = 3000) -> bool:
+    """Hand over what the providers still hold, before the process ends (`FRD-631` FR-4).
+
+    The batch processors export on a timer, and a process that stops between two exports loses
+    the lines it wrote last — its `worker_stopped` among them. The SDK flushes at interpreter exit
+    as well; this says so earlier, while the process still controls the order. Returns whether
+    every provider answered within the time.
+    """
+    flushed = True
+    providers = (
+        trace.get_tracer_provider(),
+        metrics.get_meter_provider(),
+        get_logger_provider(),
+    )
+    for provider in providers:
+        force_flush = getattr(provider, "force_flush", None)
+        if callable(force_flush):
+            try:
+                result = force_flush(timeout_millis)
+            except Exception:  # noqa: BLE001 — a flush must never be why a process fails to stop
+                result = False
+            flushed = flushed and result is not False
+    return flushed
 
 
 def propagate_trace_context_only() -> bool:
@@ -145,16 +191,20 @@ def configure_observability(
     a URL gets a provider. Returns True if any signal was configured, False if export is disabled
     or no signal has a URL. Idempotent.
     """
-    global _configured
+    global _configured, _signals
     # **Before the early return**: an instrumentation can be in place with nothing exporting — the
     # control plane instruments Django on `AIRA_OTEL_ENABLED` alone — and it parses the headers
     # either way.
     propagate_trace_context_only()
     if not enabled:
+        # Nothing will ever export the lines held since logging was configured.
+        discard_early_records()
         return False
     targets = signal_endpoints(
         endpoint, traces=traces_endpoint, metrics=metrics_endpoint, logs=logs_endpoint
     )
+    if "logs" not in targets:
+        discard_early_records()
     if not targets:
         return False
     if _configured:
@@ -201,8 +251,13 @@ def configure_observability(
         )
         set_logger_provider(logger_provider)
         # Bridge stdlib logging to OTLP; structlog lines reach it through `aira_common.logging`.
-        logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
+        handler = LoggingHandler(logger_provider=logger_provider)
+        handler.addFilter(OnlyRenderedLines())
+        logging.getLogger().addHandler(handler)
+        # The lines written before this existed — Vault's, the settings' — with their own times.
+        release_early_records(handler)
 
+    _signals = frozenset(targets)
     _configured = True
     return True
 

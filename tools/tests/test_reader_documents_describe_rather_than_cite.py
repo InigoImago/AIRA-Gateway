@@ -27,6 +27,7 @@ READER_DOCUMENTS = sorted(
         ROOT / "docs" / "ARCHITECTURE.md",
         ROOT / "docs" / "REQUEST-LIFECYCLE.md",
         ROOT / "docs" / "CONFIGURATION.md",
+        ROOT / "docs" / "LOGGING.md",
         ROOT / "docs" / "INTEGRATIONS.md",
         ROOT / "docs" / "DEPLOYMENT.md",
         ROOT / "docs" / "SETUP.md",

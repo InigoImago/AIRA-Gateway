@@ -3,7 +3,6 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from aira_common.pseudonym import configure_pseudonyms
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 
@@ -43,15 +42,6 @@ def _no_redis_from_this_machine() -> Iterator[None]:
             os.environ["AIRA_REDIS_URL"] = previous
 
 
-@pytest.fixture(autouse=True)
-def _names_until_an_app_says_otherwise() -> Iterator[None]:
-    """Pseudonyms are process-wide state, set by `configure_process` (`FRD-627` FR-14): an app built
-    by one test would otherwise decide what the next test's spans and log lines say."""
-    configure_pseudonyms(enabled=False, secret="")
-    yield
-    configure_pseudonyms(enabled=False, secret="")
-
-
 @pytest.fixture
 def strict_data_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run a test with strict data mode **off** (`FRD-627`).
@@ -67,8 +57,9 @@ def strict_data_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def settings() -> GatewaySettings:
-    # API-surface tests run with auth disabled; auth itself is tested via `authed_client`.
-    return GatewaySettings(log_json=True, auth_required=False)
+    # API-surface tests run with auth disabled; auth itself is tested via `authed_client`. With a
+    # pseudonym key, as a deployment is meant to run: without one readiness reports `degraded`.
+    return GatewaySettings(log_json=True, auth_required=False, pseudonym_secret="the suite's key")
 
 
 @pytest.fixture

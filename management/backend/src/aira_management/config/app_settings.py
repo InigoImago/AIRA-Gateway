@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import ClassVar
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from aira_common.config import BaseAiraSettings
 from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
@@ -70,6 +70,12 @@ class ManagementSettings(BaseAiraSettings):
     #: store for an exact bound.
     throttle_auth_failures: str = "60/minute"
     throttle_user: str = "600/minute"
+
+    #: How long the configuration history keeps a change, in days (`FRD-632`): who changed which
+    #: grant, key, budget, limit, rule, model or role, from what to what. Two years by default —
+    #: long enough to answer an audit about the last one, and a period rather than for ever, since
+    #: every row names the person who made the change. The relay deletes what is older.
+    config_history_days: int = Field(default=730, ge=1, le=36500)
 
     #: How many reverse proxies **append** to `X-Forwarded-For` in front of this service — the
     #: gateway's setting of the same name, read here for the same reason. The source address the

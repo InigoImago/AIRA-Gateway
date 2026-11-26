@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { withAccess } from './clients/access';
 import { ApiClient } from './clients/base';
 import { withCatalog } from './clients/catalog';
+import { withHistory } from './clients/history';
 import { withIncidents } from './clients/incidents';
 import { withLimits } from './clients/limits';
 import { withPipelines } from './clients/pipelines';
@@ -19,10 +20,12 @@ export type { Provenance } from './clients/catalog';
  * token; the calls themselves live in the resource modules.
  */
 @Injectable({ providedIn: 'root' })
-export class UseCaseService extends withRoles(
-  withSmokeTests(
-    withIncidents(
-      withReporting(withCatalog(withLimits(withPipelines(withAccess(withUseCases(ApiClient)))))),
+export class UseCaseService extends withHistory(
+  withRoles(
+    withSmokeTests(
+      withIncidents(
+        withReporting(withCatalog(withLimits(withPipelines(withAccess(withUseCases(ApiClient)))))),
+      ),
     ),
   ),
 ) {}

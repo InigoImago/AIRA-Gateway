@@ -25,7 +25,7 @@ budget and anomaly mail had shipped.
 | 1 | Unified provision of models | partly | Vertex in the EU — Gemini and Anthropic (`FRD-115`/`119`); Agent Platform's managed open models, served only at `global` and so permitted by name (`ADR-0034`) — GLM-5.2 among them today, since Google retired the earlier GLM versions and serves no DeepSeek model any more; Google AI Studio (`FRD-304`); any OpenAI-compatible server (`FRD-123`). Not built: Model Garden's **self-deployed** endpoints (`FRD-115` FR-2a). Built and never run against the platform itself: Foundry — no Azure subscription has ever answered it — and Claude, which no test or check here has called (§3.7) |
 | 2 | Role assignment | done | `FRD-201`, `ADR-0009`, `ADR-0017`/`FRD-605` — a role is held **through a Keycloak group and nothing else**; a realm role assigned directly grants nothing. What a role may do is a permission set, and an installation defines its own roles, each bound to one checked group (`FRD-614`, `ADR-0025`) |
 | 3 | KIRA API compatibility | partly | `FRD-107` Stage A+B — text, documents, thinking, structured output, batch embedding; `FRD-146` — function calling, the predecessor's `gemini-embedding-2` vectors, two ids for one model, its values and statuses; `FRD-147` — reranking. Not built: **Live** (`WS /live/{model_id}`), which needs a transport of its own and decisions on budget, duration and audit; `/version-info`'s `jenkins` block, left out on purpose |
-| 4 | Auditability | partly | **Requests: done** (`FRD-122`, `FRD-128`) — every request attributed to a use case leaves a row, served or refused, including one whose caller hung up; requested vs. served model, pipeline decisions and degradation are on the row. A refusal *before* attribution is recorded on its span instead (§3.2). **Configuration: not built** — only role changes have a history (§3.1) |
+| 4 | Auditability | partly | **Requests: done** (`FRD-122`, `FRD-128`) — every request attributed to a use case leaves a row, served or refused, including one whose caller hung up; requested vs. served model, pipeline decisions and degradation are on the row. A refusal *before* attribution is recorded on its span and as an `auth_refused` line (`FRD-631`), not in the table (§3.2). **Configuration: done** (`FRD-632`) — every change the gateway enforces is a history row with its actor, before and after, and a `config.changed` line (§3.1) |
 | 5 | Storage of requests/responses: which system, when, what, with what | done | `FRD-103` + `FRD-122` — `credential` names the calling system (an API key's prefix or an OIDC client), so five keys of one use case are five identities in the log |
 | 6 | Incident response | done | `FRD-503` — suspensions with author, expiry, reason; kill switch |
 | 7 | Blocking dangerous requests | partly | injection filter, personal data replaced before the prompt is sent and stored (`pii_filter`, opt-in per use case, `FRD-309`), operator kill switch; `FRD-504` **measures** what a model refuses. Not controls: jailbreak categories beyond injection, data exfiltration, output filtering — and no filter reads an attachment or a tool result (§3.4) |
@@ -69,34 +69,32 @@ plane does not record who changed it.
 
 ## 3. The gaps that matter, in order
 
-### 3.1 Configuration changes leave no history — PRD FR-MG-10, NFR-7
+### 3.1 Configuration changes leave no history — PRD FR-MG-10, NFR-7 · **closed by [`FRD-632`](features/FRD-632-configuration-changes-have-a-history.md)**
 
-*Who changed this budget, and what was it before?* has no answer. Only **roles** keep a change log
-(`RoleChange`: who, when, before and after). A few records name their author: an API key its
-`owner` and `issued_by`, a group grant its `granted_by`, a retired use case its `deleted_by`, a
-suspension its author and whoever lifted it. Nothing records who changed, or what was there before,
-for model approvals and prices, budgets, rate limits, pipelines, anomaly rules, or a use case's own
-settings — storage, content visibility, release, retention. Each of those rows holds its latest
-value and an `updated_at`.
+*Who changed this budget, and what was it before?* is answered now. Every change the gateway
+enforces — use cases, members and group grants, API keys, pipelines, budgets, rate limits, anomaly
+rules, models and prices, roles — is a row in Management's configuration history with its actor, the
+person it concerns, and the state before and after, readable by Global Administrator and IT Security
+under *Platform → Configuration changes* and kept for `AIRA_CONFIG_HISTORY_DAYS` (730 days by
+default); and a `config.changed` line names the change without its values. A test fails on a write
+route that is neither recorded nor exempt with a reason.
 
-The outbox is not that record. An event carries no actor, and it is deleted 30 days after it was
-delivered (`KEPT_AFTER_DAYS` in `apps/outbox/models.py`). Management's request spans do not name
-the user either.
-
-So the request trail answers *who asked what, and what was decided*; nothing answers *who decided
-that this is what gets decided*. For a product whose claim is auditability, this is the largest
-gap.
+What stays open: a thing whose last change is older than the history and the outbox's thirty days
+has no state before on its first recorded change; a change made in the database by hand, or by the
+gateway's break-glass CLI, is not recorded.
 
 ---
 
 ### 3.2 The audit trail stays in the gateway's database — [`FRD-616`](features/FRD-616-the-audit-trail-as-an-event-stream.md)
 
-What a SIEM can be given today is telemetry. The collector's delivery channel
-([`FRD-618`](features/FRD-618-any-otlp-consumer.md), `FRD-617`–`621`) forwards a span per request
-and per model call, and the logs and metrics, to any OTLP receiver. The audit records themselves —
-`request_logs`, `payload_access`, `anomaly_events`, `access_suspensions` — stay in the gateway's
-Postgres, and the console reads them over the gateway's HTTP API. A stream of those records with a
-closed vocabulary is specified in `FRD-616` and not built.
+What a SIEM can be given is telemetry, and since `FRD-631` that includes the records: one
+`request_recorded` line per audit row, `auth_refused` for every refusal before attribution,
+`payload_read`, `suspension.created`/`.lifted`, `anomaly_detected` and `config.changed`, each with a
+`category` — over the OTLP log export, so a SIEM fed with logs alone sees them, without traces. The
+collector's delivery channel ([`FRD-618`](features/FRD-618-any-otlp-consumer.md)) forwards them with
+the spans. The records themselves stay in the gateway's Postgres, the lines are their copy, and
+delivery is the batch exporter's: a refused or overflowing batch loses lines. A Kafka topic of
+records (`FRD-616` (a)) is not built — it would be a topic on a broker another team operates.
 
 Three consequences:
 

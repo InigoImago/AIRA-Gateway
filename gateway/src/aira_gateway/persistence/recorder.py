@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import Request
 
+from aira_common.addresses import address_attributes
 from aira_common.logging import get_logger
 from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.audit import Outcome, was_flagged
@@ -147,7 +148,8 @@ async def record_request(
             "aira.api.surface": api,
             "aira.status": status,
             "aira.outcome": str(outcome),
-            "aira.source_ip": source_ip,
+            # As the installation writes an address (`FRD-631` FR-9); the row keeps it whole.
+            **address_attributes(source_ip),
             "aira.total_tokens": usage.total_tokens if usage else None,
             "aira.cost_nanos": cost_nanos,
             # Functions offered and called (`FRD-131` FR-7): "offered ten, asked for none" and

@@ -47,7 +47,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
   inevitably do when both were written from the same mental model — and line coverage cannot see
   a *missing requirement*: a review once found seven real defects behind a green suite at 99%
   coverage. So: **prove a test can fail.** Break the property, watch it go red, restore.
-  `make mutants` (`tools/mutation_check.py`) does this for **2722 properties** across auth, budgets,
+  `make mutants` (`tools/mutation_check.py`) does this for **2779 properties** across auth, budgets,
   pipeline, retention, the management control plane, the gateway's counters and the console — a
   `.spec.ts` selection runs under Vitest, everything else under pytest; when
   you fix a bug, add the mutation that reintroduces it. Two traps that cost real defects here:
@@ -84,6 +84,7 @@ Full detail: `docs/PRD.md`. Delivery is phased: `docs/ROADMAP.md`.
 - **Angular is zoneless**: all mutable component state must be a `signal`. A plain property
   changed from code schedules no re-render, so `[(ngModel)]` is written as
   `[ngModel]="x()" (ngModelChange)="x.set($event)"`. See FRD-203 §4.
+- **A log field is a row of the register** (`logging/fields.py`, `FRD-631`); errors as `exc_info`.
 - **No silent failures in the UI**: every load and mutation reports its outcome through
   `core/api/error-message.ts`, which surfaces the backend's error envelope.
 - **Lint/format**: Python is **ruff** — `ruff check` *and* `ruff format --check`, no black. Angular
@@ -159,8 +160,8 @@ stayed true and the copy nobody opens rotted. `tools/tests/test_claude_md_stays_
 §6 grows past its limit, for the reason every other guard here exists: a rule only a reviewer
 enforces is one the next round breaks.
 
-Rule of thumb: if a future contributor would be surprised or have to reverse-engineer a decision,
-write it down (ADR or DEVLOG). Prefer small, frequent updates over big retroactive ones.
+Rule of thumb: what a future contributor would have to reverse-engineer goes in an ADR or the
+DEVLOG, in small and frequent updates.
 
 ## 5. Repository layout
 ```
@@ -198,7 +199,7 @@ here** — that is what grew this section to 1667 lines and left twenty-two FRD 
 | Where to look | For |
 | --- | --- |
 | [`docs/features/README.md`](docs/features/README.md) | every feature, its status, its document |
-| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (51 ADRs) |
+| [`docs/adr/README.md`](docs/adr/README.md) | why a decision was taken (52 ADRs) |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | what changed when, and what a round measured |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | **rules this project has already paid for** — read before planning |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1a | **what one instance carries**, measured — read before promising a concurrency |
@@ -216,8 +217,7 @@ browser `make test-e2e` · `make mutants`, which breaks a property and requires 
 - `FRD-118` (several **Keycloak** issuers) — FR-1 is **built** in the gateway (a token is routed by
   its own `iss`, `AIRA_OIDC_ISSUERS`; the console reads one issuer); FR-3, groups from UserInfo,
   stays declined. It is **not** the multi-instance requirement above — that is `FRD-127`.
-- `FRD-616` (the audit trail as an **event stream**) — the delivery channel (`FRD-618`) forwards one
-  span per request to a SIEM, refused attempts included; the audit rows themselves are not streamed.
+- `FRD-616` (the audit trail as an **event stream**) — built as log lines (`FRD-631`); no Kafka topic.
 - `FRD-121` (document normalisation for models that cannot read documents) — specified so the
   option exists; the recommendation is not to build it first (`ADR-0012` §4, `ADR-0013`).
 - `FRD-406`'s **PII half is declined, not deferred** (`ADR-0016`): the sensitive content and the
@@ -230,8 +230,8 @@ browser `make test-e2e` · `make mutants`, which breaks a property and requires 
   name and key on a request, a finding about them — is seen by Global Administrator and IT Security
   only. A test of the per-use-case ladder asks for `strict_data_off` by name.
 - **Stated gaps, not oversights** (`docs/GAP-ANALYSIS.md`): FRD-131's `tool_results` filter scope
-  is not built; configuration changes are not audited except roles; Kafka events carry no schema
-  version; a refusal before attribution is on its span, not in the audit table (`FRD-122`).
+  is not built; Kafka events carry no schema version; a refusal before attribution is a span and an
+  `auth_refused` line, not an audit row (`FRD-122`).
 - **A model reachable only at `global` is not usable here — unless permitted by name**
   (`FRD-611`, `ADR-0012` §6, `ADR-0034`). `global` names no region and guarantees none, so it is not
   in the residency default (`gemini-3.5-flash` is served in `europe-west3` and `eu` now). The open

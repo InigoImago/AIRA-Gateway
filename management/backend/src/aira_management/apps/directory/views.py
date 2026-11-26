@@ -4,6 +4,11 @@ One endpoint returning **groups and users together**, because the question is "w
 this"; the kind is in the answer. It **never writes** to the identity provider. Without an admin
 client it answers from what Management already knows — people who have signed in, group paths
 already granted — and the response's `source` says which answer the reader got.
+
+**The term is somebody's name, so it is written down nowhere** (`FRD-631` FR-12). It travels in the
+request's body — in a URL every proxy and access log on the way keeps it — and the line each search
+writes says who searched, how long the term was and how much was found, never what was searched
+for: the person looked up knows nothing of it, and a log store has no role check.
 """
 
 from __future__ import annotations
@@ -70,28 +75,24 @@ def _known_locally(query: str) -> list[DirectoryEntry]:
 
 
 class DirectorySearchView(APIView):
-    """``GET /api/v1/directory/?q=`` — groups and users a grant could name."""
+    """``POST /api/v1/directory/search`` with ``{"query": …}`` — groups and users a grant could
+    name."""
 
     permission_classes = [IsAuthenticated, MaySearchDirectory]
 
-    def get(self, request: Request) -> Response:
-        query = str(request.query_params.get("q", "")).strip()
+    def post(self, request: Request) -> Response:
+        data = request.data if isinstance(request.data, dict) else {}
+        query = str(data.get("query", "")).strip()
         if len(query) < MIN_QUERY_LENGTH:
             return Response({"results": [], "source": "none", "hint": "Type at least two letters."})
 
-        # A search reads other people's names and addresses, and the people who grant access must
-        # be able to run it — so every search is logged instead.
-        _log.info(
-            "directory.search",
-            actor=request.user.get_username(),
-            query=query,
-        )
-
+        source = "local"
+        entries: list[DirectoryEntry] | None = None
         directory = _build_directory()
         if directory is not None:
             try:
                 entries = directory.search(query)
-                return Response({"results": [_as_dict(e) for e in entries], "source": "keycloak"})
+                source = "keycloak"
             except DirectoryUnavailable as exc:
                 # Fall back to the local answer — a real subset — rather than fail. Said where an
                 # operator looks: in the console a directory that cannot be asked is only a
@@ -103,13 +104,21 @@ class DirectorySearchView(APIView):
                     status=exc.status,
                     why=str(exc),
                 )
+        if entries is None:
+            entries = _known_locally(query)
 
-        return Response(
-            {
-                "results": [_as_dict(e) for e in _known_locally(query)],
-                "source": "local",
-            }
+        # A search reads other people's names and addresses, and the people who grant access must
+        # be able to run it — so every search is a line: who, how long a term, how much was found.
+        # Never the term, which is the name of somebody who does not know they were looked up.
+        _log.info(
+            "directory.search",
+            category="data_access",
+            actor=request.user.get_username(),
+            query_length=len(query),
+            results=len(entries),
+            source=source,
         )
+        return Response({"results": [_as_dict(entry) for entry in entries], "source": source})
 
 
 def _as_dict(entry: DirectoryEntry) -> dict[str, Any]:

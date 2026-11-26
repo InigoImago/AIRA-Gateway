@@ -79,7 +79,10 @@ async def test_an_unauthenticated_attempt_is_marked_on_both_surfaces(
     attributes = _span(exporter)
     assert attributes["aira.outcome"] == "unauthenticated"
     assert attributes["aira.status"] == 401
-    assert attributes.get("aira.source_ip")
+    # Where it came from, as the installation writes an address — by default a pseudonym of it,
+    # which a SIEM counts by, and never the address itself (`FRD-631` FR-9).
+    assert attributes.get("aira.source_id", "").startswith("ip-")
+    assert "aira.source_ip" not in attributes
     assert "aira.use_case" not in attributes
 
 

@@ -7,8 +7,12 @@ import { ConfirmService } from '../../core/ui/confirm.service';
 import { InfoHint } from '../../core/ui/info-hint';
 import { PageFeedback } from '../../core/ui/page-feedback';
 
-/** How long to wait after the last keystroke before asking the directory. */
-const TYPING_PAUSE_MS = 250;
+/**
+ * How long to wait after the last keystroke before asking the directory. Every search is a line in
+ * the log and a look-up of other people's names, so a name typed at an ordinary pace is one search,
+ * not one per letter (`FRD-631` FR-12).
+ */
+const TYPING_PAUSE_MS = 300;
 
 /**
  * What else the removal did, in the sentence that reports it.

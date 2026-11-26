@@ -62,3 +62,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0051 | [A thinking block goes back onto the history it was made on, on every turn](ADR-0051-a-thinking-block-goes-back-onto-its-own-history.md) | **Accepted** | 2026-11-02 |
 | 0052 | [A fallback chain belongs to its use case, one per kind of request](ADR-0052-a-fallback-chain-belongs-to-its-use-case.md) | **Accepted** | 2026-11-03 |
 | 0053 | [A worker states its own health, in a heartbeat it writes on progress](ADR-0053-a-worker-states-its-own-health.md) | **Accepted** | 2026-11-19 |
+| 0054 | [The log line carries the security record, and what a line may say is a register](ADR-0054-the-log-line-carries-the-security-record.md) | **Accepted** | 2026-11-25 |

@@ -13,6 +13,7 @@ OpenTelemetry span context, and a response from an exception handler must pass t
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
@@ -25,7 +26,7 @@ from aira_gateway.api.kira import is_kira_path
 from aira_gateway.api.kira.errors import code_for_status as kira_code_for_status
 from aira_gateway.api.kira.headers import surface_refusal
 from aira_gateway.audit import Outcome
-from aira_gateway.auth.attribution import USE_CASE_PATH_KEY
+from aira_gateway.auth.attribution import USE_CASE_PATH_KEY, is_valid_use_case
 from aira_gateway.explaining import (
     EXPLAINING_HEADERS,
     REASON_HEADER,
@@ -71,6 +72,26 @@ def too_large_response(request: Request, limit: int) -> JSONResponse:
     if is_kira_path(request.url.path):
         return surface_refusal(request, 413, kira_code_for_status(413), message)
     return gemini_error_response(413, message, "INVALID_ARGUMENT")
+
+
+def describe_access(scope: Scope) -> dict[str, Any]:
+    """What the gateway adds to a request's access line (`FRD-631` FR-5), once it is answered.
+
+    The request's id, as its answer carried it; who made it, where the credential was verified;
+    the use case it was attributed to, or named in its path; and where it came from — written as
+    the installation writes an address, by the pipeline, from the address the audit row takes.
+    """
+    state = scope.get("state") or {}
+    attribution = state.get("attribution")
+    principal = state.get("principal")
+    subject = getattr(attribution, "subject", None) or getattr(principal, "subject", None)
+    use_case = getattr(attribution, "use_case", None) or scope.get(USE_CASE_PATH_KEY)
+    return {
+        "request_id": state.get("request_id"),
+        "subject": subject,
+        "use_case": use_case if isinstance(use_case, str) and is_valid_use_case(use_case) else None,
+        "source_ip": client_ip(Request(scope)) if "app" in scope else None,
+    }
 
 
 class UseCasePathMiddleware:

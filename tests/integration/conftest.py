@@ -9,6 +9,7 @@ import urllib.request
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -53,6 +54,10 @@ LOCAL_CHAT_MODEL_ID = seed_local_catalog.CHAT_NUMERIC_ID
 #: and the number beside it, and not a difference anybody would notice on the day it changed.
 LOCAL_EMBED_MODEL_ID = seed_local_catalog.EMBED_NUMERIC_ID
 
+#: The readiness check no outage sets and no test here touches: a stack without
+#: `AIRA_PSEUDONYM_SECRET` reports, from its first answer on, a key each process drew for itself.
+KEY_CHECK = "pseudonyms"
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Name the one marker this layer adds, so `-m "integration and not model_output"` works."""
@@ -94,6 +99,12 @@ def pytest_report_header(config: object) -> list[str]:  # noqa: ARG001
     fallbacks = body.get("fallbacks") or {}
     if not body.get("degraded") and not fallbacks:
         return [f"gateway /readyz: ready, nothing degraded ({body.get('status')})", *_kira_ids()]
+    if not degraded_beyond_the_key(body):
+        return [
+            f"gateway /readyz: {body.get('status')}, degraded only by its pseudonym key "
+            "(no AIRA_PSEUDONYM_SECRET), which no test here depends on",
+            *_kira_ids(),
+        ]
     lines = [f"gateway /readyz: DEGRADED — {body.get('status')}"]
     lines += [f"  {name}: {detail}" for name, detail in sorted(fallbacks.items())]
     lines.append(
@@ -105,6 +116,29 @@ def pytest_report_header(config: object) -> list[str]:  # noqa: ARG001
         "interrupted run skips."
     )
     return [*lines, *_kira_ids()]
+
+
+def degraded_beyond_the_key(readiness: dict[str, Any]) -> bool:
+    """`degraded` from the gateway's `/readyz`, apart from the pseudonym key (:data:`KEY_CHECK`).
+
+    A stack without `AIRA_PSEUDONYM_SECRET` reads degraded from its first answer and never clears
+    it, so a test about an outage or a load would measure the deployment and not its own cause.
+    Where the key is in order this is the flag itself; where it is not, the flag is composed again
+    without it, from the answer's parts: a fallback in force, any other check that degrades rather
+    than decides, any upstream that failed its probe.
+    """
+    checks = readiness.get("checks") or {}
+    if (checks.get(KEY_CHECK) or {"ok": True})["ok"]:
+        return bool(readiness["degraded"])
+    return (
+        bool(readiness.get("fallbacks"))
+        or any(
+            not check["ok"]
+            for name, check in checks.items()
+            if name != KEY_CHECK and check.get("required") is False
+        )
+        or any(not verdict["ok"] for verdict in (readiness.get("upstreams") or {}).values())
+    )
 
 
 def _kira_ids() -> list[str]:

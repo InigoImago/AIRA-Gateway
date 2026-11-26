@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import Integer, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aira_common.addresses import describe_address
 from aira_common.anomalies import RATIO_KINDS, RuleKind, RuleTarget
 from aira_common.logging import get_logger
 from aira_gateway.audit import NOT_TRAFFIC, PIPELINE_OPERATION_PREFIX, Outcome
@@ -307,7 +308,13 @@ async def _evaluate_new_source(
                 target_value=value,
                 observed=len(fresh),
                 sample=len(addresses),
-                detail=f"used from {len(fresh)} address(es) {NEW_ADDRESSES_FROM}{', '.join(fresh)}",
+                # Each address as the installation writes one outside the audit trail (`FRD-631`
+                # FR-9): a finding is kept without a clock and logged. The audit rows keep the
+                # addresses whole, behind the incident roles.
+                detail=(
+                    f"used from {len(fresh)} address(es) {NEW_ADDRESSES_FROM}"
+                    + ", ".join(describe_address(address) for address in fresh)
+                ),
             )
         )
     return findings

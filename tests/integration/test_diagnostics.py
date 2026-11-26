@@ -18,7 +18,7 @@ import httpx
 import pytest
 import stack_addresses
 
-from .conftest import GATEWAY_URL
+from .conftest import GATEWAY_URL, degraded_beyond_the_key
 
 pytestmark = pytest.mark.integration
 
@@ -145,7 +145,9 @@ async def test_a_stopped_upstream_becomes_degraded_but_the_gateway_stays_ready()
             lambda body: any(not v["ok"] for name, v in body["upstreams"].items() if name in probed)
         )
         assert degraded["status"] == "ready", "an upstream outage evicted a serving instance"
-        assert degraded["degraded"] is True
+        # Read apart from the pseudonym key: a stack without one is degraded before the outage and
+        # after it, which would make both halves of this test say nothing.
+        assert degraded_beyond_the_key(degraded) is True
         # HTTP 200, so a load balancer keeps the instance. The signal is for an alert, not an
         # eviction — that distinction is the entire feature.
         assert any(not v["ok"] for name, v in degraded["upstreams"].items() if name in probed)
@@ -155,7 +157,7 @@ async def test_a_stopped_upstream_becomes_degraded_but_the_gateway_stays_ready()
     recovered = await _wait_for(
         lambda body: all(v["ok"] for name, v in body["upstreams"].items() if name in probed)
     )
-    assert recovered["degraded"] is False, (
+    assert degraded_beyond_the_key(recovered) is False, (
         "the degradation did not clear — a flag that only ever gets set becomes ignored noise"
     )
 

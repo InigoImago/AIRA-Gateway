@@ -1,6 +1,6 @@
 # FRD-616 — The audit trail as an event stream
 
-> Phase: 7 · Status: **Draft — the record stream of §3 is not built; FRD-618's delivery channel carries a span per request** · Owner: Vadim Scheibe
+> Phase: 7 · Status: **Built — the record stream of §3 as log lines (FRD-631); a Kafka topic of its own is not built** · Owner: Vadim Scheibe
 >
 > Origin: asking what it would take to feed a SIEM over OTLP by changing a URL. The transport is a
 > configuration change; the **content** is this document.
@@ -11,8 +11,17 @@
 > [`FRD-505`](FRD-505-requests-and-prompts.md) (payload reads are recorded),
 > [`FRD-608`](FRD-608-governance-overview.md) (the register), [`FRD-615`](FRD-615-a-trace-crosses-the-bus.md)
 > (what telemetry carries), `ADR-0016`.
+>
+> **The record stream of §3 is built as log lines ([`FRD-631`](FRD-631-every-event-a-structured-line.md),
+> `ADR-0054`):** transport (b), OTLP logs, through the one pipeline every line takes —
+> `request_recorded` for every audit row, `payload_read`, `suspension.created` and `.lifted`,
+> `anomaly_detected`, and the fourth question's answer, `config.changed` with the configuration
+> history behind it ([`FRD-632`](FRD-632-configuration-changes-have-a-history.md)). A SIEM fed with
+> logs alone sees every request now, which the owner's Stage T — logs to Graylog, no traces — did
+> not. Kafka (a) stays unbuilt: a topic on a broker another team operates is an infrastructure
+> change. §7's questions 1 and 3 are answered by that: all four records, over OTLP.
 
-**The record stream of §3 is not built**: no gateway outbox, no topic, no `request.recorded`.
+**The record stream of §3 is not built as a Kafka topic**: no gateway outbox, no topic. It is built as log lines (above, `FRD-631`).
 
 **Transport (b) is built, and carries spans, not these records.** The delivery channel
 ([`FRD-618`](FRD-618-any-otlp-consumer.md)) forwards a `traces/siem` pipeline whose filter keeps one

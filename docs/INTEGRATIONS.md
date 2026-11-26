@@ -1409,7 +1409,10 @@ be sent elsewhere on its own — `AIRA_OTEL_TRACES_ENDPOINT`, `AIRA_OTEL_METRICS
 each a whole URL with its route, nothing appended — for a backend that takes one signal (Tempo,
 Mimir, Loki). One left empty goes under `AIRA_OTEL_ENDPOINT`; with that empty as well, the signal
 is not exported and the rest runs unchanged. Traces not exported means the delivery channel below
-has nothing to deliver. (The OpenTelemetry SDK reads
+has no spans to deliver — **the log lines still carry every record a SIEM correlates on**: one line
+per request, per refused attempt, per configuration change, per content read, stop and finding, and
+one when a process starts and stops, each with a `category` ([`LOGGING.md`](LOGGING.md)). A SIEM fed
+with logs alone sees every request. (The OpenTelemetry SDK reads
 its own `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_CERTIFICATE`; nothing here sets or tests
 them, and the shipped Compose passes neither.) Nothing is exported until `AIRA_OTEL_ENABLED=true`,
 which is off by default. Traces carry `aira.*` attributes — subject, use case, model, outcome,
@@ -1617,17 +1620,24 @@ document per batch, `resourceSpans[].scopeSpans[].spans[]`, with every attribute
 that ingests newline-delimited JSON will not read it as events without a transform. Answer that
 question before wiring it up, and know what a SIEM receives: a span per request and per model call,
 sampled, with the metrics and log lines whole — a feed, not the audit trail, which is the rows in
-the gateway's database ([§1](#1-postgresql)).
+the gateway's database ([§1](#1-postgresql)). A **log record** is flatter: its body is the line as
+the process wrote it, one JSON object with every field at the top level ([`LOGGING.md`](LOGGING.md)),
+so a SIEM that parses a log record's body as JSON has one flat event per line.
 
 **Under strict data mode spans and log lines name nobody.** `aira.subject`, and every person field
 of a log line, carries `p-` and a keyed hash of the name instead: the same person is always the same
 pseudonym, so a SIEM can still follow one caller, and nobody reads the name off it. The key is
 `AIRA_PSEUDONYM_SECRET`, from Vault and shared by both planes; without it each process draws its own
-— a gateway process says so once, Management's say nothing — and a person's pseudonym then differs
-between processes and across restarts. `aira.credential` (a key prefix, or the client a token was
-issued to) and `aira.source_ip` stay, because an incident needs them — so who may query the tracing
+— every process says so in a warning when it starts, and `/readyz` reads `degraded` — and a
+person's pseudonym then differs between processes and across restarts. `aira.credential` (a key
+prefix, or the client a token was issued to) stays, because an incident needs it. **A source address
+is written as `AIRA_TELEMETRY_IP` says**: by default `aira.source_net`, the network it belongs to,
+and `aira.source_id`, a keyed pseudonym of the whole address — the same address always the same
+value, so failed sign-ins can be counted and correlated per source — and `aira.source_ip` only with
+`full`; log lines the same, as `source_net`, `source_id` and `source_ip`. Who may query the tracing
 backend and the SIEM is still that system's access control: grant it to IT Security. To learn who a
-pseudonym is, follow the span's trace id to the request's audit row, which the incident roles read.
+pseudonym is, follow the line's request id or the span's trace id to the request's audit row, which
+the incident roles read — the row keeps the address whole.
 The shipped Grafana dashboard selects no caller, and an anonymous visitor there is a Viewer, who
 cannot query spans ad hoc.
 
@@ -1699,7 +1709,7 @@ went to), and a server span whose caller sent a `traceparent`. A refused attempt
 known: `aira.outcome` — `unauthenticated` (401, or 429 after too many failed attempts from one
 address), `forbidden` (403, a use case the credential may not act on) or `unattributed` (a known
 caller whose request no use case could be attributed to: 400, or KIRA's 403) — `aira.status`,
-`aira.source_ip`, and for a known caller its `aira.subject`, `aira.auth_method` and
+the source address (as above), and for a known caller its `aira.subject`, `aira.auth_method` and
 `aira.credential`, and the use case it asked for as `aira.use_case.requested` — never
 `aira.use_case`, because it was not attributed to it. What it drops: SQL, pool connections, ASGI
 send/receive halves, and the reachability prober — which asks every configured model every 60

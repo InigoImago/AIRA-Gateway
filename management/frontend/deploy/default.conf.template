@@ -8,9 +8,46 @@
 # Upstreams are substituted from the environment at container start (the official nginx image
 # renders /etc/nginx/templates/*.template with envsubst).
 
+# **One access line per request, in the shape every other AIRA line has** (JSON, one object per
+# line), so whatever collects the container's output parses one format. It says what the console's
+# own proxy saw — the method, which part of the console was asked, the status, the time and the
+# upstream's answer — and leaves out what nginx's default line carried and nobody may need: the
+# query string (a Gemini client's `?key=`, a search term), the caller's address, `X-Forwarded-For`
+# and the browser's identification. A request to `/api/` or `/gw/` is named by that prefix alone,
+# because its path can name a person (`/members/<username>/`) and the service behind it writes its
+# own line with the route instead. The container's healthcheck asks every fifteen seconds and is not
+# a line at all.
+map $request_uri $aira_log_path {
+    ~^/api/                 "/api/";
+    ~^/gw/                  "/gw/";
+    ~^(?<aira_uri_path>[^?]*)  $aira_uri_path;
+}
+map "$remote_addr $request_uri" $aira_loggable {
+    "127.0.0.1 /index.html" 0;
+    default                 1;
+}
+map $status $aira_log_level {
+    ~^5     error;
+    ~^4     warning;
+    default info;
+}
+log_format aira_json escape=json
+    '{"timestamp":"$time_iso8601","level":"$aira_log_level","event":"http_request",'
+    '"logger":"nginx","method":"$request_method","path":"$aira_log_path","status":$status,'
+    '"duration_seconds":$request_time,"bytes":$body_bytes_sent,'
+    '"upstream_status":"$upstream_status","upstream_seconds":"$upstream_response_time"}';
+
 server {
     listen       8080;
     server_name  _;
+
+    access_log /dev/stdout aira_json if=$aira_loggable;
+    # **And none of nginx's own lines about a request.** Each names the caller's address and the
+    # whole request line, query string included — where a Gemini client's `?key=` is its API key —
+    # and is written whenever an upstream is down, slow or restarting; nginx cannot be told to write
+    # it otherwise. The access line says what failed (status, upstream status, duration), the service
+    # behind it says why. What remains, `crit` and worse, is about the process rather than a caller.
+    error_log /dev/stderr crit;
 
     root  /usr/share/nginx/html;
     index index.html;

@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterator
 from typing import Any, Protocol
 
 from aira_common.heartbeat import Heartbeat
+from aira_common.logging.exceptions import loggable
 
 #: How long after its heartbeat turns stale a pausing worker wakes to say so.
 STALE_MARGIN_SECONDS = 1.0
@@ -79,7 +80,7 @@ def _one_pass(
     try:
         once()
     except Exception as exc:  # noqa: BLE001 - a failed pass is reported and the loop goes on
-        described = str(exc) or type(exc).__name__
+        described = loggable(exc) or type(exc).__name__
         if isinstance(exc, expected):
             log.error(
                 "worker_pass_failed",
@@ -88,13 +89,9 @@ def _one_pass(
                 error_type=type(exc).__name__,
             )
         else:
-            log.error(
-                "worker_pass_failed",
-                worker=heartbeat.worker,
-                error=described,
-                error_type=type(exc).__name__,
-                exc_info=exc,
-            )
+            # Nobody wrote this message, so the line says where and what kind; the message and
+            # the traceback are the log's at `DEBUG` only (`FRD-631` FR-8).
+            log.error("worker_pass_failed", worker=heartbeat.worker, exc_info=exc)
         reason = f"its last pass failed: {described}"
         heartbeat.missed(reason)
         return reason

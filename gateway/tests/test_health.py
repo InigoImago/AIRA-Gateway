@@ -230,3 +230,31 @@ def test_the_cluster_is_reachable_while_any_broker_is(client, monkeypatch) -> No
 
     assert body["checks"]["kafka"]["ok"] is True
     assert body["checks"]["kafka"]["detail"] == "1 of 2 reachable"
+
+
+def test_a_key_each_process_draws_for_itself_is_said_as_degraded(monkeypatch) -> None:
+    """Without `AIRA_PSEUDONYM_SECRET` the gateway still serves — refusing would cost a running
+    installation a change to its Vault — but readiness says the one thing it costs: one person or
+    address is a different pseudonym in every process and after every restart (`FRD-631` FR-10)."""
+    from fastapi.testclient import TestClient
+
+    from aira_gateway.app import create_app
+    from aira_gateway.config import GatewaySettings
+
+    async def all_ok(name: str, host: str, port: int, *, timeout: float = 1.0) -> CheckResult:
+        return CheckResult(name=name, ok=True)
+
+    class _Up:
+        async def run(self, script, keys, args):  # noqa: ANN001, ANN201
+            return 1
+
+    monkeypatch.setattr(health_module, "check_tcp", all_ok)
+    app = create_app(GatewaySettings(auth_required=False, pseudonym_secret=""))
+    with TestClient(app) as client:
+        # Everything else answers, so the key is the one reason left to read `degraded` for.
+        client.app.state.counters = _Up()
+        body = client.get("/readyz").json()
+
+    assert body["status"] == "ready" and body["degraded"] is True
+    assert body["checks"]["pseudonyms"]["ok"] is False
+    assert "AIRA_PSEUDONYM_SECRET" in body["checks"]["pseudonyms"]["detail"]

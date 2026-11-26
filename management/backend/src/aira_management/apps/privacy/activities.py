@@ -102,6 +102,24 @@ ADMINISTRATION = Activity(
     "administration",
     (
         _mg("roles_rolechange", "id", "role_slug", "action", "actor", "at", "before", "after"),
+        # Every change to the configuration the gateway enforces (`FRD-632`).
+        _mg(
+            "history_configurationchange",
+            "id",
+            "changed_at",
+            "actor",
+            "process",
+            "event_type",
+            "kind",
+            "action",
+            "object_key",
+            "use_case",
+            "person",
+            "before",
+            "after",
+            "fields_changed",
+            "trace_id",
+        ),  # fmt: skip
         _mg("roles_storedrole", "created_by"),
         _mg("usecases_usecase", "deleted_by"),
         _mg("usecases_usecasegroupgrant", "granted_by"),
@@ -243,7 +261,8 @@ MAIL = Activity(
 )
 #: Prompts leave the installation for the model that answers them. Nothing is stored for it.
 MODEL_PROVIDERS = Activity("model_providers")
-#: Spans and log lines to the installation's observability stack and any forwarding channel.
+#: Spans and log lines to the installation's observability stack and any forwarding channel: one
+#: line per request and per security-relevant act (`FRD-631`), nothing stored by AIRA itself.
 TELEMETRY = Activity("telemetry")
 PIPELINE_TESTS = Activity(
     "pipeline_tests",

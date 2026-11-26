@@ -35,6 +35,9 @@ strict_data_on = "This installation runs in strict data mode. Stored content of 
 strict_data_off = "This installation does not run in strict data mode, so each use case decides who inside it reads content and sees figures per person (requests, tokens, costs, response times). With “every member”, everybody in the use case reads all content and sees everybody's figures; with “own requests only”, its administrators read and see all of it and everybody else only their own; and where content is left to Global Administrators and IT Security, nobody inside the use case reads content or sees figures per person, not even its administrators. Request records show who made each request to everybody who may see them. The use case’s totals, and your own figures, are visible in every case, and roles that may read every report see all figures per person."
 mail_on = "This installation sends these mails."
 mail_off = "This installation sends no mail: no mail relay is configured, so what follows does not happen."
+addresses_pseudonym = "the network it belongs to (the first three parts of an IPv4 address, the first three groups of an IPv6 address) and a keyed pseudonym of the whole address, which stands for the same address every time and names none"
+addresses_network = "only the network it belongs to (the first three parts of an IPv4 address, the first three groups of an IPv6 address)"
+addresses_full = "the whole address"
 unset_controller = "[Not configured — the installation has not named the controller (AIRA_PRIVACY_CONTROLLER).]"
 unset_dpo_contact = "No contact for a data protection officer is recorded for this installation. Please contact the controller."
 unset_works_agreement = "No works agreement is recorded for this installation."
@@ -162,11 +165,11 @@ recipients = "Authorised administrators of the installation and of your use case
 
 [activities.administration]
 title = "Traceability of administrative changes"
-data = "Who created, changed or deleted a role (with its state before and after), who retired a use case, granted a group access, invited a person or issued a key for somebody else, each with the time; technical identifiers for tracing internal events, and when and why an event could not be passed on."
-purpose = "Evidence of who granted or changed which permission (accountability, Art. 5(2) and Art. 32 GDPR)."
+data = "Who created, changed or deleted a role (with its state before and after), who retired a use case, granted a group access, invited a person or issued a key for somebody else, each with the time; for every change to the configuration — use cases, members and group grants, API keys, pipelines, budgets, rate limits, anomaly rules, models and their prices, roles — who made it, whom it concerns where it concerns a person, when, and the state before and after; technical identifiers for tracing internal events, and when and why an event could not be passed on."
+purpose = "Evidence of who granted or changed which permission or setting (accountability, Art. 5(2) and Art. 32 GDPR)."
 legal_basis = "Art. 6(1)(c) GDPR in conjunction with Art. 5(2) and Art. 32 GDPR; Art. 6(1)(f) GDPR."
-retention = "Without automatic deletion, so that the history of permissions stays complete. The identifiers of internal events are deleted with the event, {outbox_retention} after it was sent."
-recipients = "People who may read the roles or the use case concerned."
+retention = "The history of roles without automatic deletion, so that it stays complete; the history of configuration changes for {history_retention}, then deleted. The identifiers of internal events are deleted with the event, {outbox_retention} after it was sent."
+recipients = "People who may read the roles or the use case concerned; the history of configuration changes only the roles that may see people (Global Administrators and IT Security)."
 
 [activities.api_keys]
 title = "API keys"
@@ -234,7 +237,7 @@ recipients = "The providers of the models released for the use case, in the rele
 
 [activities.telemetry]
 title = "Operational telemetry"
-data = "Where the installation has enabled it: technical measurements and log lines per request with the identifier of the person making it (in strict data mode a pseudonym, which names nobody), use case, access, source IP address, browser identification (user agent), model, outcome, tokens and cost — never the content of requests or responses."
+data = "Where the installation has enabled it: technical measurements, and a log line per request with the identifier of the person making it (in strict data mode a pseudonym, which names nobody), use case, access, model, outcome, tokens, cost and duration, and the browser identification (user agent) in traces; a log line for every refused sign-in or access, every change to the configuration (what was changed and by whom, never its values), every search of the directory (who searched, never for whom) and every reading of stored content. Of the source IP address, these lines and traces carry {telemetry_addresses}. Never the content of requests or responses."
 purpose = "Monitoring the availability and performance of the systems, troubleshooting, and forwarding security-relevant events to a SIEM."
 legal_basis = "Art. 6(1)(f) GDPR; Art. 6(1)(c) GDPR in conjunction with Art. 32 GDPR."
 retention = "According to the periods of the observability or SIEM system the controller has connected; AIRA does not set those periods."

@@ -173,14 +173,15 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     # use case's month until it expired; `accounting` records the row for the failures it sees.
     await release_reservation(request)
     attribution = getattr(request.state, "attribution", None)
+    # Its type and where it was raised; the message, which may quote what the failing code had in
+    # hand — a row a constraint refused — only at `DEBUG` (`FRD-631` FR-8).
     _log.error(
         "unhandled_error",
         path=request.url.path,
         method=request.method,
-        error_type=type(exc).__name__,
-        error=str(exc),
         subject=getattr(attribution, "subject", None),
         use_case=getattr(attribution, "use_case", None),
+        exc_info=exc,
         **trace_context_fields(),
     )
     if _kira(request):

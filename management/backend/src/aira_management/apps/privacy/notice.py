@@ -56,6 +56,10 @@ class Installation:
     #: Whether the gateway mails at all (`AIRA_SMTP_HOST` and `AIRA_MAIL_FROM`, `FRD-409`): the
     #: notice says whether what it describes about mail happens here.
     mail_enabled: bool = False
+    #: How long the configuration history keeps a change (`AIRA_CONFIG_HISTORY_DAYS`, `FRD-632`).
+    config_history_days: int = 730
+    #: How log lines and spans write a network address (`AIRA_TELEMETRY_IP`, `FRD-631` FR-9).
+    telemetry_ip: str = "pseudonym"
 
     @classmethod
     def of(cls, settings: ManagementSettings, roles: tuple[RoleDefinition, ...]) -> Installation:
@@ -78,6 +82,8 @@ class Installation:
             ),
             strict_data=settings.strict_data_mode,
             mail_enabled=settings.mail_enabled,
+            config_history_days=settings.config_history_days,
+            telemetry_ip=settings.telemetry_ip,
         )
 
 
@@ -108,6 +114,10 @@ def values(language: Language, installation: Installation) -> dict[str, str]:
     filled["key_max_lifetime"] = language.values["days"].format(days=installation.api_key_max_days)
     # Not configuration but the relay's own constant, read rather than restated.
     filled["outbox_retention"] = language.values["days"].format(days=KEPT_AFTER_DAYS)
+    filled["history_retention"] = language.values["days"].format(
+        days=installation.config_history_days
+    )
+    filled["telemetry_addresses"] = language.values[f"addresses_{installation.telemetry_ip}"]
     filled["mail_state"] = language.values["mail_on" if installation.mail_enabled else "mail_off"]
     filled["mail_retention"] = language.values["days"].format(days=KEEP_NOTICES_DAYS)
     return filled

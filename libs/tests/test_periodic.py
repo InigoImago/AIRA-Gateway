@@ -128,7 +128,10 @@ def test_an_unexpected_failure_is_logged_with_its_traceback(tmp_path: Path) -> N
     )
 
     [said] = lines.of("worker_pass_failed")
-    assert said["exc_info"] is boom and said["error_type"] == "KeyError"
+    # The error itself, for the pipeline to describe: its type and where it was raised, and its
+    # message only at `DEBUG` — nobody wrote it, so it may quote what the pass had in hand.
+    assert said["exc_info"] is boom
+    assert "error" not in said
 
 
 def test_a_heartbeat_an_earlier_run_left_is_written_over_before_the_first_pass(

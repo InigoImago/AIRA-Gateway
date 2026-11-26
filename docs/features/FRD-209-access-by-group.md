@@ -4,6 +4,12 @@
 > Related: [`FRD-102`](FRD-102-attribution.md) (attribution from Keycloak groups),
 > [`FRD-201`](FRD-201-keycloak-rbac.md) (roles → Django groups), [`FRD-202`](FRD-202-usecase-crud.md)
 > (membership), [`FRD-206`](FRD-206-console-truthfulness.md), `ADR-0007`, `ADR-0009`
+>
+> **Amended by [`FRD-631`](FRD-631-every-event-a-structured-line.md) FR-12.** The search
+> is `POST /api/v1/directory/search` with the term in the body — in an address it was kept by every
+> proxy and access log it passed — and `GET /api/v1/directory/?q=` below is gone. The line each
+> search writes names who searched, the term's length, the results and the source, never the term,
+> and the console asks after a 300 ms pause.
 
 ## 1. Why
 

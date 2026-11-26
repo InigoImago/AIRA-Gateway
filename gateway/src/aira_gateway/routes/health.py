@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 from aira_common.counters import CountersUnavailable
 from aira_common.health import any_reachable, check_tcp
+from aira_common.logging.lifecycle import pseudonym_state
 from aira_common.permissions import Permission
 from aira_common.secrets import secrets_state
 from aira_gateway.api.gemini.errors import GeminiHTTPError
@@ -148,7 +149,18 @@ async def readyz(request: Request) -> JSONResponse:
     probe: UpstreamProbe | None = getattr(request.app.state, "upstream_probe", None)
     upstreams = probe.snapshot() if probe is not None else {}
 
-    degraded = not counters_ok or not kafka_ok or bool(fallbacks) or bool(probe and probe.degraded)
+    # A key each process draws for itself is a configuration that works and that a SIEM pays for:
+    # one person, a different pseudonym per process and restart (`FRD-631` FR-10).
+    pseudonyms_ok, pseudonyms_detail = pseudonym_state()
+    checks["pseudonyms"] = {"ok": pseudonyms_ok, "detail": pseudonyms_detail, "required": False}
+
+    degraded = (
+        not counters_ok
+        or not kafka_ok
+        or not pseudonyms_ok
+        or bool(fallbacks)
+        or bool(probe and probe.degraded)
+    )
     if not await may_see_diagnosis(request):
         # `degraded` stays: it is the answer, not a detail describing the deployment.
         return JSONResponse(

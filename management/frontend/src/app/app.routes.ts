@@ -66,6 +66,14 @@ export const routes: Routes = [
         path: 'roles',
         loadComponent: () => import('./features/platform/roles-page').then((m) => m.RolesPage),
       },
+      {
+        // Who changed which configuration, from what to what (`FRD-632`).
+        path: 'configuration-changes',
+        loadComponent: () =>
+          import('./features/platform/configuration-changes-page').then(
+            (m) => m.ConfigurationChangesPage,
+          ),
+      },
     ],
   },
   {

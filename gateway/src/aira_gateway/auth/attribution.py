@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Request
 
+from aira_common.logging.refusals import say_refused
 from aira_common.observability import attribute_model_calls_to, set_span_attributes
 from aira_common.pseudonym import pseudonym
 from aira_gateway.scopes import person as person_key
@@ -114,17 +115,24 @@ def mark_refused(
     outcome: str,
     status: int,
     *,
+    request: Request | None = None,
     subject: str | None = None,
     method: str | None = None,
     credential: str | None = None,
     use_case: str | None = None,
+    reason: str | None = None,
 ) -> None:
-    """Put an access attempt refused before attribution on its span (`FRD-616`).
+    """Put an access attempt refused before attribution on its span (`FRD-616`) and, given the
+    request, in the log (`FRD-631` FR-6).
 
     `aira.outcome` is what the delivery channel keeps a request by when it has no `aira.use_case`,
     so a 401 or a 403 reaches the SIEM. The use case asked for is `aira.use_case.requested`, never
     `aira.use_case` — the request was not attributed to it — and only a well-formed slug is
     written (`ADR-0007`).
+
+    **The line is the record where no trace is exported**: such a request writes no audit row, and
+    an installation sending only logs to its SIEM saw no failed sign-in at all. One line per
+    refusal, bounded per source address (`aira_common.logging.refusals`).
     """
     requested = use_case if use_case and is_valid_use_case(use_case) else None
     set_span_attributes(
@@ -137,6 +145,26 @@ def mark_refused(
             "aira.use_case.requested": requested,
         }
     )
+    if request is not None:
+        # Imported here: the recorder is the one definition of a caller's address, and it imports
+        # what imports this module.
+        from aira_common.logging.access import route_of
+        from aira_gateway.api.kira import is_kira_path
+        from aira_gateway.persistence.recorder import client_ip
+
+        say_refused(
+            outcome=outcome,
+            status=status,
+            source_ip=client_ip(request),
+            subject=subject,
+            auth_method=method,
+            credential=credential,
+            use_case_requested=requested,
+            reason=reason,
+            request_id=getattr(request.state, "request_id", None),
+            api="kira" if is_kira_path(str(request.scope.get("path", ""))) else "gemini",
+            route=route_of(request.scope),
+        )
 
 
 def resolve_use_case(request: Request) -> str | None:

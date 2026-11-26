@@ -241,7 +241,7 @@ a model name may contain one; any other verb, `:countTokens` among them, is `400
 | Operation           | Who may call | Answers |
 | ------------------- | ------------ | ------- |
 | `GET /healthz`      | public | `200 {"status": "ok"}`. Liveness, with no I/O. |
-| `GET /readyz`       | public; the diagnosis to `operations.diagnose`, to the break-glass key, and to anybody locally or in demo mode | `200` or `503` with `{status: ready \| not_ready, degraded}`. **Postgres alone decides readiness.** Kafka (`checks.kafka`, `required: false`, reachable while any broker answers), the shared counter store, a feature running on its fallback and the upstreams only set `degraded`. The diagnosis adds `fallbacks`, `checks`, `upstreams` (the background probe's last verdicts, never a call made for the request) and `secrets` (names, never values). |
+| `GET /readyz`       | public; the diagnosis to `operations.diagnose`, to the break-glass key, and to anybody locally or in demo mode | `200` or `503` with `{status: ready \| not_ready, degraded}`. **Postgres alone decides readiness.** Kafka (`checks.kafka`, `required: false`, reachable while any broker answers), the shared counter store, a pseudonym key the process drew for itself (`checks.pseudonyms`), a feature running on its fallback and the upstreams only set `degraded`. The diagnosis adds `fallbacks`, `checks`, `upstreams` (the background probe's last verdicts, never a call made for the request) and `secrets` (names, never values). |
 | `GET /version-info` | public | `{service, environment, buildNumber, buildTime, git: {commit, commitShort, branch}}`, with `null` where no build metadata was set. |
 
 ### 2.3 Trying a pipeline
@@ -330,7 +330,7 @@ request a moment later would.
 | Operation      | Who may call | Answers |
 | -------------- | ------------ | ------- |
 | `GET /healthz` | public | `200 {"status": "ok"}`. |
-| `GET /readyz`  | public | `200` or `503` with `{status, degraded, checks: {postgres, kafka}}`. Postgres decides readiness; Kafka (`required: false`) only sets `degraded`, because a change waits in the outbox while it is down. The same body for everybody: it names no host. |
+| `GET /readyz`  | public | `200` or `503` with `{status, degraded, checks: {postgres, kafka, pseudonyms}}`. Postgres decides readiness; Kafka (`required: false`) only sets `degraded`, because a change waits in the outbox while it is down, and so does a pseudonym key each process draws for itself (`checks.pseudonyms`, when `AIRA_PSEUDONYM_SECRET` is not set and pseudonyms are written). The same body for everybody: it names no host. |
 
 ### 3.2 The caller
 
@@ -484,18 +484,21 @@ deleted.
 | `PATCH /api/v1/test-results/{id}/` | may run tests; the answer only the run's starter, and not once rated | The answer (`response`, `error`, `latency_ms`) or the judgement (`verdict`, `note`). `200`; a judgement names whoever made it. |
 | `GET /api/v1/test-stats/` | may run tests | The latest **finished** run per use case the caller may run, with its verdict counts. |
 
-### 3.9 Directory, roles and the privacy notice
+### 3.9 Directory, roles, the configuration history and the privacy notice
 
-`apps/directory/views.py`, `apps/roles/views.py`, `apps/privacy/views.py`. Every change to a stored
-role is written to the role change log with its author and the role before and after.
+`apps/directory/views.py`, `apps/roles/views.py`, `apps/history/views.py`,
+`apps/privacy/views.py`. Every change to a stored role is written to the role change log with its
+author and the role before and after, and every change to what the gateway enforces — a stored role
+included — to the configuration history.
 
 | Operation | Who may call | Answers |
 | --------- | ------------ | ------- |
-| `GET /api/v1/directory/` | `directory.search`, or an `admin` grant on any live use case | `?q=`, at least two characters. `{results: [{kind, id, label, detail}], source}` — `kind` `user` or `group`; `source` `keycloak`, or `local` (what Management already knows) when no directory client is configured or it cannot be reached, or `none` for a shorter query. Every search is logged; nothing is written to Keycloak. |
+| `POST /api/v1/directory/search` | `directory.search`, or an `admin` grant on any live use case | Body `{query}`, at least two characters — in the body, because a name in an address is kept by every proxy and access log it passes; `GET` answers `405`. `{results: [{kind, id, label, detail}], source}` — `kind` `user` or `group`; `source` `keycloak`, or `local` (what Management already knows) when no directory client is configured or it cannot be reached, or `none` for a shorter query. Every search is a log line naming who searched, how long the term was and how much was found, never the term; nothing is written to Keycloak. |
 | `GET /api/v1/roles/` | `role.read` | Every role: `[{slug, label, group_paths, permissions, builtin, fixed}]`. |
 | `POST /api/v1/roles/` | `role.manage` | Body `{label, group_path, permissions}`. The group must exist in Keycloak and confer no other role — `503` when Keycloak cannot be asked. `201`. Emits `role.upserted`. |
 | `GET /api/v1/roles/catalogue/` | `role.read` | Every permission: `[{name, area, label, sensitive, reserved, grantable, strict_data_reserved}]` — `grantable` whether a stored role may hold it now, `strict_data_reserved` whether strict data mode is what withholds it. |
 | `GET /api/v1/roles/changes/` | `role.read` | The change log, paged; `?role=`. Each `{id, role, action, actor, at, before, after}`. |
+| `GET /api/v1/configuration-changes/` | `incident.investigate` | The configuration history, newest first, paged; `?kind=`, `?use_case=`, `?actor=`, `?person=`. Each `{id, changed_at, actor, process, event_type, kind, action, object_key, use_case, person, before, after, fields_changed, trace_id}` — `kind` one of `use_case`, `membership`, `group_grant`, `api_key`, `pipeline`, `budget`, `rate_limit`, `anomaly_rule`, `model`, `role`; `action` `created`, `updated`, `saved` (the state before is not known), `granted`, `revoked`, `removed`, `deleted`, `retired` or `purged`; `actor` empty where no person made it, `process` then naming what did. Kept for `AIRA_CONFIG_HISTORY_DAYS`. |
 | `POST /api/v1/roles/check-group/` | `role.manage` | Body `{group_path}`: `200 {group_path, exists: true}`, or the refusal a save would give. |
 | `GET /api/v1/roles/{slug}/` | `role.read` | One role. |
 | `PATCH /api/v1/roles/{slug}/` | `role.manage` | `200`. The fixed roles (`global-admin`, `it-security`) are refused `403`; a built-in role changes only its permissions. While strict data mode is on, `payload.read_any` and `incident.investigate` are refused `400` for every role, here and on `POST`. Emits `role.upserted`. |

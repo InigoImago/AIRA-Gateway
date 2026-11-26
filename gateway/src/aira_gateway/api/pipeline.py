@@ -306,7 +306,7 @@ async def dry_run(
 
     # A selector never grants access: naming somebody else's use case would borrow their release
     # (`FRD-206`, `ADR-0015`).
-    refusal = use_case_refusal(principal, payload.use_case)
+    refusal = use_case_refusal(principal, payload.use_case, request=request)
     if refusal is not None:
         return _error(403, refusal, "PERMISSION_DENIED")
     try:

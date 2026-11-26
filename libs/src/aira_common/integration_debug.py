@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from aira_common.logging import LOCAL_ONLY_KEY, get_logger
+from aira_common.logging.exceptions import loggable
 from aira_common.observability import redact_target
 
 #: The systems this build can watch, in the order an operator meets them. Closed on purpose.
@@ -204,8 +205,9 @@ def watch(system: str, operation: str, **fields: Any) -> Iterator[Call]:
     except BaseException as exc:
         collected["outcome"] = "timeout" if _is_timeout(exc) else "failed"
         collected["error_type"] = type(exc).__name__
-        # Bounded: a driver may embed a whole response body in its message.
-        collected["error"] = str(exc)[:200]
+        # Bounded: a driver may embed a whole response body in its message — and without a
+        # database's detail, which quotes the row a constraint refused (`FRD-631` FR-8).
+        collected["error"] = loggable(exc)[:200]
         report(system, operation, duration_ms=_elapsed_ms(started), **collected)
         raise
     report(system, operation, duration_ms=_elapsed_ms(started), **collected)

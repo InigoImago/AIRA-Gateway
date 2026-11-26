@@ -375,6 +375,7 @@ async def trace_payload(
 
     _log.info(
         "payload_read",
+        category="data_access",
         request_log_id=row.id,
         use_case=row.use_case,
         subject=principal.subject,

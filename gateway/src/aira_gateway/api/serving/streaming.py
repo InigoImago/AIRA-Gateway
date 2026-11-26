@@ -297,12 +297,12 @@ class StreamAccounting:
         if chain is not None:
             self._trail.passed_over(list(chain.skipped), list(chain.failed))
         if not isinstance(exc, REFUSALS):
+            # Its type and where it was raised; the message, which may quote what the failing code
+            # had in hand, only at `DEBUG` (`FRD-631` FR-8).
             _log.error(
                 "unhandled_error",
                 path=self._request.url.path,
                 method=self._request.method,
-                error_type=type(exc).__name__,
-                error=str(exc),
                 model=self.model,
                 exc_info=exc,
             )

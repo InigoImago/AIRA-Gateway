@@ -89,6 +89,9 @@ services:
       AIRA_STRICT_DATA_MODE: ${AIRA_STRICT_DATA_MODE:-true}
       # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
       AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
+      # How log lines, spans and findings write an address: pseudonym (with its network), network
+      # or full. The audit row keeps it whole in every mode.
+      AIRA_TELEMETRY_IP: ${AIRA_TELEMETRY_IP:-pseudonym}
       # Mail on budgets and anomaly findings: off until a relay and a sender are named. Every
       # address is read from Keycloak through the directory account Management searches with.
       AIRA_SMTP_HOST: ${AIRA_SMTP_HOST:-}
@@ -366,6 +369,10 @@ services:
       AIRA_MAIL_FROM: ${AIRA_MAIL_FROM:-}
       # The key a person's name is pseudonymised with in telemetry and logs. From Vault.
       AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
+      # How log lines and spans write an address; the privacy notice states it.
+      AIRA_TELEMETRY_IP: ${AIRA_TELEMETRY_IP:-pseudonym}
+      # How long the configuration history keeps a change, in days; the relay deletes the rest.
+      AIRA_CONFIG_HISTORY_DAYS: ${AIRA_CONFIG_HISTORY_DAYS:-730}
       AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}
       AIRA_LOG_RETENTION_DAYS: ${AIRA_LOG_RETENTION_DAYS:-0}
     depends_on:

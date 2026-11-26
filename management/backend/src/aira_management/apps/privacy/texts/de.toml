@@ -35,6 +35,9 @@ strict_data_on = "Diese Installation läuft im strengen Datenmodus. Gespeicherte
 strict_data_off = "Diese Installation läuft nicht im strengen Datenmodus; deshalb legt jeder Use Case fest, wer in ihm Inhalte liest und Zahlen je Person (Anfragen, Tokens, Kosten, Antwortzeiten) sieht. Bei „alle Mitglieder“ lesen und sehen alle im Use Case alles; bei „nur eigene Anfragen“ seine Administration alles und alle anderen nur das Eigene; und wo Inhalte nur Global Administratoren und IT Security lesen dürfen, liest und sieht niemand im Use Case Inhalte oder Zahlen je Person, auch seine Administration nicht. Anfrage-Protokolle zeigen jedem, der sie sehen darf, wer die Anfrage gestellt hat. Die Summen des Use Case und die eigenen Zahlen sind in jedem Fall sichtbar, und Rollen mit Leserecht auf alle Berichte sehen alle Zahlen je Person."
 mail_on = "Diese Installation versendet diese E-Mails."
 mail_off = "Diese Installation versendet keine E-Mails: Es ist kein Mail-Relay eingerichtet, das Folgende geschieht daher nicht."
+addresses_pseudonym = "das Netz, zu dem sie gehört (die ersten drei Teile einer IPv4-Adresse, die ersten drei Gruppen einer IPv6-Adresse), und ein mit Schlüssel gebildetes Pseudonym der ganzen Adresse, das jedes Mal für dieselbe Adresse steht und keine nennt"
+addresses_network = "nur das Netz, zu dem sie gehört (die ersten drei Teile einer IPv4-Adresse, die ersten drei Gruppen einer IPv6-Adresse)"
+addresses_full = "die ganze Adresse"
 unset_controller = "[Nicht konfiguriert — die Installation hat den Verantwortlichen nicht angegeben (AIRA_PRIVACY_CONTROLLER).]"
 unset_dpo_contact = "Für diese Installation ist keine Kontaktadresse einer oder eines Datenschutzbeauftragten hinterlegt. Wenden Sie sich an den Verantwortlichen."
 unset_works_agreement = "Für diese Installation ist keine Betriebs- oder Dienstvereinbarung hinterlegt."
@@ -162,11 +165,11 @@ recipients = "Berechtigte Administration der Installation und Ihrer Use Cases; M
 
 [activities.administration]
 title = "Nachvollziehbarkeit von Verwaltungsänderungen"
-data = "Wer eine Rolle angelegt, geändert oder gelöscht hat (mit dem Zustand davor und danach), wer einen Use Case stillgelegt, eine Gruppe berechtigt, eine Person eingeladen oder einen Schlüssel für eine andere Person ausgestellt hat, jeweils mit Zeitpunkt; technische Kennungen zur Nachverfolgung interner Ereignisse und, falls ein Ereignis nicht weitergegeben werden konnte, wann und warum."
-purpose = "Nachweis, wer welche Berechtigung vergeben oder geändert hat (Rechenschaftspflicht, Art. 5 Abs. 2 und Art. 32 DSGVO)."
+data = "Wer eine Rolle angelegt, geändert oder gelöscht hat (mit dem Zustand davor und danach), wer einen Use Case stillgelegt, eine Gruppe berechtigt, eine Person eingeladen oder einen Schlüssel für eine andere Person ausgestellt hat, jeweils mit Zeitpunkt; zu jeder Änderung der Konfiguration — Use Cases, Mitglieder und Gruppenfreigaben, API-Schlüssel, Pipelines, Budgets, Rate-Limits, Anomalie-Regeln, Modelle und ihre Preise, Rollen —, wer sie vorgenommen hat, wen sie betrifft, wo sie eine Person betrifft, wann, und den Zustand davor und danach; technische Kennungen zur Nachverfolgung interner Ereignisse und, falls ein Ereignis nicht weitergegeben werden konnte, wann und warum."
+purpose = "Nachweis, wer welche Berechtigung oder Einstellung vergeben oder geändert hat (Rechenschaftspflicht, Art. 5 Abs. 2 und Art. 32 DSGVO)."
 legal_basis = "Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 5 Abs. 2 und Art. 32 DSGVO; Art. 6 Abs. 1 lit. f DSGVO."
-retention = "Ohne automatische Löschung, damit die Historie von Berechtigungen vollständig bleibt. Die Kennungen interner Ereignisse werden mit dem Ereignis gelöscht, {outbox_retention} nach dem Versand."
-recipients = "Personen mit Leserecht auf Rollen bzw. auf den jeweiligen Use Case."
+retention = "Die Historie der Rollen ohne automatische Löschung, damit sie vollständig bleibt; die Historie der Konfigurationsänderungen {history_retention} lang, danach wird sie gelöscht. Die Kennungen interner Ereignisse werden mit dem Ereignis gelöscht, {outbox_retention} nach dem Versand."
+recipients = "Personen mit Leserecht auf Rollen bzw. auf den jeweiligen Use Case; die Historie der Konfigurationsänderungen nur die Rollen, die Personen sehen dürfen (Global Administrator und IT Security)."
 
 [activities.api_keys]
 title = "API-Schlüssel"
@@ -234,7 +237,7 @@ recipients = "Die Anbieter der für den Use Case freigegebenen Modelle, in den f
 
 [activities.telemetry]
 title = "Betriebstelemetrie"
-data = "Falls die Installation sie aktiviert hat: technische Messpunkte und Protokollzeilen je Anfrage mit Kennung der anfragenden Person (im strengen Datenmodus ein Pseudonym, das niemanden nennt), Use Case, Zugang, Quell-IP-Adresse, Browserkennung (User-Agent), Modell, Ergebnis, Tokens und Kosten — nie der Inhalt von Anfragen oder Antworten."
+data = "Falls die Installation sie aktiviert hat: technische Messpunkte und je Anfrage eine Protokollzeile mit Kennung der anfragenden Person (im strengen Datenmodus ein Pseudonym, das niemanden nennt), Use Case, Zugang, Modell, Ergebnis, Tokens, Kosten und Dauer, in Traces zusätzlich die Browserkennung (User-Agent); je eine Protokollzeile zu jeder abgelehnten Anmeldung oder jedem abgelehnten Zugriff, jeder Änderung der Konfiguration (was geändert wurde und von wem, nie die Werte), jeder Suche im Verzeichnis (wer gesucht hat, nie nach wem) und jedem Lesen gespeicherter Inhalte. Von der Quell-IP-Adresse enthalten diese Zeilen und Traces {telemetry_addresses}. Nie der Inhalt von Anfragen oder Antworten."
 purpose = "Überwachung von Verfügbarkeit und Leistung der Systeme, Fehleranalyse und Weiterleitung sicherheitsrelevanter Ereignisse an ein SIEM."
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO; Art. 6 Abs. 1 lit. c DSGVO i. V. m. Art. 32 DSGVO."
 retention = "Nach den Fristen des Beobachtungs- oder SIEM-Systems, das der Verantwortliche angebunden hat; AIRA legt diese Fristen nicht fest."

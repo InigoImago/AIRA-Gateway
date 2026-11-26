@@ -1,0 +1,127 @@
+<div class="stack">
+  <header>
+    <h2 class="card__title" style="margin: 0">Configuration changes</h2>
+    <p class="muted lead">
+      Every change to what the gateway enforces — use cases, members and group grants, API keys,
+      pipelines, budgets, rate limits, anomaly rules, models and roles: when, who made it, whom it
+      concerns, and each field before and after.
+    </p>
+  </header>
+
+  @if (feedback.error(); as error) {
+    <div class="callout callout--danger" role="alert">{{ error }}</div>
+  }
+
+  <div class="form-inline">
+    <div class="field">
+      <label for="history-kind">What</label>
+      <select
+        id="history-kind"
+        data-testid="history-kind"
+        [ngModel]="kind()"
+        (ngModelChange)="kind.set($event); filter()"
+      >
+        <option value="">everything</option>
+        @for (option of kinds; track option) {
+          <option [value]="option">{{ kindLabels[option] }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="history-use-case">Use case</label>
+      <input
+        id="history-use-case"
+        data-testid="history-use-case"
+        placeholder="slug"
+        [ngModel]="useCase()"
+        (ngModelChange)="useCase.set($event)"
+        (keyup.enter)="filter()"
+      />
+    </div>
+  </div>
+
+  @if (view.loading() && !view.rows().length) {
+    <p class="loading" data-testid="history-loading">
+      <span class="spinner" aria-hidden="true"></span>
+      Loading the configuration history…
+    </p>
+  } @else if (!view.rows().length) {
+    <p class="empty" data-testid="no-history">No change has been recorded here yet.</p>
+  } @else {
+    <!-- When, who, what and how on one line each; the fields open under the row, so a long value
+         never pushes the table sideways. -->
+    <div class="table-wrap">
+      <table class="table" data-testid="history">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sr-only">Details</span></th>
+            <th scope="col">When</th>
+            <th scope="col">Who</th>
+            <th scope="col">What</th>
+            <th scope="col">Action</th>
+            <th scope="col">Use case</th>
+            <th scope="col">Concerns</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (change of view.rows(); track change.id) {
+            <tr
+              class="row-openable"
+              [class.is-open]="openRow() === change.id"
+              [attr.data-testid]="'history-row-' + change.id"
+              (click)="toggle(change.id)"
+            >
+              <td class="table__open">
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost"
+                  [attr.aria-expanded]="openRow() === change.id"
+                  [attr.aria-label]="
+                    openRow() === change.id ? 'Hide what changed' : 'Show what changed'
+                  "
+                  [attr.data-testid]="'history-open-' + change.id"
+                  (click)="toggle(change.id, $event)"
+                >
+                  {{ openRow() === change.id ? '▾' : '▸' }}
+                </button>
+              </td>
+              <td class="nowrap">{{ change.changed_at | zoned }}</td>
+              <td data-testid="history-actor">{{ who(change) }}</td>
+              <td data-testid="history-what">
+                {{ kindLabels[change.kind] ?? change.kind }} <code>{{ change.object_key }}</code>
+              </td>
+              <td data-testid="history-action">{{ action(change) }}</td>
+              <td>{{ change.use_case || '—' }}</td>
+              <td data-testid="history-person">{{ change.person || '—' }}</td>
+            </tr>
+            @if (openRow() === change.id) {
+              <tr class="row-detail">
+                <td colspan="7">
+                  <ul class="role-diff" data-testid="history-fields">
+                    @for (name of change.fields_changed; track name) {
+                      <li>
+                        <code>{{ name }}</code
+                        >: {{ shown(change.before?.[name]) }} → {{ shown(change.after?.[name]) }}
+                      </li>
+                    } @empty {
+                      <li class="muted" data-testid="history-no-difference">
+                        Saved without a difference
+                      </li>
+                    }
+                    @if (!change.before && change.action === 'saved') {
+                      <li class="muted" data-testid="history-before-unknown">
+                        What was there before is not known: it was last changed before this history
+                        began.
+                      </li>
+                    }
+                  </ul>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+    <app-table-pager [view]="view" noun="changes" testid="history-pager" />
+  }
+</div>

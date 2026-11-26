@@ -42,7 +42,9 @@ async def record_failed_authentication(request: Request) -> None:
         return
     # On the span before the refusal: an address probing credentials is what a SIEM watches for,
     # and this answer writes no audit row (`FRD-616`).
-    mark_refused(UNAUTHENTICATED, 429)
+    mark_refused(
+        UNAUTHENTICATED, 429, request=request, reason="too many failed attempts from this address"
+    )
     raise GeminiHTTPError(
         429,
         "Too many failed authentication attempts from this address. Try again shortly.",

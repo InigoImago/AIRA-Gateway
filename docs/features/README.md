@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**119 of 123 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**122 of 125 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -119,7 +119,7 @@ status that goes stale in the copy nobody opens.
 | [613](FRD-613-one-person-one-identity.md) | One person, one identity, from the door to the audit row | 6 (governance) | ✅ Built |
 | [614](FRD-614-a-permission-is-a-row.md) | A permission is a row, not a predicate | 7 | ✅ Built |
 | [615](FRD-615-a-trace-crosses-the-bus.md) | A trace crosses the bus | 1 (observability) | ✅ Built |
-| [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ○ Draft — the record stream of §3 is not built; FRD-618's delivery channel carries a span per request |
+| [616](FRD-616-the-audit-trail-as-an-event-stream.md) | The audit trail as an event stream | 7 | ✅ Built — the record stream of §3 as log lines (FRD-631); a Kafka topic of its own is not built |
 | [617](FRD-617-watching-the-wire-to-another-system.md) | Watching the wire to another system | 1 (observability) | ✅ Built |
 | [618](FRD-618-any-otlp-consumer.md) | Any OTLP consumer, not one of them | 1 (observability) | ✅ Built |
 | [619](FRD-619-a-model-access-says-who.md) | A model access that says who it was for | 1 (observability) | ✅ Built |
@@ -134,3 +134,5 @@ status that goes stale in the copy nobody opens.
 | [628](FRD-628-say-what-happened.md) | Say what happened to a request | 6 (reporting) | ✅ Built |
 | [629](FRD-629-one-clock-for-the-installation.md) | One clock for the installation | 6 (Governance & Analytics) | ✅ Built |
 | [630](FRD-630-a-request-explained-to-a-technician.md) | A request explained to a technician | 6 (reporting) | ✅ Built |
+| [631](FRD-631-every-event-a-structured-line.md) | Every event a structured line, and each line safe to send | 7 (operations) | ✅ Built |
+| [632](FRD-632-configuration-changes-have-a-history.md) | Configuration changes have a history | 6 (governance) | ✅ Built |

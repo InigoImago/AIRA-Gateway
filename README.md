@@ -244,6 +244,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Configuration**](docs/CONFIGURATION.md) | Every variable, what it does, what breaks without it |
 | [**Configuration files**](config/README.md) | One YAML per installation, naming every external system — and no secrets |
 | [**Integrations**](docs/INTEGRATIONS.md) | What each connected system must provide |
+| [**Logging**](docs/LOGGING.md) | Every line a process writes, every field, and how a person and an address are written — for the log store and the SIEM |
 | [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and the use case in the base URL |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same steps, for `google-genai` and anything that speaks it |
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |

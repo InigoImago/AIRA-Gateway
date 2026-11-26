@@ -302,7 +302,28 @@ async def test_an_address_never_seen_before_for_a_credential_is_found(sessions) 
     )
 
     assert findings[0].target_value == "ab12cd34"
-    assert "203.0.113.9" in findings[0].detail
+    # The address as the installation writes one outside the audit trail (`FRD-631` FR-9): its
+    # network and a pseudonym by default, never the address — the rows keep it, for the incident
+    # roles.
+    assert "203.0.113.0/24 (ip-" in findings[0].detail
+    assert "203.0.113.9" not in findings[0].detail
+
+
+async def test_an_installation_that_writes_addresses_whole_finds_them_whole(sessions) -> None:
+    from aira_common.addresses import AddressMode, configure_addresses
+
+    configure_addresses(AddressMode.FULL)
+    await _seed(
+        sessions,
+        _log(minutes_ago=20, credential="ab12cd34", source_ip="10.0.0.1"),
+        _log(minutes_ago=5, credential="ab12cd34", source_ip="203.0.113.9"),
+    )
+
+    (finding,) = await _evaluate(
+        sessions, _rule(kind="new_source_ip", target="credential", threshold=1, min_sample=0)
+    )
+
+    assert finding.detail.endswith("not seen before: 203.0.113.9")
 
 
 async def test_a_credential_with_no_history_is_not_reported_as_new(sessions) -> None:
@@ -761,7 +782,7 @@ async def test_the_description_without_addresses_is_cut_where_they_start(session
         sessions, _rule(kind="new_source_ip", target="credential", threshold=1, min_sample=0)
     )
 
-    assert "203.0.113.9" in finding.detail
+    assert "203.0.113.0/24" in finding.detail
     assert without_addresses(finding.detail) == "used from 2 address(es) not seen before"
     # Every other description is left exactly as it is.
     assert without_addresses("60% refusal rate over 5 requests in 15 min") == (

@@ -403,10 +403,10 @@ async def test_the_directory_offers_a_group_already_granted_somewhere(
     await _grant(admin_token, slug, DEPARTMENT)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"{MANAGEMENT_URL}/api/v1/directory/",
+        response = await client.post(
+            f"{MANAGEMENT_URL}/api/v1/directory/search",
             headers={"Authorization": f"Bearer {admin_token}"},
-            params={"q": MEMBER_DEPARTMENT_NAME},
+            json={"query": MEMBER_DEPARTMENT_NAME},
         )
 
     body = response.json()
@@ -418,10 +418,10 @@ async def test_the_directory_never_answers_a_one_letter_query_with_the_whole_rea
     admin_token: str,
 ) -> None:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"{MANAGEMENT_URL}/api/v1/directory/",
+        response = await client.post(
+            f"{MANAGEMENT_URL}/api/v1/directory/search",
             headers={"Authorization": f"Bearer {admin_token}"},
-            params={"q": "a"},
+            json={"query": "a"},
         )
 
     assert response.json()["results"] == []

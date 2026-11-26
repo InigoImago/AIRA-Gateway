@@ -15,6 +15,7 @@ from sqlalchemy import and_, not_, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from aira_common.anomalies import RuleAction, RuleTarget
+from aira_common.logging import get_logger
 from aira_common.permissions import Permission
 from aira_gateway.anomalies.suspensions import AccessSuspension, as_dict, in_force
 from aira_gateway.api.gemini.errors import GeminiHTTPError
@@ -30,6 +31,11 @@ from aira_gateway.state import sessionmaker_of, settings_of, suspensions_of
 #: What a suspension may name: `AccessSuspension.target_value`'s width, stated as a decision rather
 #: than read off the column. Refused beyond it, never truncated — a shortened target matches nobody.
 MAX_TARGET_VALUE = 255
+
+_log = get_logger("aira_gateway.suspensions")
+
+#: What a line about a stop is, for a SIEM that filters by kind.
+SUSPENSION = "suspension"
 
 #: The fastest a throttled target may go. The ceiling Management applies to a configured rate limit
 #: (`ratelimits/models.py`), because a throttle is a rate limit written during an incident; it also
@@ -304,6 +310,18 @@ async def create_suspension(
         session.add(row)
         await session.commit()
     suspensions_of(request).invalidate()
+    # A kill switch thrown is what a SIEM watches for (`FRD-631` FR-11); the row keeps who threw it
+    # by name, the line as the installation writes a person.
+    _log.info(
+        "suspension.created",
+        category=SUSPENSION,
+        object_id=str(row.id),
+        actor=principal.username or principal.subject,
+        target=target,
+        target_value=value,
+        action=action,
+        use_case=scope or None,
+    )
     return JSONResponse(as_dict(row), status_code=201)
 
 
@@ -324,6 +342,15 @@ async def lift_suspension(
             row.lifted_at = datetime.now(UTC)
             row.lifted_by = _author(principal)
             await session.commit()
+            _log.info(
+                "suspension.lifted",
+                category=SUSPENSION,
+                object_id=str(row.id),
+                actor=principal.username or principal.subject,
+                target=row.target,
+                target_value=row.target_value,
+                use_case=row.use_case,
+            )
         payload = as_dict(row, addresses=principal.allows(Permission.INCIDENT_INVESTIGATE))
     suspensions_of(request).invalidate()
     return JSONResponse(payload)

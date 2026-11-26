@@ -132,6 +132,12 @@ reading code.
   payload — the tabular view this inspector had a week earlier would have shown three tidy columns
   and looked finished.
 
+  *And a guarantee about a feed is a guarantee about the signal the consumer is sent.* "A SIEM
+  receives one record per access" held for a SIEM fed with traces. The first installation to attach
+  one sent logs only, traces off, and its SIEM received no access at all — the record of a request
+  was a span and a row, never a line. Ask of every record a consumer is promised: **in which signal
+  does it travel, and does this consumer receive that signal?**
+
 - **An exporter that counts a batch as sent has not necessarily written it anywhere.**
   `AIRA_OTEL_ARRIVED_FILE` pointing into a bind-mounted directory the collector cannot write
   produced no file at all, while `otelcol_exporter_sent_spans{exporter="file/arrived"}` read 116 —
@@ -1303,6 +1309,16 @@ reading code.
   body and named every key it met, so the keys of a function's arguments — a name, an e-mail
   address, a diagnosis — reached the log, and one 7 MB body made a 7 MB line. It now describes the
   request models' own objects and only sizes the caller's.
+
+  *And the rule for a log line's fields was itself a deny-list.* Every field went out as given and a
+  short list named what to pseudonymise, so the field nobody had thought about went out in plain
+  text: `directory.search` wrote under `query` the name somebody looked up, `anomaly_detected` under
+  `target_value` the person a finding was about, the Kafka debug line under `key` a member's
+  username, and `unhandled_error` under `error` a database's quote of the row it refused. Each was
+  found only by reading a real log store. The fields are a register now (`plain`, `person`,
+  `address`), a field outside it is withheld *and named*, and a test reads every log call. **What a
+  line may say is decided once, where lines are made, never at the call site** — a call site
+  remembers the rule until the next one is written.
 - **A row describes what *called*.** The credential's owner is on every row; the human who issued
   it is a separate field, because those are two questions and conflating them puts a colleague's
   name beside an agent's traffic.

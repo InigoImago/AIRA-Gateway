@@ -9,6 +9,27 @@ from aira_common.observability import configure_observability
 from aira_management import __version__
 from aira_management.config.app_settings import ManagementSettings
 
+#: How a Django command is started: ``manage.py <command>``, ``python -m django <command>`` (whose
+#: ``argv[0]`` is Django's own ``__main__.py``) or ``django-admin <command>``.
+COMMAND_RUNNERS = ("manage.py", "django/__main__.py", "django-admin")
+
+
+def process_of(argv: list[str]) -> str:
+    """Which of Management's processes this is, from how it was started (`FRD-631` FR-3).
+
+    A Django command is named after itself however it was started — ``manage.py relay`` is the
+    relay, ``python -m django purge_test_use_cases`` the purge; anything else, uvicorn serving the
+    application, is the API. A command named as the API puts ``(api)`` in the configuration
+    history beside a change only the command made.
+    """
+    if (
+        len(argv) > 1
+        and argv[0].replace("\\", "/").endswith(COMMAND_RUNNERS)
+        and argv[1].isidentifier()
+    ):
+        return argv[1]
+    return "api"
+
 
 def setup_observability(settings: ManagementSettings) -> bool:
     """Configure the OTel providers. Returns whether it ran.

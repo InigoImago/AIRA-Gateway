@@ -689,7 +689,7 @@ def test_a_body_in_another_unicode_encoding_is_measured_as_text(codec: str) -> N
         "/api/v1/use-cases/?q=%00",
         f"/api/v1/use-cases/{SLUG}/members/a%00b/",
         f"/api/v1/use-cases/{SLUG}/groups/revoke/?group_path=/a%00b",
-        "/api/v1/directory/?q=a%00b",
+        "/api/v1/directory/search?q=a%00b",
         "/api/v1/roles/changes/?role=%00",
         "/api/v1/use-cases/?a%00b=1",
     ],

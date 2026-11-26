@@ -37,7 +37,7 @@ class Lines:
     def _note(self, event: str, **fields: Any) -> None:
         self.said.append((event, fields))
 
-    info = warning = error = _note
+    debug = info = warning = error = _note
 
     def of(self, event: str) -> list[dict[str, Any]]:
         return [fields for said, fields in self.said if said == event]
@@ -111,11 +111,10 @@ def test_a_run_that_published_is_a_heartbeat(
     _pending()
     broker = InMemoryProducer()
     monkeypatch.setattr(relay, "build_producer", lambda: broker)
-    out = StringIO()
+    call_command("relay", "--loop", stdout=StringIO())
 
-    call_command("relay", "--loop", stdout=out)
-
-    assert len(broker.sent) == 2 and "published 2 events" in out.getvalue()
+    assert len(broker.sent) == 2
+    assert [run["published"] for run in loop.lines.of("relay_run")] == [2]
     assert loop.after_each_run == [True]
     assert loop.pauses == [relay.DEFAULT_INTERVAL_SECONDS]
     assert loop.max_age() == relay.LEAST_MAX_AGE_SECONDS
@@ -125,11 +124,10 @@ def test_a_run_with_nothing_pending_is_a_heartbeat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     loop = Loop(monkeypatch, tmp_path, runs=1)
-    out = StringIO()
 
-    call_command("relay", "--loop", stdout=out)
+    call_command("relay", "--loop", stdout=StringIO())
 
-    assert "no pending events" in out.getvalue()
+    assert [(run["published"], run["pending"]) for run in loop.lines.of("relay_run")] == [(0, 0)]
     assert loop.after_each_run == [True]
 
 
@@ -144,11 +142,10 @@ def test_a_run_that_left_the_outbox_to_another_is_a_heartbeat(
         yield False
 
     monkeypatch.setattr(relay, "exclusive_run", held)
-    out = StringIO()
 
-    call_command("relay", "--loop", stdout=out)
+    call_command("relay", "--loop", stdout=StringIO())
 
-    assert "another relay run holds the outbox" in out.getvalue()
+    assert loop.lines.of("relay_skipped") == [{"reason": "another relay run holds the outbox"}]
     assert loop.after_each_run == [True]
 
 

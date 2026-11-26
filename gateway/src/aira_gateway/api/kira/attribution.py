@@ -36,12 +36,13 @@ from aira_gateway.auth.dependencies import (
 from aira_gateway.auth.principal import Principal
 
 
-def _mark_unattributed(principal: Principal, status: int) -> None:
-    """A known caller whose request no use case could be attributed to, on its span (`FRD-616`):
-    it writes no audit row, so the span is what a SIEM receives."""
+def _mark_unattributed(principal: Principal, status: int, *, request: Request) -> None:
+    """A known caller whose request no use case could be attributed to, on its span (`FRD-616`)
+    and in the log (`FRD-631` FR-6): it writes no audit row."""
     mark_refused(
         UNATTRIBUTED,
         status,
+        request=request,
         subject=principal.subject,
         method=principal.method,
         credential=principal.credential,
@@ -54,11 +55,11 @@ def resolve(request: Request, principal: Principal) -> Attribution:
 
     if selector:
         if not is_valid_use_case(selector):
-            _mark_unattributed(principal, 400)
+            _mark_unattributed(principal, 400, request=request)
             raise errors.KiraError(400, errors.VALIDATION_ERROR, "Invalid use case identifier.")
         # The rule the Gemini surface applies, from the same function: an empty membership list
         # refuses every selector rather than allowing any.
-        refusal = use_case_refusal(principal, selector)
+        refusal = use_case_refusal(principal, selector, request=request)
         if refusal is not None:
             raise errors.KiraError(403, errors.STANDARD_USER_PERMISSION_REQUIRED, refusal)
         selected: str | None = selector
@@ -68,7 +69,7 @@ def resolve(request: Request, principal: Principal) -> Attribution:
     if selected is None and must_name_a_use_case(request, principal):
         # A permission refusal in this vocabulary, which has no code for a missing request field
         # outside the body; the Gemini surface says the same sentence as its own 400.
-        _mark_unattributed(principal, 403)
+        _mark_unattributed(principal, 403, request=request)
         raise errors.KiraError(
             403, errors.STANDARD_USER_PERMISSION_REQUIRED, missing_use_case(principal)
         )

@@ -13,12 +13,19 @@ from typing import Any
 from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from rest_framework import status
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import (
+    APIException,
+    AuthenticationFailed,
+    NotAuthenticated,
+    PermissionDenied,
+    Throttled,
+)
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 from rest_framework.views import set_rollback
 
 from aira_common.logging import get_logger
+from aira_common.logging.refusals import UNAUTHENTICATED, say_refused
 from aira_common.observability import trace_context_fields
 
 #: The public code of each status this API answers with on purpose — the gateway's names, so a
@@ -43,6 +50,9 @@ INTERNAL_ERROR_MESSAGE = "Internal server error."
 
 _log = get_logger("aira_management")
 
+#: The outcome of a refusal for a caller who is known and may not do what was asked.
+FORBIDDEN = "forbidden"
+
 
 class BodyTooLarge(APIException):
     status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
@@ -66,6 +76,7 @@ def exception_handler(exc: Exception, context: dict[str, Any]) -> Response:
     response = drf_exception_handler(exc, context)
     if response is None:
         return _unexpected(exc, context)
+    _say_if_refused(exc, context)
 
     data = response.data
     if isinstance(data, dict) and "detail" in data:
@@ -80,6 +91,40 @@ def exception_handler(exc: Exception, context: dict[str, Any]) -> Response:
         _STATUS_CODES.get(response.status_code, str(default)), message, details
     )
     return response
+
+
+def _say_if_refused(exc: Exception, context: dict[str, Any]) -> None:
+    """A refused sign-in or a refused permission is a line (`FRD-631` FR-6), bounded per source.
+
+    A `429` is one only for a caller nobody authenticated — the bound on failed sign-ins; an
+    authenticated caller's `429` is the ordinary per-user rate. The reason is DRF's own sentence,
+    never what the caller sent.
+    """
+    request = context.get("request")
+    if request is None:
+        return
+    user = getattr(request, "user", None)
+    known = bool(getattr(user, "is_authenticated", False))
+    if isinstance(exc, NotAuthenticated | AuthenticationFailed):
+        outcome, status_code = UNAUTHENTICATED, 401
+    elif isinstance(exc, Throttled) and not known:
+        outcome, status_code = UNAUTHENTICATED, 429
+    elif isinstance(exc, PermissionDenied):
+        outcome, status_code = FORBIDDEN, 403
+    else:
+        return
+    from aira_management.apps.api.access import source_of
+
+    match = getattr(getattr(request, "_request", request), "resolver_match", None)
+    say_refused(
+        outcome=outcome,
+        status=status_code,
+        source_ip=source_of(getattr(request, "_request", request)),
+        subject=str(user.get_username()) if known and user is not None else None,
+        auth_method="oidc" if known else None,
+        reason=_text(getattr(exc, "detail", "")) or None,
+        route=getattr(match, "route", None) or None,
+    )
 
 
 def _text(detail: Any) -> str:
@@ -98,12 +143,15 @@ def _unexpected(exc: Exception, context: dict[str, Any]) -> Response:
     """
     set_rollback()
     request = context.get("request")
+    # Its type and where it was raised; the message, which may quote what the failing code had in
+    # hand — `Key (username)=(…) already exists` — and the traceback only at `DEBUG` (`FRD-631`
+    # FR-8).
+    # The route, not the path: a path names whom it is about (`…/members/<username>/`).
+    match = getattr(getattr(request, "_request", request), "resolver_match", None)
     _log.error(
         "unhandled_error",
-        path=getattr(request, "path", None),
+        route=getattr(match, "route", None),
         method=getattr(request, "method", None),
-        error_type=type(exc).__name__,
-        error=str(exc),
         exc_info=exc,
         **trace_context_fields(),
     )

@@ -115,7 +115,9 @@ def test_a_sweep_that_finished_is_a_heartbeat_and_one_that_failed_is_not(
     assert failed["error"].startswith("OperationalError: (builtins.Exception) connection to server")
     assert "exc_info" not in failed
     assert pauses == [DEFAULT_INTERVAL_SECONDS] * 3
-    assert capsys.readouterr().out.count("[retention] payloads cleared: 2, rows deleted: 0") == 2
+    # What a sweep removed is its `retention_pruned` line, and nothing is printed beside the lines:
+    # a container's output is one format, all of it through the export (`FRD-631` FR-2).
+    assert "[retention]" not in capsys.readouterr().out
     assert json.loads((tmp_path / "beat").read_text())["max_age_seconds"] == max_age_for(
         DEFAULT_INTERVAL_SECONDS
     )

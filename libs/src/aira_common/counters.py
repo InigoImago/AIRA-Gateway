@@ -217,7 +217,7 @@ class RedisRunner:
         try:
             # Watched per call, successes included: how slowly Redis answers is the question
             # (`FRD-617` §3.3).
-            with watch("redis", "script", target=self._target, keys=len(keys)):
+            with watch("redis", "script", target=self._target, key_count=len(keys)):
                 client = self._connect()
                 registered = self._scripts.get(script)
                 if registered is None:

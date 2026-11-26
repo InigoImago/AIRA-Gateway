@@ -46,9 +46,13 @@ export function withAccess<T extends ApiClientClass>(Base: T) {
       });
     }
 
-    /** Search Keycloak for groups and people a grant could name (`FRD-209` §3). */
+    /**
+     * Search Keycloak for groups and people a grant could name (`FRD-209` §3). The term travels in
+     * the **body**: in a URL it is written down by every proxy and access log on its way, and it
+     * is somebody's name (`FRD-631` FR-12).
+     */
     directory(query: string): Observable<DirectoryResults> {
-      return this.http.get<DirectoryResults>(`${API}/v1/directory/`, { params: { q: query } });
+      return this.http.post<DirectoryResults>(`${API}/v1/directory/search`, { query });
     }
 
     apiKeys(slug: string): Observable<ApiKey[]> {

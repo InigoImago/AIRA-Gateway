@@ -113,6 +113,57 @@ class PendingLog:
     error: str | None = None
 
 
+#: What a request's line is, for a SIEM that filters by kind.
+REQUEST_CATEGORY = "request"
+
+
+def say_recorded(entry: PendingLog) -> None:
+    """One line for one audit row: who asked which model through which use case, and how it ended.
+
+    The row's metadata, never its bodies: the prompt and the answer stay behind the storage switch,
+    the retention clock and the role check, none of which a log line has (`ADR-0016`). The person
+    and the address are written by the pipeline's rules — a pseudonym under strict data mode, the
+    address as `AIRA_TELEMETRY_IP` says — so the line names nobody the audit row's readers do not.
+    Re-identifying the caller is the audit trail's: the line carries the request's id, which the
+    console finds.
+    """
+    usage = entry.usage
+    tools = entry.tool_calls or {}
+    fields: dict[str, Any] = {
+        "category": REQUEST_CATEGORY,
+        "request_id": entry.row_id,
+        "trace_id": entry.trace_id,
+        "api": entry.api,
+        "operation": entry.operation,
+        "use_case": entry.use_case,
+        "subject": entry.subject,
+        "auth_method": entry.auth_method,
+        "credential": entry.credential,
+        "issuer": entry.issuer,
+        "model": entry.model,
+        "requested_model": entry.requested_model,
+        "status": entry.status,
+        "outcome": entry.outcome,
+        "input_tokens": usage.prompt_tokens if usage is not None else None,
+        "output_tokens": usage.completion_tokens if usage is not None else None,
+        "total_tokens": usage.total_tokens if usage is not None else None,
+        "usage_basis": entry.usage_basis,
+        "cost_nanos": entry.cost_nanos,
+        "latency_ms": entry.latency_ms,
+        "provider": entry.provider,
+        "publisher": entry.publisher,
+        "region": entry.region,
+        "tools_offered": int(tools.get("declared") or 0) if tools else None,
+        "tools_called": len(tools.get("called") or []) if tools else None,
+        "flagged": entry.flagged or None,
+        "request_bytes": entry.request_bytes,
+        "source_ip": entry.source_ip,
+    }
+    _log.info(
+        "request_recorded", **{key: value for key, value in fields.items() if value is not None}
+    )
+
+
 def held_bytes(entry: PendingLog) -> int:
     """About how much memory ``entry``'s bodies keep while it waits in the queue.
 
@@ -264,7 +315,14 @@ class RequestLogWriter:
                 self._queue.task_done()
 
     async def submit(self, entry: PendingLog) -> None:
-        """Hand an entry over; falls back to writing it here if the queue is saturated."""
+        """Hand an entry over; falls back to writing it here if the queue is saturated.
+
+        **Every row is also a line** (`FRD-631` FR-11), said here because every row passes here:
+        a SIEM fed with logs had no record of any request — the row is a database write and the
+        span is not exported everywhere. Said before the row is written, so a row the database
+        refuses is still a request somebody can see happened.
+        """
+        say_recorded(entry)
         if not self._settings.store_payloads and (
             entry.request_payload is not None or entry.response_payload is not None
         ):

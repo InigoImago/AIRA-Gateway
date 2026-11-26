@@ -6,7 +6,7 @@ above both (`FRD-116`). Component settings subclass :class:`BaseAiraSettings`.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -228,6 +228,13 @@ class BaseAiraSettings(BaseSettings):
     (`FRD-627` FR-14). A credential, so it comes from Vault, and shared by both planes so one
     person has one pseudonym. Empty, each process draws its own: no name leaks, but a SIEM can no
     longer follow one caller across processes and restarts."""
+
+    telemetry_ip: Literal["pseudonym", "network", "full"] = "pseudonym"
+    """How a network address is written where AIRA's role checks do not reach — log lines, spans,
+    a finding's description (`FRD-631` FR-9). ``pseudonym``: a keyed pseudonym of the address
+    (one address, one value) beside its network (/24, /48) in plain text; ``network``: only the
+    network; ``full``: the address as it is. The audit row keeps the address in every mode, behind
+    the incident roles. Shared by both planes, so an address reads the same in every line."""
 
     smtp_host: str = ""
     """The mail relay the gateway sends through (`FRD-409`). Empty, the default, sends no mail and

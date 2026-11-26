@@ -118,3 +118,20 @@ def test_the_cluster_is_reachable_while_any_broker_is(monkeypatch) -> None:
     assert body["degraded"] is False
     assert body["checks"]["kafka"]["ok"] is True
     assert body["checks"]["kafka"]["detail"] == "1 of 2 reachable"
+
+
+def test_a_key_each_process_draws_for_itself_reads_degraded(monkeypatch) -> None:
+    """Said, not refused (`FRD-631` FR-10): without `AIRA_PSEUDONYM_SECRET` one person is a
+    different pseudonym in every process, and readiness says so with the reason."""
+    from aira_common.pseudonym import configure_pseudonyms
+
+    async def reachable(name: str, host: str, port: int, **_kwargs: object) -> CheckResult:
+        return CheckResult(name=name, ok=True)
+
+    monkeypatch.setattr(health_views, "check_tcp", reachable)
+    configure_pseudonyms(enabled=True, secret="")
+
+    body = Client().get("/readyz").json()
+
+    assert body["status"] == "ready" and body["degraded"] is True
+    assert body["checks"]["pseudonyms"]["ok"] is False

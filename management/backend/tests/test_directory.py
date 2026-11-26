@@ -29,7 +29,7 @@ from .conftest import role_claims
 
 pytestmark = pytest.mark.django_db
 
-URL = "/api/v1/directory/"
+URL = "/api/v1/directory/search"
 
 
 def _user(username: str, *roles: str) -> Any:
@@ -48,18 +48,21 @@ def _client(user: Any) -> APIClient:
 
 
 def test_it_needs_a_credential() -> None:
-    assert APIClient().get(f"{URL}?q=ada").status_code == 401
+    assert APIClient().post(URL, {"query": "ada"}, format="json").status_code == 401
 
 
 def test_a_role_that_administers_nothing_may_not_search_the_directory() -> None:
     """A directory search lists people and departments. It is offered to whoever might grant
     access, not to everyone who can sign in."""
-    assert _client(_user("nobody")).get(f"{URL}?q=ada").status_code == 403
+    assert _client(_user("nobody")).post(URL, {"query": "ada"}, format="json").status_code == 403
 
 
 def test_a_global_administrator_may() -> None:
     """`directory.search`, held through the role."""
-    assert _client(_user("a", "global-admin")).get(f"{URL}?q=ada").status_code == 200
+    assert (
+        _client(_user("a", "global-admin")).post(URL, {"query": "ada"}, format="json").status_code
+        == 200
+    )
 
 
 def test_the_administrator_of_one_use_case_may() -> None:
@@ -71,7 +74,7 @@ def test_the_administrator_of_one_use_case_may() -> None:
     admin = _user("uc-admin")
     _grant(admin, UseCase.objects.create(slug="uc-a", name="A"), UseCaseMembership.ADMIN)
 
-    assert _client(admin).get(f"{URL}?q=ada").status_code == 200
+    assert _client(admin).post(URL, {"query": "ada"}, format="json").status_code == 200
 
 
 def test_administering_only_a_retired_use_case_opens_no_directory() -> None:
@@ -85,7 +88,7 @@ def test_administering_only_a_retired_use_case_opens_no_directory() -> None:
     retired = UseCase.objects.create(slug="uc-a", name="A", deleted_at=timezone.now())
     _grant(admin, retired, UseCaseMembership.ADMIN)
 
-    assert _client(admin).get(f"{URL}?q=ada").status_code == 403
+    assert _client(admin).post(URL, {"query": "ada"}, format="json").status_code == 403
 
 
 # ---- what an empty query does ---------------------------------------------------------------
@@ -94,7 +97,7 @@ def test_administering_only_a_retired_use_case_opens_no_directory() -> None:
 def test_one_letter_returns_nothing_and_says_why() -> None:
     """A picker that dumps the whole directory the moment it is focused is a picker nobody reads,
     and on a real realm it is thousands of rows."""
-    body = _client(_user("a", "global-admin")).get(f"{URL}?q=a").data
+    body = _client(_user("a", "global-admin")).post(URL, {"query": "a"}, format="json").data
 
     assert body["results"] == []
     assert body["source"] == "none"
@@ -102,7 +105,7 @@ def test_one_letter_returns_nothing_and_says_why() -> None:
 
 
 def test_no_query_at_all_is_the_same() -> None:
-    assert _client(_user("a", "global-admin")).get(URL).data["results"] == []
+    assert _client(_user("a", "global-admin")).post(URL, {}, format="json").data["results"] == []
 
 
 # ---- the local fallback ---------------------------------------------------------------------
@@ -115,7 +118,7 @@ def test_without_an_admin_client_it_answers_from_what_management_knows() -> None
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
 
-    body = _client(admin).get(f"{URL}?q=ada").data
+    body = _client(admin).post(URL, {"query": "ada"}, format="json").data
 
     assert body["source"] == "local"
     assert any(row["id"] == "ada" and row["kind"] == "user" for row in body["results"])
@@ -126,7 +129,7 @@ def test_the_local_fallback_offers_a_group_already_granted_somewhere() -> None:
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
 
-    body = _client(admin).get(f"{URL}?q=kunden").data
+    body = _client(admin).post(URL, {"query": "kunden"}, format="json").data
 
     assert body["results"][0]["kind"] == "group"
     assert body["results"][0]["id"] == "/ai/kundenservice"
@@ -135,7 +138,7 @@ def test_the_local_fallback_offers_a_group_already_granted_somewhere() -> None:
 def test_the_local_fallback_cannot_invent_a_group_nobody_has_used() -> None:
     admin = _user("a", "global-admin")
 
-    assert _client(admin).get(f"{URL}?q=vertrieb").data["results"] == []
+    assert _client(admin).post(URL, {"query": "vertrieb"}, format="json").data["results"] == []
 
 
 def test_a_person_is_findable_by_name_and_by_address_not_only_by_username() -> None:
@@ -145,7 +148,7 @@ def test_a_person_is_findable_by_name_and_by_address_not_only_by_username() -> N
     )
 
     for query in ("Ada", "Lovelace", "example.org"):
-        found = _client(admin).get(f"{URL}?q={query}").data["results"]
+        found = _client(admin).post(URL, {"query": query}, format="json").data["results"]
         assert [row["id"] for row in found] == ["al"], query
 
 
@@ -156,7 +159,7 @@ def test_it_never_returns_a_credential() -> None:
     user.set_password("hunter2")
     user.save()
 
-    body = _client(admin).get(f"{URL}?q=ada").data
+    body = _client(admin).post(URL, {"query": "ada"}, format="json").data
 
     assert set(body["results"][0]) == {"kind", "id", "label", "detail"}
     assert "hunter2" not in str(body)
@@ -172,7 +175,7 @@ def test_a_configured_directory_is_used_and_says_so(monkeypatch: pytest.MonkeyPa
             return [DirectoryEntry(SubjectKind.GROUP, "/ai/kundenservice", "kundenservice", "/ai")]
 
     monkeypatch.setattr("aira_management.apps.directory.views._build_directory", lambda: Fake())
-    body = _client(_user("a", "global-admin")).get(f"{URL}?q=kunden").data
+    body = _client(_user("a", "global-admin")).post(URL, {"query": "kunden"}, format="json").data
 
     assert body["source"] == "keycloak"
     assert body["results"][0]["id"] == "/ai/kundenservice"
@@ -192,7 +195,7 @@ def test_an_unreachable_provider_falls_back_rather_than_failing(
     usecase = UseCase.objects.create(slug="uc-a", name="uc-a")
     UseCaseGroupGrant.objects.create(use_case=usecase, group_path="/ai/kundenservice")
 
-    body = _client(_user("a", "global-admin")).get(f"{URL}?q=kunden").data
+    body = _client(_user("a", "global-admin")).post(URL, {"query": "kunden"}, format="json").data
 
     assert body["source"] == "local"
     assert body["results"][0]["id"] == "/ai/kundenservice"
@@ -271,7 +274,7 @@ def test_an_account_kept_in_master_answers_the_search_from_keycloak(
     preprod.AIRA_DIRECTORY_TOKEN_REALM = "master"
     asked = _keycloak_with_the_account_in(monkeypatch, "master")
 
-    body = _client(_user("a", "global-admin")).get(f"{URL}?q=aira").data
+    body = _client(_user("a", "global-admin")).post(URL, {"query": "aira"}, format="json").data
 
     assert body["source"] == "keycloak"
     assert [row["id"] for row in body["results"]] == [
@@ -305,7 +308,7 @@ def test_asked_of_the_wrong_realm_the_search_falls_back_and_the_log_says_where(
 
     with structlog.testing.capture_logs() as logs:
         _fresh_log(monkeypatch)
-        body = _client(_user("a", "global-admin")).get(f"{URL}?q=aira").data
+        body = _client(_user("a", "global-admin")).post(URL, {"query": "aira"}, format="json").data
 
     assert body["source"] == "local"
     (line,) = [entry for entry in logs if entry["event"] == "directory.unavailable"]
@@ -323,9 +326,10 @@ def test_a_search_keycloak_answers_logs_no_warning(
 
     with structlog.testing.capture_logs() as logs:
         _fresh_log(monkeypatch)
-        _client(_user("a", "global-admin")).get(f"{URL}?q=aira")
+        _client(_user("a", "global-admin")).post(URL, {"query": "aira"}, format="json")
 
-    assert [entry["event"] for entry in logs] == ["directory.search"]
+    assert "directory.search" in [entry["event"] for entry in logs]
+    assert [entry["event"] for entry in logs if entry["log_level"] == "warning"] == []
 
 
 def test_the_token_realm_reaches_the_directory_from_the_environment(tmp_path: Path) -> None:
@@ -358,3 +362,35 @@ def test_the_token_realm_reaches_the_directory_from_the_environment(tmp_path: Pa
 
     assert result.returncode == 0, result.stderr[-2000:]
     assert result.stdout.strip().splitlines()[-1] == "preprod master"
+
+
+# ---- what a search leaves behind (`FRD-631` FR-12) -----------------------------------------------
+
+
+def test_the_line_a_search_writes_names_who_searched_and_never_whom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The person looked up does not know of it, and a log store has no role check: the line says
+    who searched, how long the term was and how much was found — enough to see somebody harvesting
+    the directory, nothing about whom they looked for."""
+    get_user_model().objects.create(username="jr", first_name="Johannes", last_name="Reiter")
+
+    with structlog.testing.capture_logs() as logs:
+        _fresh_log(monkeypatch)
+        _client(_user("searcher", "global-admin")).post(URL, {"query": "johannes"}, format="json")
+
+    (line,) = [entry for entry in logs if entry["event"] == "directory.search"]
+    assert line["actor"] == "searcher"
+    assert (line["query_length"], line["results"], line["source"]) == (8, 1, "local")
+    assert "johannes" not in str(line).lower()
+    assert "query" not in line
+
+
+def test_the_term_is_not_taken_from_the_address() -> None:
+    """A name in a URL is kept by every proxy and access log it passes. The address carries
+    nothing the search reads, and asking by `GET` is refused rather than answered."""
+    admin = _client(_user("a", "global-admin"))
+    get_user_model().objects.create(username="ada")
+
+    assert admin.get(f"{URL}?q=ada").status_code == 405
+    assert admin.post(f"{URL}?q=ada", {}, format="json").data["results"] == []

@@ -1,4 +1,5 @@
 from io import StringIO
+from typing import Any
 
 import aira_management.apps.outbox.management.commands.relay as relay
 import pytest
@@ -20,6 +21,11 @@ from aira_common.kafka import (
 pytestmark = pytest.mark.django_db
 
 
+def _runs(lines: list[Any]) -> list[Any]:
+    """The `relay_run` lines a relay wrote: what each run did, as the log store receives it."""
+    return [line for line in lines if line["event"] == "relay_run"]
+
+
 def test_record_to_outbox_writes_row() -> None:
     record_to_outbox("usecase.upserted", {"slug": "uc", "name": "N"})
     row = OutboxEvent.objects.get()
@@ -37,7 +43,7 @@ def test_an_event_no_topic_carries_is_refused_loudly() -> None:
     assert OutboxEvent.objects.count() == 0
 
 
-def test_relay_publishes_and_marks(monkeypatch) -> None:
+def test_relay_publishes_and_marks(monkeypatch, lines_logged_by) -> None:
     OutboxEvent.objects.create(
         topic=USECASE_TOPIC, key="uc", event_type="usecase.upserted", payload={"slug": "uc"}
     )
@@ -49,16 +55,16 @@ def test_relay_publishes_and_marks(monkeypatch) -> None:
     )
     fake = InMemoryProducer()
     monkeypatch.setattr(relay, "build_producer", lambda: fake)
+    lines = lines_logged_by(relay)
 
-    out = StringIO()
-    call_command("relay", stdout=out)
+    call_command("relay", stdout=StringIO())
 
     assert len(fake.sent) == 2
     assert OutboxEvent.objects.filter(published_at__isnull=True).count() == 0
-    assert "published 2" in out.getvalue()
+    assert [run["published"] for run in _runs(lines)] == [2]
 
 
-def test_relay_publishes_one_batch_and_says_what_is_left(monkeypatch) -> None:
+def test_relay_publishes_one_batch_and_says_what_is_left(monkeypatch, lines_logged_by) -> None:
     """**Bounded, and loud about it.**
 
     The query had no limit, so a relay coming back after an outage loaded every pending row into
@@ -81,34 +87,41 @@ def test_relay_publishes_one_batch_and_says_what_is_left(monkeypatch) -> None:
         )
     fake = InMemoryProducer()
     monkeypatch.setattr(relay, "build_producer", lambda: fake)
+    lines = lines_logged_by(relay)
 
-    out = StringIO()
-    call_command("relay", stdout=out)
+    call_command("relay", stdout=StringIO())
 
     assert [record.key for record in fake.sent] == ["uc-0", "uc-1"], "the oldest two, in order"
     assert OutboxEvent.objects.filter(published_at__isnull=True).count() == 3
-    assert "published 2" in out.getvalue()
-    assert "3 still pending" in out.getvalue()
+    assert [(run["published"], run["pending"]) for run in _runs(lines)] == [(2, 3)]
 
 
-def test_relay_says_nothing_about_a_backlog_when_there_is_none(monkeypatch) -> None:
-    """The ordinary run stays as it reads today — a note about zero remaining events is noise."""
+def test_a_run_says_what_it_did_at_info_and_an_idle_one_only_at_debug(
+    monkeypatch, lines_logged_by
+) -> None:
+    """One line per run, through the export like every other (`FRD-631` FR-2) — and a run that
+    found nothing, every ten seconds on an idle installation, is said at `debug`, or it would be
+    most of what the log store receives."""
     OutboxEvent.objects.create(
         topic=USECASE_TOPIC, key="uc", event_type="usecase.upserted", payload={"slug": "uc"}
     )
     monkeypatch.setattr(relay, "build_producer", InMemoryProducer)
+    lines = lines_logged_by(relay)
 
-    out = StringIO()
-    call_command("relay", stdout=out)
+    call_command("relay", stdout=StringIO())
+    call_command("relay", stdout=StringIO())
 
-    assert "published 1" in out.getvalue()
-    assert "pending" not in out.getvalue()
+    busy, idle = _runs(lines)
+    assert (busy["log_level"], busy["published"], busy["pending"]) == ("info", 1, 0)
+    assert (idle["log_level"], idle["published"]) == ("debug", 0)
 
 
-def test_relay_no_pending_events() -> None:
-    out = StringIO()
-    call_command("relay", stdout=out)
-    assert "no pending events" in out.getvalue()
+def test_a_relay_writes_nothing_but_log_lines() -> None:
+    """Every output a structured line (`FRD-631` FR-2): the command's own stdout and stderr stay
+    empty, so a container's output is one format and nothing bypasses the export."""
+    out, err = StringIO(), StringIO()
+    call_command("relay", stdout=out, stderr=err)
+    assert out.getvalue() == "" and err.getvalue() == ""
 
 
 def test_build_producer_returns_aiokafka_producer() -> None:
@@ -227,21 +240,27 @@ def test_what_was_sent_before_a_failure_is_marked_and_not_sent_again(monkeypatch
     assert [record.key for record in healed.sent] == ["uc-1", "uc-2"], "nothing sent twice"
 
 
-def test_an_event_the_broker_will_never_take_is_parked_and_the_queue_moves_on(monkeypatch) -> None:
+def test_an_event_the_broker_will_never_take_is_parked_and_the_queue_moves_on(
+    monkeypatch, lines_logged_by
+) -> None:
     """Retried at the head of the queue, one such event held back every later change of the
     installation — revocations included — on every run, for good."""
     first, second, third = _three_events()
     broker = _FailsAt("uc-1", RecordRefused("MessageSizeTooLargeError"))
     monkeypatch.setattr(relay, "build_producer", lambda: broker)
-    err = StringIO()
+    lines = lines_logged_by(relay)
 
-    call_command("relay", stdout=StringIO(), stderr=err)
+    call_command("relay", stdout=StringIO(), stderr=StringIO())
 
     assert [record.key for record in broker.sent] == ["uc-0", "uc-2"]
     parked = OutboxEvent.objects.get(pk=second.pk)
     assert parked.parked_at is not None and parked.published_at is None
     assert "refused it for good" in parked.parked_reason
-    assert f"parked: event {second.pk}" in err.getvalue()
+    (said,) = [line for line in lines if line["event"] == "relay_event_parked"]
+    assert (said["log_level"], said["event_id"]) == ("warning", second.pk)
+    assert [run["still_parked"] for run in _runs(lines)] == [1]
+    # Said once, when it happened — not again in the same breath, and not every ten seconds.
+    assert [line for line in lines if line["event"] == "relay_events_still_parked"] == []
     assert not OutboxEvent.objects.pending().exists()
 
 
@@ -267,7 +286,7 @@ def test_an_event_already_too_large_is_parked_without_being_sent(monkeypatch) ->
     assert OutboxEvent.objects.get(pk=after.pk).published_at is not None
 
 
-def test_a_second_relay_run_leaves_the_outbox_to_the_first(monkeypatch) -> None:
+def test_a_second_relay_run_leaves_the_outbox_to_the_first(monkeypatch, lines_logged_by) -> None:
     """Two runs at once can publish one key's events in the wrong order, and on a compacted topic
     the older one survives. The run that cannot take the lock touches nothing."""
     from contextlib import contextmanager
@@ -281,12 +300,12 @@ def test_a_second_relay_run_leaves_the_outbox_to_the_first(monkeypatch) -> None:
         yield False
 
     monkeypatch.setattr(relay, "exclusive_run", held)
-    out = StringIO()
+    lines = lines_logged_by(relay)
 
-    call_command("relay", stdout=out)
+    call_command("relay", stdout=StringIO())
 
     assert broker.sent == []
-    assert "another relay run holds the outbox" in out.getvalue()
+    assert [line["event"] for line in lines] == ["relay_skipped"]
     assert OutboxEvent.objects.pending().count() == 3
 
 

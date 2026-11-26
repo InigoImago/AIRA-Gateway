@@ -11,6 +11,7 @@ import asyncio
 from django.http import HttpRequest, JsonResponse
 
 from aira_common.health import CheckResult, any_reachable, check_tcp
+from aira_common.logging.lifecycle import pseudonym_state
 from aira_management.config.runtime import get_settings
 
 
@@ -39,6 +40,9 @@ def readyz(_request: HttpRequest) -> JsonResponse:
         return database, any_reachable("kafka", members)
 
     database, kafka = asyncio.run(_run())
+    # A key each process draws for itself works, and costs the SIEM its correlation: one person, a
+    # different pseudonym per process and restart (`FRD-631` FR-10). Said, not refused.
+    pseudonyms_ok, pseudonyms_detail = pseudonym_state()
     checks: dict[str, dict[str, object]] = {
         "postgres": {"ok": database.ok, "detail": database.detail},
         "kafka": (
@@ -46,11 +50,12 @@ def readyz(_request: HttpRequest) -> JsonResponse:
             if kafka is None
             else {"ok": kafka.ok, "detail": kafka.detail, "required": False}
         ),
+        "pseudonyms": {"ok": pseudonyms_ok, "detail": pseudonyms_detail, "required": False},
     }
     return JsonResponse(
         {
             "status": "ready" if database.ok else "not_ready",
-            "degraded": kafka is not None and not kafka.ok,
+            "degraded": (kafka is not None and not kafka.ok) or not pseudonyms_ok,
             "checks": checks,
         },
         status=200 if database.ok else 503,

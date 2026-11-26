@@ -21,6 +21,7 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import StaticPool
 
 from aira_common.integration_debug import report
+from aira_common.logging.exceptions import loggable
 
 
 class Base(DeclarativeBase):
@@ -108,7 +109,8 @@ def watch_connections(engine: AsyncEngine) -> AsyncEngine:
             outcome="failed",
             target=target,
             error_type=type(exc).__name__,
-            error=str(exc)[:200],
+            # Without the database's detail, which quotes the row a constraint refused.
+            error=loggable(exc)[:200],
             is_disconnect=bool(getattr(context, "is_disconnect", False)),
         )
 

@@ -344,9 +344,9 @@ INSTALLATION: list[tuple[str, str, str, dict | None, dict[str, int]]] = [
     ),
     (
         "the directory",
-        "get",
-        "/api/v1/directory/?q=uc",
-        None,
+        "post",
+        "/api/v1/directory/search",
+        {"query": "uc"},
         # **Not a role gate**, and that is worth stating rather than asserting around.
         # `IsGlobalAdminOrUseCaseAdministrator` asks whether this person administers *any* use
         # case — a fact about the whole installation's grants, not about the caller's roles and

@@ -5,14 +5,14 @@ from aira_common.logging import configure_logging, get_logger
 
 def test_json_logging_emits_parseable_line(capsys) -> None:
     configure_logging("INFO", json_output=True)
-    log = get_logger("test").bind(component="unit")
-    log.info("hello", answer=42)
+    log = get_logger("test").bind(use_case="unit")
+    log.info("hello", count=42)
 
     out = capsys.readouterr().out.strip()
     record = json.loads(out)
     assert record["event"] == "hello"
-    assert record["answer"] == 42
-    assert record["component"] == "unit"
+    assert record["count"] == 42
+    assert record["use_case"] == "unit"
     assert record["level"] == "info"
     assert "timestamp" in record
 

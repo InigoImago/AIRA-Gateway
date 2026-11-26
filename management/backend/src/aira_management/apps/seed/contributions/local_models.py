@@ -22,6 +22,7 @@ from typing import Any
 
 from django.db import transaction
 
+from aira_common.logging import get_logger
 from aira_management.apps.catalog.models import Model
 from aira_management.apps.catalog.views import _payload
 from aira_management.apps.seed.registry import SeedResult, register
@@ -29,6 +30,8 @@ from aira_management.apps.usecases.events import emit
 
 #: The two models the `verify` profile pulls. Small on purpose: the gateway is under test, not the
 #: model, and a CI job must not pull gigabytes.
+_log = get_logger("aira_management.seed")
+
 CHAT_MODEL = os.environ.get("AIRA_SEED_LOCAL_CHAT_MODEL", "qwen3:0.6b")
 EMBED_MODEL = os.environ.get("AIRA_SEED_LOCAL_EMBED_MODEL", "all-minilm")
 
@@ -198,7 +201,7 @@ def seed_local_models(fresh: bool) -> SeedResult:
 
     served = _served_models()
     if served is None:
-        print("[seed] local_models: the local endpoint did not answer; declaring nothing")
+        _log.warning("local_models_not_declared", reason="the local endpoint did not answer")
         return {"local_models": 0}
 
     created = 0
@@ -206,7 +209,9 @@ def seed_local_models(fresh: bool) -> SeedResult:
         if _tagged(str(declaration["name"])) not in served:
             # Said out loud: the seed is the only place that knows why a model is missing from
             # the catalog and every request for it is refused.
-            print(f"[seed] local_models: '{declaration['name']}' is not served here; skipping")
+            _log.warning(
+                "local_model_skipped", model=str(declaration["name"]), reason="not served here"
+            )
             continue
         with transaction.atomic():
             model, was_created = Model.objects.update_or_create(

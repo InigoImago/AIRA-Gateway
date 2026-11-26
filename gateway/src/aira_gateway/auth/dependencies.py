@@ -11,6 +11,7 @@ from dataclasses import replace
 
 from fastapi import Depends, Request
 
+from aira_common.addresses import address_attributes
 from aira_common.observability import set_span_attributes
 from aira_common.oidc import MAX_TOKEN_LENGTH
 from aira_common.permissions import effective, held_roles
@@ -131,24 +132,27 @@ async def require_principal(request: Request) -> Principal:
     # `NOT_AUTHENTICATED` from `INVALID_TOKEN`, and keeping the bit on the request keeps KIRA's
     # vocabulary out of the shared refusal type. Only meaningful when authentication is on.
     request.state.credential_presented = extract_token(request) is not None
-    # Where the attempt came from, on its span before the verdict, so a refusal carries it too.
-    set_span_attributes({"aira.source_ip": client_ip(request)})
+    # Where the attempt came from, on its span before the verdict, so a refusal carries it too —
+    # written as the installation writes an address (`FRD-631` FR-9).
+    set_span_attributes(address_attributes(client_ip(request)))
     principal = await resolve_principal(request)
     if principal is None:
         # Before the 401: every `FRD-405` limit is keyed by a verified identity, so none of them
         # bounds a caller who has none.
         await record_failed_authentication(request)
-        mark_refused(UNAUTHENTICATED, 401)
-        if key_in_url_not_read(request) and extract_token(request) is None:
-            # Named, because "missing" is false to somebody who sent a key — only not where this
-            # surface reads one.
-            raise _unauthenticated(KEY_IN_URL)
-        raise _unauthenticated("Missing or invalid credentials.")
+        # Named, because "missing" is false to somebody who sent a key — only not where this
+        # surface reads one.
+        unread = key_in_url_not_read(request) and extract_token(request) is None
+        message = KEY_IN_URL if unread else "Missing or invalid credentials."
+        mark_refused(UNAUTHENTICATED, 401, request=request, reason=message)
+        raise _unauthenticated(message)
     request.state.principal = principal
     return principal
 
 
-def use_case_refusal(principal: Principal, use_case: str) -> str | None:
+def use_case_refusal(
+    principal: Principal, use_case: str, *, request: Request | None = None
+) -> str | None:
     """Why ``principal`` may not act on ``use_case``, or ``None`` if they may.
 
     **A selector never grants access; it only chooses among what you already have.** One rule for
@@ -177,28 +181,34 @@ def use_case_refusal(principal: Principal, use_case: str) -> str | None:
         mark_refused(
             FORBIDDEN,
             403,
+            request=request,
             subject=principal.subject,
             method=principal.method,
             credential=principal.credential,
             use_case=use_case,
+            reason=reason,
         )
     return reason
 
 
-def _mark_unattributed(principal: Principal, status: int) -> None:
-    """A known caller whose request no use case could be attributed to, on its span (`FRD-616`)."""
+def _mark_unattributed(principal: Principal, status: int, *, request: Request) -> None:
+    """A known caller whose request no use case could be attributed to, on its span (`FRD-616`)
+    and in the log (`FRD-631` FR-6)."""
     mark_refused(
         UNATTRIBUTED,
         status,
+        request=request,
         subject=principal.subject,
         method=principal.method,
         credential=principal.credential,
     )
 
 
-def authorize_use_case(principal: Principal, use_case: str) -> None:
+def authorize_use_case(
+    principal: Principal, use_case: str, *, request: Request | None = None
+) -> None:
     """Raise a Gemini-shaped 403 unless ``principal`` may act on ``use_case``."""
-    reason = use_case_refusal(principal, use_case)
+    reason = use_case_refusal(principal, use_case, request=request)
     if reason is not None:
         raise GeminiHTTPError(403, reason, "PERMISSION_DENIED")
 
@@ -271,7 +281,7 @@ async def require_attribution(
     use_case = resolve_use_case(request)
     if use_case is not None:
         if not is_valid_use_case(use_case):
-            _mark_unattributed(principal, 400)
+            _mark_unattributed(principal, 400, request=request)
         require_valid_use_case(use_case)
 
     if use_case is None:
@@ -279,9 +289,9 @@ async def require_attribution(
 
     if use_case is None:
         if must_name_a_use_case(request, principal):
-            _mark_unattributed(principal, 400)
+            _mark_unattributed(principal, 400, request=request)
             raise GeminiHTTPError(400, missing_use_case(principal), "INVALID_ARGUMENT")
     else:
-        authorize_use_case(principal, use_case)
+        authorize_use_case(principal, use_case, request=request)
 
     return attribute(request, Attribution.of(principal, use_case))

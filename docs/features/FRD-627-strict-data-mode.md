@@ -7,6 +7,12 @@
 > visibility), `FRD-603` §5.5 (figures per person), `FRD-505` (requests and prompts), `FRD-501`
 > and `FRD-503` (findings and stops), `FRD-614` (roles), `FRD-625` (privacy notice),
 > `ADR-0036`.
+>
+> **Amended by [`FRD-631`](FRD-631-every-event-a-structured-line.md) FR-9 (the owner's
+> decision).** The non-goal *"spans and logs keep the source address"* no longer holds by default:
+> outside the audit trail an address is its network and a keyed pseudonym (`AIRA_TELEMETRY_IP`,
+> `pseudonym`), which a SIEM still counts and correlates by; `full` keeps it. FR-14's key is not
+> required to start: without it each process warns once and readiness reads `degraded`.
 
 ## 1. Summary
 

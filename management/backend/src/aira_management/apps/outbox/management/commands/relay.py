@@ -21,11 +21,17 @@ a crash after publish but before marking re-publishes on the next run — the co
 - **With `--loop` it runs again after every pause, until SIGTERM** (`FRD-153`), and a run that
   finished — published, found nothing pending, or left the outbox to the run holding it — is a
   heartbeat its container's healthcheck reads. A run that failed is said, and is none.
+- **What a run did is one structured line** (`FRD-631` FR-2): `relay_run` with what it published,
+  parked and deleted and what is left, through the same pipeline and export as every other line.
+  A run that found nothing is said at `debug` — every ten seconds, it would be most of the log. An
+  event set aside is a warning when it is set aside, and again at most once an hour while any is
+  left, rather than every ten seconds for thirty days.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -48,6 +54,8 @@ from aira_common.kafka import (
     encode_event,
 )
 from aira_common.logging import get_logger
+from aira_common.logging.lifecycle import say_stopped
+from aira_common.observability import flush_telemetry
 from aira_common.periodic import run_every
 from aira_management.apps.outbox.models import KEPT_AFTER_DAYS, OutboxEvent
 from aira_management.config.runtime import get_settings
@@ -69,7 +77,13 @@ LEAST_MAX_AGE_SECONDS = 120.0
 #: that did not answer. Anything else is logged with its traceback, as a run on its own prints it.
 RUN_FAILURES = (CommandError, DatabaseError)
 
+#: How often a relay that has set events aside says so again while they stay.
+PARKED_REMINDER_SECONDS = 3600.0
+
 _log = get_logger("aira_management.relay")
+
+#: When this process last warned about the events set aside, on the monotonic clock.
+_reminded_at: float | None = None
 
 
 def max_age_for(interval: float) -> float:
@@ -160,6 +174,19 @@ def sweep(now: Any) -> int:
     return deleted + parked
 
 
+def sweep_history(now: Any) -> int:
+    """Delete configuration changes older than `AIRA_CONFIG_HISTORY_DAYS` (`FRD-632`). How many.
+
+    Here because the relay is the process that already keeps Management's tables to their periods,
+    and runs whether or not anybody opens the console.
+    """
+    from aira_management.apps.history.models import ConfigurationChange
+
+    cutoff = now - timedelta(days=get_settings().config_history_days)
+    deleted, _by_model = ConfigurationChange.objects.filter(changed_at__lt=cutoff).delete()
+    return int(deleted)
+
+
 class Command(BaseCommand):
     help = "Publish unsent outbox events to Kafka: once, or again after every pause with --loop."
 
@@ -202,6 +229,10 @@ class Command(BaseCommand):
         except ValueError as exc:
             # What the loop refuses before its first run: a pause or an age that cannot work.
             raise CommandError(str(exc)) from exc
+        # Stopped: the last lines, `worker_stopped` among them, handed over before the process
+        # ends rather than left in the export's batch (`FRD-631` FR-4).
+        say_stopped(service=get_settings().app_name)
+        flush_telemetry()
 
     def _run_in_loop(self) -> None:
         try:
@@ -215,29 +246,48 @@ class Command(BaseCommand):
     def _run(self) -> None:
         with exclusive_run() as acquired:
             if not acquired:
-                self.stdout.write("another relay run holds the outbox; nothing done")
+                _log.info("relay_skipped", reason="another relay run holds the outbox")
                 return
             self._relay()
 
     def _relay(self) -> None:
-        swept = sweep(timezone.now())
-        if swept:
-            self.stdout.write(f"deleted {swept} events kept past {KEPT_AFTER_DAYS} days")
+        moment = timezone.now()
+        swept = sweep(moment)
+        expired = sweep_history(moment)
+        if expired:
+            _log.info("config_history_pruned", rows_deleted=expired)
         pending = list(OutboxEvent.objects.pending()[:BATCH])
         if not pending:
-            self.stdout.write("no pending events")
-            self._say_what_is_parked()
+            still_parked = self._say_what_is_parked()
+            # Every ten seconds on an idle installation: at `debug`, or it is most of the log.
+            say = _log.info if swept else _log.debug
+            say("relay_run", published=0, pending=0, swept=swept, still_parked=still_parked)
             return
         run = asyncio.run(_publish(build_producer(), pending))
         moment = timezone.now()
         OutboxEvent.objects.filter(pk__in=run.published).update(published_at=moment)
         for pk, reason in run.parked.items():
             OutboxEvent.objects.filter(pk=pk).update(parked_at=moment, parked_reason=reason)
+            event = next(event for event in pending if event.pk == pk)
+            # Once, when it happens: a change set aside is a change the gateway never saw.
+            _log.warning(
+                "relay_event_parked",
+                event_id=pk,
+                event_type=event.event_type,
+                topic=event.topic,
+                reason=reason,
+            )
         remaining = OutboxEvent.objects.pending().count()
-        # Said out loud, so "published 500 events" is not read as "the outbox is empty".
-        note = f" ({remaining} still pending)" if remaining else ""
-        self.stdout.write(self.style.SUCCESS(f"published {len(run.published)} events{note}"))
-        self._say_what_is_parked()
+        still_parked = self._say_what_is_parked(reminded=bool(run.parked))
+        # `pending` said out loud, so "published 500" is not read as "the outbox is empty".
+        _log.info(
+            "relay_run",
+            published=len(run.published),
+            parked=len(run.parked),
+            pending=remaining,
+            swept=swept,
+            still_parked=still_parked,
+        )
         if run.stopped_at is not None:
             raise CommandError(
                 f"publishing stopped at event {run.stopped_at.pk} ({run.stopped_at.event_type} "
@@ -247,13 +297,25 @@ class Command(BaseCommand):
         if run.failure is not None:
             raise CommandError(f"the producer did not stop cleanly: {run.failure!r}")
 
-    def _say_what_is_parked(self) -> None:
-        """Every run, while any remain: an event set aside is a change the gateway never saw."""
+    def _say_what_is_parked(self, *, reminded: bool = False) -> int:
+        """How many events stay set aside — and, at most once an hour while any do, a warning
+        naming the oldest: an event set aside is a change the gateway never saw. ``reminded`` is
+        a run that has just warned about the ones it set aside."""
         parked = OutboxEvent.objects.filter(parked_at__isnull=False).order_by("parked_at", "id")
-        for event in parked:
-            self.stderr.write(
-                self.style.WARNING(
-                    f"parked: event {event.pk} ({event.event_type} {event.key!r} on "
-                    f"{event.topic}) — {event.parked_reason}"
-                )
+        count = parked.count()
+        global _reminded_at
+        now = time.monotonic()
+        if reminded:
+            _reminded_at = now
+        elif count and (_reminded_at is None or now - _reminded_at >= PARKED_REMINDER_SECONDS):
+            oldest = parked.first()
+            _reminded_at = now
+            _log.warning(
+                "relay_events_still_parked",
+                count=count,
+                event_id=oldest.pk if oldest else None,
+                event_type=oldest.event_type if oldest else None,
+                topic=oldest.topic if oldest else None,
+                reason=oldest.parked_reason if oldest else None,
             )
+        return count

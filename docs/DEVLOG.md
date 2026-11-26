@@ -5,6 +5,106 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## Every event a structured line, and each line safe to send (2026-11-25)
+
+The owner connected Stage T's OTLP export to Graylog — logs over gRPC, no traces — and filed tickets
+from what the log store showed and did not show; the SIEM team, beside it, needed more data rather
+than less. What the log store saw: almost nothing at idle while `docker compose logs` scrolled; no
+service start or stop; no `vault_*` line and no `pseudonym_key_per_process` warning; no line saying
+who added whom to a use case; seven `directory.search` lines for one search, each with the letters
+typed so far in plain text; and the consumer killed with `137` on every stop. What the SIEM saw: no
+request at all — the record of a request was a span and a database row, and traces were off.
+
+**What changed** (`FRD-631`, `FRD-632`, `ADR-0054`):
+
+- `aira_common.logging` is a package. Every line passes, in order: the exception described (type,
+  `error_at`, constraint and SQLSTATE; message and traceback at `DEBUG` only), **the register**
+  (`fields`: every field `plain`, `person` or `address`, with one type; an unknown one withheld and
+  named under `withheld_fields`), the person pseudonymised, the address written as
+  `AIRA_TELEMETRY_IP` says. A library's record — uvicorn, Django, `py.warnings`, an uncaught
+  exception — is rendered by the same pipeline; uvicorn's access log is off; the export ships only
+  rendered lines. Lines written before the export exists are held and handed over with their time.
+- Every process names itself (`process`), writes `process_started` once its export exists, and
+  `process_stopping`/`process_stopped`, then flushes. The consumer stops on SIGTERM between two
+  events, commits what it applied, leaves a held event uncommitted, leaves its group. Management's
+  ASGI application answers the lifespan Django does not. The migration containers write
+  `migrations_applied`.
+- Lines for a SIEM: `request_recorded` for every audit row (said in `RequestLogWriter.submit`, the one
+  door), `auth_refused` (ten per source per minute, then `suppressed`), `config.changed`,
+  `suspension.created`/`.lifted`, `payload_read` and `anomaly_detected` with a `category`; one
+  `http_request` per request in both planes with the route template, and the console's nginx as
+  JSON without address, query, `X-Forwarded-For` or user agent — and without nginx's own error
+  lines about a request.
+- Addresses outside the audit trail: `source_net` and `source_id` by default (owner's decision), in
+  lines, spans and a finding's description. `AIRA_PSEUDONYM_SECRET` missing: a warning and
+  `degraded` readiness, no refusal (owner's decision).
+- The directory search is `POST /api/v1/directory/search`; its line has no term; the console waits
+  300 ms. The relay writes `relay_run`, idle at `debug`, and a parked event once rather than every
+  ten seconds.
+- The configuration history (`FRD-632`): a row per configuration event with actor, person, before,
+  after and the fields changed, in the event's transaction; `config.changed` on commit; *Platform →
+  Configuration changes* for `incident.investigate`; `AIRA_CONFIG_HISTORY_DAYS`, 730 by default
+  (owner's decision), swept by the relay. New privacy edition.
+- `docs/LOGGING.md` is the reader's page, its field table generated from the register.
+
+**What the round found.**
+
+- *The leaks were in the fields nobody had listed.* Besides the search term the tickets named:
+  `anomaly_detected` wrote a subject rule's `target_value` — the person — in plain text under
+  strict data mode, and the Kafka debug line's `key` is `<use case>|<username>` for a membership.
+  Both are now written by the register's rules.
+- *Two fields had two types.* `database` was a name in one line and a boolean in another, `keys` a
+  list in one and a count in another — a log store that maps a field on first sight refuses the
+  other lines. Renamed (`database_calls`, `http_calls`, `key_count`), and the register states one
+  type per field.
+- *Django warned once per 4xx*, `Unauthorized: /api/v1/me` — invisible until its records were
+  rendered as lines; dropped, since the access line says the same.
+- *uvicorn writes its access line at the response's start*, so it can never carry the duration; that
+  is why the line is AIRA's own now and not uvicorn's re-rendered.
+- *nginx's error line about a request carried what its access line had just stopped carrying.*
+  Found on the live stack, not by a test: with an upstream unreachable, nginx wrote the caller's
+  address, the request line and the upstream's URL, query string included — a Gemini client's
+  `?key=` is its API key — beside the clean JSON line. Any upstream that is down, slow or restarting
+  writes it, a rolling update included. nginx has no format for it; the server now writes `crit` and
+  worse only.
+- *A command started as `python -m django` called itself the API.* Its `argv[0]` is Django's own
+  `__main__.py`, not `manage.py`, so the browser suite's purge wrote `"process": "api"` — and the
+  history, which names the process where no person acted, would have said `(api)` beside changes
+  only the command made. Seen in the purge's own lines on the live stack; `process_of` had no test.
+- *Vault's lines arrived on time and without a name.* Held and handed to the export with the time
+  they were written, as the ticket asked — but every entry point named its process once its
+  settings existed, and reading the settings is what writes those lines. Each names itself first.
+- *Two live tests read `degraded: false`*, which a stack without `AIRA_PSEUDONYM_SECRET` never
+  reaches — CI's included. They read the flag apart from the key now, and so does the suite's
+  header, which had sent whoever read it to restart the local model.
+- *The integration-debug channel cut a database error to 200 characters but kept its `DETAIL`*, the
+  row a constraint refused. `loggable` is shared by both planes now and applied there.
+- *A test suite that builds an app sets process-wide logging state*: which process a line names,
+  how an address is written, which sources were told off. The root `conftest.py` puts it back per
+  test, and gives the suite a stable pseudonym key, so readiness is not `degraded` by default.
+
+**Measured.** `make ci` green on the first commit (8738 Python tests, 1845 console specs, 97.27 %
+coverage) and on the last (8770 and 1853, 97.29 %); the commits between ran the suites their change
+touches. 57 new mutations (`LG-1`–`LG-47`, `CH-1`–`CH-10`) and 16 moved or re-anchored, all caught
+on the final tree. Live, on a stack of its own built from the branch — as in CI and on Stage T, no
+Vault and no pseudonym key; the export on, to the stack's collector:
+
+- every process's `process_started` and key warning arrived, the two migration containers'
+  `migrations_applied` (60 and 85 revisions) with them;
+- `docker stop` ended the consumer in 0.36 s with exit code 0 and `worker_stopped` (Stage T: 10 s,
+  137), the relay and the retention sweep in under 5 s; with the consumer frozen, so that SIGTERM
+  never reached it, the new live test failed with 137, as it must;
+- the integration suite: 1112 passed, 16 skipped, one failed — `test_b11` expected a finding to
+  name the whole address, which it no longer does (34 min); the browser suite: 185 passed, 1
+  skipped, without retries (8 min), the history's two specs among them;
+- nginx with its upstreams unreachable: an error line with the caller's address and a `?key=` in
+  plain text before, the JSON line alone after.
+
+With Vault on (its address and the dev token) and the key in it, both planes read
+`degraded: false`, and every process's `vault_dev_token_used` and `vault_secrets_loaded` arrived
+with the time they were written, 0.04–0.11 s before the export existed — and after the last fix,
+with the process's name. `python -m django check` names itself `check`.
+
 ## Every process reports its own health (2026-11-19)
 
 An operability ticket. The three processes the images run without a server — the configuration

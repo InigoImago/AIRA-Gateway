@@ -105,16 +105,15 @@ class UnroutedEvent(LookupError):
     """An event type no topic carries — a programming error, said where it happens."""
 
 
-def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
+def address_of(event_type: str, payload: dict[str, Any]) -> tuple[str, str]:
+    """``(topic, key)`` an event is published under — the one definition the outbox and the
+    configuration history (`FRD-632`) both key a change by."""
     base = _TOPIC_FOR.get(event_type)
     if base is None:
         raise UnroutedEvent(
             f"No topic carries '{event_type}'. Route it in `_TOPIC_FOR`, or the change it "
             "describes would never reach the gateway."
         )
-    size = len(encode_event(payload))
-    if size > MAX_EVENT_BYTES:
-        raise EventTooLarge(event_type, size)
     # Named for this installation's stage when it has one: `aira.t.usecases` on a shared cluster.
     topic = staged(base, getattr(settings, "AIRA_KAFKA_STAGE", "") or "")
     # Compacted topics are keyed by the entity's natural key (budget id first, then prefix/slug).
@@ -128,6 +127,14 @@ def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
     discriminator = _ALSO_IDENTIFIED_BY.get(event_type)
     if discriminator is not None:
         key = f"{key}|{payload.get(discriminator, '')}"
+    return topic, key
+
+
+def record_to_outbox(event_type: str, payload: dict[str, Any]) -> None:
+    topic, key = address_of(event_type, payload)
+    size = len(encode_event(payload))
+    if size > MAX_EVENT_BYTES:
+        raise EventTooLarge(event_type, size)
     OutboxEvent.objects.create(
         topic=topic,
         key=key,

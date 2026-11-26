@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from types import ModuleType
 from typing import Any
 
@@ -91,6 +91,31 @@ def _no_ambient_configuration() -> None:
     """
     for name in [key for key in os.environ if key.startswith(("AIRA_", "VAULT_"))]:
         del os.environ[name]
+
+
+@pytest.fixture(autouse=True)
+def _how_lines_are_written_until_a_process_says_otherwise() -> Iterator[None]:
+    """How a person and an address are written, which process a line names, which sources have
+    been told off and which early lines are held are process-wide state that `configure_process`
+    and Management's settings set (`FRD-627` FR-14, `FRD-631`). A test that builds an application
+    would otherwise decide what every later test's lines say — a key pseudonymised in a test that
+    never asked for strict data mode."""
+    from aira_common.addresses import DEFAULT_MODE, configure_addresses
+    from aira_common.logging import process_named
+    from aira_common.logging.refusals import forget_sources_for_tests
+    from aira_common.pseudonym import configure_pseudonyms
+
+    def neutral() -> None:
+        # Names as they are, and a key of the suite's own: one every process of a deployment would
+        # share, so an address's pseudonym is stable and readiness has nothing to say about it.
+        configure_pseudonyms(enabled=False, secret="the suite's own pseudonym key")
+        configure_addresses(DEFAULT_MODE)
+        process_named(None)
+        forget_sources_for_tests()
+
+    neutral()
+    yield
+    neutral()
 
 
 @pytest.fixture

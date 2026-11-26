@@ -175,6 +175,22 @@ describe('AccessPanel — granting', () => {
     expect(harness.searches).toEqual(['kund']);
   });
 
+  it('asks once for a name typed at an ordinary pace', () => {
+    // Every search is a line in the log naming its actor, and a look-up of somebody else's name:
+    // "johannes" typed letter by letter, a keystroke every fifth of a second, is one search.
+    const harness = setup();
+
+    let typed = '';
+    for (const letter of 'johannes') {
+      typed += letter;
+      harness.type(typed);
+      vi.advanceTimersByTime(200);
+    }
+    vi.advanceTimersByTime(300);
+
+    expect(harness.searches).toEqual(['johannes']);
+  });
+
   it('does not search on one letter', () => {
     // A picker that dumps the whole directory the moment it is focused is a picker nobody reads,
     // and on a real realm it is thousands of rows.

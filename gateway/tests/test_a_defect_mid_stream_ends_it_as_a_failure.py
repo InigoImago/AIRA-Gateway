@@ -236,8 +236,11 @@ def test_a_defect_mid_stream_is_logged_and_on_the_trace(monkeypatch: pytest.Monk
     assert span.status.status_code is StatusCode.ERROR
     assert [event.name for event in span.events] == ["exception"]
     ((event, fields),) = log.lines
-    assert (event, fields["error_type"]) == ("unhandled_error", "KeyError")
+    assert event == "unhandled_error"
+    # The error itself, which the pipeline describes by its type and place; its message, which may
+    # quote what the stream had in hand, only at `DEBUG` (`FRD-631` FR-8).
     assert isinstance(fields["exc_info"], KeyError), "logged with its traceback"
+    assert "error" not in fields
 
 
 async def _nothing() -> AsyncIterator[CanonicalChunk]:

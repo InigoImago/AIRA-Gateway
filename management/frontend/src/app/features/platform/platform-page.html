@@ -20,6 +20,15 @@
         >Roles</a
       >
     }
+    @if (may('incident.investigate')) {
+      <a
+        class="platform__item"
+        routerLink="configuration-changes"
+        routerLinkActive="is-active"
+        data-testid="platform-nav-configuration-changes"
+        >Configuration changes</a
+      >
+    }
     @if (menuError(); as message) {
       <p class="field__hint field__hint--error" role="alert" data-testid="platform-menu-error">
         {{ message }}

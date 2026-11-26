@@ -9,11 +9,12 @@ import sys
 from pathlib import Path
 
 from aira_common.integration_debug import configure_integration_debug
-from aira_common.logging import configure_logging
-from aira_common.observability import set_payload_rendering
-from aira_common.pseudonym import configure_pseudonyms
+from aira_common.logging import configure_logging, process_named
+from aira_common.logging.lifecycle import configure_identities, say_started
+from aira_common.observability import exported_signals, set_payload_rendering
+from aira_management import __version__
 from aira_management.config.database import build_databases
-from aira_management.config.observability import setup_observability
+from aira_management.config.observability import process_of, setup_observability
 from aira_management.config.runtime import get_settings
 from aira_management.config.security import (
     effective_debug,
@@ -22,19 +23,42 @@ from aira_management.config.security import (
     proxy_ssl_header,
 )
 
+# The API, the relay, a migration: one image, one service name, so every line says which — named
+# before the settings are read, since reading them from Vault writes this process's first lines.
+process_named(process_of(sys.argv))
 _settings = get_settings()
-# Management's log lines name people too — a role change, a grant — and leave by the same pipeline.
-configure_pseudonyms(enabled=_settings.strict_data_mode, secret=_settings.pseudonym_secret)
+# Management's log lines name people too — who changed a grant, whom it names, who searched the
+# directory — and leave by the same pipeline, as pseudonyms under strict data mode (`FRD-627`).
+configure_identities(
+    strict_data_mode=_settings.strict_data_mode,
+    pseudonym_secret=_settings.pseudonym_secret,
+    telemetry_ip=_settings.telemetry_ip,
+)
 configure_logging(_settings.log_level, json_output=_settings.log_json)
 # One line per call to a system that is not ours, while one is being integrated (`FRD-617`).
 configure_integration_debug(_settings.debug_integrations)
 set_payload_rendering(_settings.debug_otel_payload)
 # The **providers** only. Django is instrumented from `apps.api.ApiConfig.ready()`, because
 # that instrumentation inserts a middleware and `MIDDLEWARE` is assigned below.
-setup_observability(_settings)
+_exported = setup_observability(_settings)
+# Once the export exists, so the line and any warning it carries reach the log store (`FRD-631`
+# FR-1); the lines Vault wrote while the settings were read were held for it.
+say_started(
+    service=_settings.app_name,
+    version=__version__,
+    environment=_settings.environment,
+    signals=exported_signals() if _exported else (),
+    log_level=_settings.log_level,
+)
 
 # Refuse to boot a non-local deployment that still carries the development defaults (ADR-0007).
 enforce_safe_settings(_settings)
+
+# **Django configures no logging of its own** (`FRD-631` FR-2): its default adds a console handler
+# that prints a request's failure as text on stderr — beside the JSON line our pipeline renders of
+# the same record — whenever `DEBUG` is on. Every record reaches the root logger instead, where the
+# pipeline renders it.
+LOGGING_CONFIG = None
 
 # Typed settings are also reachable via aira_management.config.runtime.get_settings().
 AIRA = _settings
@@ -76,6 +100,8 @@ INSTALLED_APPS = [
     "aira_management.apps.roles",
     "aira_management.apps.outbox",
     "aira_management.apps.privacy",
+    # After `outbox`, whose subscriber must run first (`apps.history.apps`).
+    "aira_management.apps.history",
 ]
 
 AUTHENTICATION_BACKENDS = [
@@ -86,6 +112,9 @@ AUTHENTICATION_BACKENDS = [
 ANONYMOUS_USER_NAME = None
 
 MIDDLEWARE = [
+    # One access line per request (`FRD-631` FR-5): outermost of ours, so every answer below it —
+    # a refusal, a failure — is a line; inside the trace's middleware, which is inserted first.
+    "aira_management.apps.api.access.AccessLine",
     "django.middleware.security.SecurityMiddleware",
     # What a request asks about its caller, answered once per request (`aira_management.memo`).
     "aira_management.memo.RequestMemo",

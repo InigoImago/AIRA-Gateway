@@ -69,6 +69,11 @@ async def _get(path: str, token: str, **params) -> httpx.Response:
         return await client.get(f"{MANAGEMENT_URL}{path}", headers=_auth(token), params=params)
 
 
+async def _search(token: str, query: str) -> httpx.Response:
+    """A directory search: the term in the body, where no proxy or access log keeps it."""
+    return await _post("/api/v1/directory/search", token, {"query": query})
+
+
 async def _delete(path: str, token: str, **params) -> httpx.Response:
     async with httpx.AsyncClient(timeout=30.0) as client:
         return await client.delete(f"{MANAGEMENT_URL}{path}", headers=_auth(token), params=params)
@@ -693,11 +698,14 @@ async def test_43_a_grant_reaching_somebody_reports_more(slug, admin_token, memb
 
 async def test_44_the_directory_needs_a_credential() -> None:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        assert (await client.get(f"{MANAGEMENT_URL}/api/v1/directory/?q=ada")).status_code == 401
+        response = await client.post(
+            f"{MANAGEMENT_URL}/api/v1/directory/search", json={"query": "ada"}
+        )
+        assert response.status_code == 401
 
 
 async def test_45_the_directory_refuses_one_letter(admin_token) -> None:
-    body = (await _get("/api/v1/directory/", admin_token, q="a")).json()
+    body = (await _search(admin_token, "a")).json()
     assert body["results"] == [] and body["source"] == "none"
 
 
@@ -707,14 +715,14 @@ async def test_46_the_directory_finds_a_department_in_the_realm(
     """Found because Keycloak has it: with a directory client, the realm answers and the local
     list of groups granted somewhere is not asked (`test_directory.py` covers that one)."""
     del member_department
-    body = (await _get("/api/v1/directory/", admin_token, q=MEMBER_DEPARTMENT_NAME)).json()
+    body = (await _search(admin_token, MEMBER_DEPARTMENT_NAME)).json()
     assert body["source"] == "keycloak"
     assert any(row["id"] == DEPARTMENT and row["kind"] == "group" for row in body["results"])
 
 
 async def test_47_the_directory_says_which_source_answered(admin_token) -> None:
     """ "No results" from a directory nobody could reach reads exactly like "no such group"."""
-    body = (await _get("/api/v1/directory/", admin_token, q="kunde")).json()
+    body = (await _search(admin_token, "kunde")).json()
     assert body["source"] in ("local", "keycloak")
 
 
@@ -722,14 +730,14 @@ async def test_48_the_directory_finds_a_person_in_the_realm(admin_token) -> None
     """A person Keycloak has — the stack asks Keycloak through `aira-directory`. A service
     account is not a person there, which is why this looks for a realm user; the answer Management
     gives on its own, when no directory can be asked, is `test_directory.py`'s."""
-    body = (await _get("/api/v1/directory/", admin_token, q="ucuse")).json()
+    body = (await _search(admin_token, "ucuse")).json()
     assert body["source"] == "keycloak"
     assert any(row["id"] == "ucuser" and row["kind"] == "user" for row in body["results"])
 
 
 async def test_49_the_directory_returns_no_credential(admin_token) -> None:
     """Asked for a **person**, so the row whose shape matters — a user's — is the one checked."""
-    body = (await _get("/api/v1/directory/", admin_token, q="ucuse")).json()
+    body = (await _search(admin_token, "ucuse")).json()
     users = [row for row in body["results"] if row["kind"] == "user"]
     assert users, f"no person came back to check: {body}"
     for row in body["results"]:
@@ -737,14 +745,17 @@ async def test_49_the_directory_returns_no_credential(admin_token) -> None:
 
 
 async def test_50_the_directory_never_writes(admin_token) -> None:
-    """AIRA does not create groups. There is deliberately no endpoint that could."""
+    """AIRA does not create groups. There is deliberately no endpoint that could: the search's own
+    address answers nothing but a search, and a write elsewhere under it is no route at all."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{MANAGEMENT_URL}/api/v1/directory/",
-            headers=_auth(admin_token),
-            json={"name": "invented"},
-        )
-    assert response.status_code == 405
+        for method in ("PUT", "PATCH", "DELETE"):
+            response = await client.request(
+                method,
+                f"{MANAGEMENT_URL}/api/v1/directory/search",
+                headers=_auth(admin_token),
+                json={"name": "invented"},
+            )
+            assert response.status_code == 405, method
 
 
 # ═══ 8. edges nobody has walked yet ════════════════════════════════════════════════════════════
@@ -1002,7 +1013,7 @@ async def test_68_the_directory_is_bounded(admin_token) -> None:
                         json={"name": f"{needle}-{index:02d}"},
                     )
                 )
-            body = (await _get("/api/v1/directory/", admin_token, q=needle)).json()
+            body = (await _search(admin_token, needle)).json()
         finally:
             await keycloak.delete_group(client, parent)
 
@@ -1012,7 +1023,7 @@ async def test_68_the_directory_is_bounded(admin_token) -> None:
 
 
 async def test_69_the_directory_tolerates_a_query_full_of_punctuation(admin_token) -> None:
-    response = await _get("/api/v1/directory/", admin_token, q="%%__''\"")
+    response = await _search(admin_token, "%%__''\"")
     assert response.status_code == 200
     assert response.json()["results"] == []
 
@@ -1020,5 +1031,5 @@ async def test_69_the_directory_tolerates_a_query_full_of_punctuation(admin_toke
 async def test_70_the_directory_does_not_leak_across_a_wildcard(admin_token) -> None:
     """A SQL `LIKE` wildcard typed by a caller must be a literal, not a wildcard: otherwise `%`
     lists the entire directory and the two-letter minimum protects nothing."""
-    body = (await _get("/api/v1/directory/", admin_token, q="%%")).json()
+    body = (await _search(admin_token, "%%")).json()
     assert body["results"] == []

@@ -15,12 +15,17 @@ from typing import Any
 
 from django.db import migrations, models
 
+from aira_common.logging import get_logger
+
+# A line like every other a migration run writes (`FRD-631` FR-2), not text beside them.
+_log = get_logger("aira_management.migrations")
+
 
 def clear_names_on_shared_rows(apps: Any, schema_editor: Any) -> None:
     budget = apps.get_model("budgets", "Budget")
     cleared = budget.objects.exclude(scope="member").exclude(subject="").update(subject="")
     if cleared:
-        print(f"  cleared the name on {cleared} budget(s) that name nobody by scope")
+        _log.info("budget_names_cleared", count=cleared)
 
 
 class Migration(migrations.Migration):

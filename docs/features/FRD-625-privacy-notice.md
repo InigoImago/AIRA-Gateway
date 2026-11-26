@@ -14,6 +14,12 @@
 > [`ADR-0025`](../adr/ADR-0025-aira-defines-what-a-role-may-do.md) (roles as data),
 > [`FRD-608`](FRD-608-governance-overview.md) (the register of processing per use case),
 > [`FRD-404`](FRD-404-retention.md), [`FRD-622`](FRD-622-platform-administration-and-content-reads.md).
+>
+> **Since `FRD-631`:** §11 decision 2 is taken — an address in a finding's description, in a log line or
+> in a span is written as `AIRA_TELEMETRY_IP` says, its network and a keyed pseudonym by default
+> ([`FRD-631`](FRD-631-every-event-a-structured-line.md) FR-9) — and the notice gains the
+> configuration history ([`FRD-632`](FRD-632-configuration-changes-have-a-history.md)) and the new
+> log lines, in a new edition.
 
 **Not legal advice.** The texts are a sound starting point, grounded in what this code does, and
 must be reviewed by the controller's data protection officer and — in Germany — agreed with the

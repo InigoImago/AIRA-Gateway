@@ -31,7 +31,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from . import installation
-from .conftest import GATEWAY_URL, Fixture, merged_headers  # noqa: F401  (an annotation)
+from .conftest import (  # noqa: F401  (an annotation)
+    GATEWAY_URL,
+    Fixture,
+    degraded_beyond_the_key,
+    merged_headers,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -310,4 +315,5 @@ async def test_the_gateway_stays_healthy_under_that_load(fixture: Fixture) -> No
     body = ready.json()
     assert body["status"] == "ready"
     # Degradation is reported rather than hidden; under this load nothing should have fallen back.
-    assert body["degraded"] is False, f"the gateway degraded under load: {body['fallbacks']}"
+    # Apart from the pseudonym key, which a stack without one reports whatever the load.
+    assert not degraded_beyond_the_key(body), f"the gateway degraded under load: {body}"

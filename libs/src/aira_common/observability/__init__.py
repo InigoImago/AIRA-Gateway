@@ -1,7 +1,8 @@
 """OpenTelemetry for both planes (`FRD-001`), one module per concern.
 
-providers    the global tracer/meter/logger providers, the health-probe exclusion and which
-             trace headers are read
+providers    the global tracer/meter/logger providers, the health-probe exclusion, which trace
+             headers are read, and handing over what they hold before a process ends
+early        the log lines written before the export exists, held until it does
 export       the watched OTLP exporter: one line per export, partial rejections included
 payload      a batch rendered as OTLP/JSON, for debugging
 diagnostics  the SDK's own log lines, kept out of the pipeline they describe
@@ -30,6 +31,8 @@ from aira_common.observability.providers import (
     build_resource_attributes,
     configure_observability,
     exclude_health_probes,
+    exported_signals,
+    flush_telemetry,
     propagate_trace_context_only,
     request_sampler,
     signal_endpoints,
@@ -72,6 +75,8 @@ __all__ = [
     "consuming",
     "context_from_kafka_headers",
     "exclude_health_probes",
+    "exported_signals",
+    "flush_telemetry",
     "install_access_log_redaction",
     "kafka_headers_for",
     "kafka_headers_from_context",

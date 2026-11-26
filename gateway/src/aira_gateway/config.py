@@ -16,14 +16,18 @@ from aira_common.config import BaseAiraSettings
 from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
-from aira_common.logging import configure_logging, get_logger
-from aira_common.observability import configure_observability, set_payload_rendering
+from aira_common.logging import configure_logging, process_named
+from aira_common.logging.lifecycle import configure_identities, say_started
+from aira_common.observability import (
+    configure_observability,
+    exported_signals,
+    set_payload_rendering,
+)
 from aira_common.oidc import (
     DEFAULT_CLOCK_SKEW_SECONDS,
     DEFAULT_EXPIRY_LEEWAY_SECONDS,
     check_tolerance,
 )
-from aira_common.pseudonym import configure_pseudonyms
 from aira_common.roles import Role, parse_role_groups
 from aira_gateway import __version__
 from aira_gateway.residency import parse_model_regions
@@ -482,28 +486,30 @@ class GatewaySettings(BaseAiraSettings):
         return parse_bootstrap_servers(self.kafka_bootstrap_servers)
 
 
-def configure_process(settings: GatewaySettings) -> bool:
+def configure_process(settings: GatewaySettings, *, process: str = "api") -> bool:
     """Logging, integration debugging and OpenTelemetry for one gateway process (`FRD-615`).
 
-    The API (`create_app`) and every background worker call this one function: a worker that
-    configured nothing had no tracer provider, so every span it opened was silently discarded.
-    Integration debugging comes first because exporters and tokens are watched call sites
-    (`FRD-617`). Returns whether telemetry was configured.
+    The API (`create_app`), every background worker and the migrations call this one function: a
+    worker that configured nothing had no tracer provider, so every span it opened was silently
+    discarded. ``process`` names which one it is on every line it writes (`FRD-631` FR-3).
+
+    **The export before the first line that matters** (`FRD-631` FR-1): a warning written before
+    `configure_observability` reached stdout and never the log store, where an alert could see it.
+    So the process says what it is only once its export exists, and the lines written before — Vault
+    reads its secrets while the settings are being built — are held for it and handed over then.
+    Integration debugging comes before the export because exporters and tokens are watched call
+    sites (`FRD-617`). Returns whether telemetry was configured.
     """
-    stable = configure_pseudonyms(
-        enabled=settings.strict_data_mode, secret=settings.pseudonym_secret
+    configure_identities(
+        strict_data_mode=settings.strict_data_mode,
+        pseudonym_secret=settings.pseudonym_secret,
+        telemetry_ip=settings.telemetry_ip,
     )
     configure_logging(settings.log_level, json_output=settings.log_json)
-    if not stable:
-        # Said once per process, because the cost is invisible otherwise: a SIEM that sees one
-        # person as several callers has nothing to tell it why.
-        get_logger("aira_gateway.telemetry").warning(
-            "pseudonym_key_per_process",
-            hint="Set AIRA_PSEUDONYM_SECRET (from Vault) so a person has one pseudonym everywhere.",
-        )
+    process_named(process)
     configure_integration_debug(settings.debug_integrations)
     set_payload_rendering(settings.debug_otel_payload)
-    return configure_observability(
+    exported = configure_observability(
         service_name=settings.app_name,
         service_version=__version__,
         environment=settings.environment,
@@ -514,6 +520,14 @@ def configure_process(settings: GatewaySettings) -> bool:
         enabled=settings.otel_enabled,
         sample_ratio=settings.otel_sample_ratio,
     )
+    say_started(
+        service=settings.app_name,
+        version=__version__,
+        environment=settings.environment,
+        signals=exported_signals() if exported else (),
+        log_level=settings.log_level,
+    )
+    return exported
 
 
 #: The name the background workers (config consumer, retention sweep) import it under.

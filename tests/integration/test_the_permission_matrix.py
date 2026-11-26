@@ -272,7 +272,7 @@ PROBES: tuple[Probe, ...] = (
         P.DIRECTORY_SEARCH,
         "management",
         "search the directory",
-        _mgmt("GET", "/api/v1/directory/?q=ma", {200}, {403}),
+        _mgmt("POST", "/api/v1/directory/search", {200}, {403}, json={"query": "ma"}),
     ),
     Probe(
         P.ROLE_READ, "management", "list the roles", _mgmt("GET", "/api/v1/roles/", {200}, {403})

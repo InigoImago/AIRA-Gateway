@@ -38,9 +38,11 @@ function render(permissions: string[] | null): HTMLElement {
 
 /** Which menu entries a rendered page offers. */
 function offered(html: HTMLElement): string[] {
-  return ['platform-nav-content-reads', 'platform-nav-roles'].filter(
-    (id) => html.querySelector(`[data-testid="${id}"]`) !== null,
-  );
+  return [
+    'platform-nav-content-reads',
+    'platform-nav-roles',
+    'platform-nav-configuration-changes',
+  ].filter((id) => html.querySelector(`[data-testid="${id}"]`) !== null);
 }
 
 @Component({ template: 'content reads' })
@@ -115,6 +117,10 @@ describe('PlatformPage (`FRD-622` FR-5, `FRD-614`)', () => {
       'platform-nav-roles',
     ]);
     expect(offered(render([]))).toEqual([]);
+    // The configuration history names people: offered to whoever may see them (`FRD-632`).
+    expect(offered(render(['incident.investigate']))).toEqual([
+      'platform-nav-configuration-changes',
+    ]);
   });
 
   it('says why the menu is empty when the account cannot be loaded', () => {

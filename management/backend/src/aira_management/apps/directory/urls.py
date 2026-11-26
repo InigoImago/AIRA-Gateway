@@ -7,5 +7,5 @@ from django.urls import path
 from aira_management.apps.directory.views import DirectorySearchView
 
 urlpatterns = [
-    path("directory/", DirectorySearchView.as_view(), name="directory-search"),
+    path("directory/search", DirectorySearchView.as_view(), name="directory-search"),
 ]

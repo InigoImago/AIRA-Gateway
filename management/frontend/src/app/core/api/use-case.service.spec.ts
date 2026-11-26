@@ -87,6 +87,16 @@ describe('UseCaseService', () => {
       .flush({ results: [] });
   });
 
+  it('searches the directory with the term in the body, never in the address', () => {
+    // A name in a URL is written down by every proxy and access log it passes (`FRD-631` FR-12).
+    service.directory('johannes').subscribe();
+    const req = http.expectOne('/api/v1/directory/search');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ query: 'johannes' });
+    expect(req.request.urlWithParams).not.toContain('johannes');
+    req.flush({ results: [], source: 'keycloak' });
+  });
+
   it('asks whether a group may be bound with POST', () => {
     service.checkGroup('/finance/audit').subscribe();
     const req = http.expectOne('/api/v1/roles/check-group/');

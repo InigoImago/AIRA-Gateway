@@ -31,6 +31,7 @@ import stack_addresses
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from aira_common.addresses import describe_address
 from aira_gateway.anomalies import AnomalyService
 from aira_gateway.anomalies.service import TICK_LOCK_KEY
 from aira_gateway.anomalies.suspensions import SuspensionService
@@ -612,7 +613,12 @@ async def test_b11_a_new_source_address_is_found(fixture) -> None:
 
     events = await fixture.events()
     assert events[0]["target_value"] == "abcd1234"
-    assert "203.0.113.9" in str(events[0]["detail"])
+    # The new address, named as this process writes an address — its network and a pseudonym by
+    # default, never the address itself (`FRD-631` FR-9): the description is read by more people
+    # than the audit row it was found in.
+    assert describe_address("203.0.113.9") in str(events[0]["detail"])
+    assert "203.0.113.0/24" in str(events[0]["detail"])
+    assert "203.0.113.9" not in str(events[0]["detail"])
 
 
 async def test_b12_a_credential_with_no_history_is_not_reported_as_new(fixture) -> None:

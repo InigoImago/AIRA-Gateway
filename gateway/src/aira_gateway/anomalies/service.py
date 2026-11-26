@@ -174,6 +174,7 @@ class AnomalyService:
                 # Said once the row is written, never about a finding that was not stored.
                 _log.info(
                     "anomaly_detected",
+                    category="finding",
                     rule=rule.name,
                     kind=rule.kind,
                     target=rule.target,

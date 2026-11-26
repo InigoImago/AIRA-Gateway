@@ -158,7 +158,7 @@ PROBES: tuple[Probe, ...] = (
     Probe(
         P.DIRECTORY_SEARCH,
         "search the directory",
-        _call("get", "/api/v1/directory/?q=ab", {200}, {403}),
+        _call("post", "/api/v1/directory/search", {200}, {403}, {"query": "ab"}),
     ),
     Probe(P.ROLE_READ, "list the roles", _call("get", "/api/v1/roles/", {200}, {403})),
     Probe(

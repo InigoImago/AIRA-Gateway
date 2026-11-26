@@ -138,7 +138,7 @@ async def test_a_counter_store_that_is_not_there_is_reported_with_its_address(
     (line,) = [c for c in calls(capsys) if c["system"] == "redis"]
     assert line["operation"] == "script"
     assert line["outcome"] in {"failed", "timeout"}
-    assert line["keys"] == 1
+    assert line["key_count"] == 1
     # The password lives in the authority of a Redis URL, where `redact_url_query` cannot see it.
     assert "s3cret" not in json.dumps(line)
     assert line["target"] == "redis://aira:REDACTED@127.0.0.1:6390/0"

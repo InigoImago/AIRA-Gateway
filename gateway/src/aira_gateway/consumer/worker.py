@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -29,8 +30,9 @@ from aira_common.kafka import (
     consumer_group,
     staged,
 )
-from aira_common.logging import get_logger
-from aira_common.observability import consuming
+from aira_common.logging import get_logger, process_named
+from aira_common.logging.lifecycle import say_stopped
+from aira_common.observability import consuming, flush_telemetry
 from aira_gateway.config import GatewaySettings, configure_worker
 from aira_gateway.consumer.apply import apply_event
 from aira_gateway.db.base import build_engine, build_sessionmaker
@@ -105,8 +107,41 @@ def event_payload(value: object) -> dict[str, Any]:
     return value
 
 
+class StoppedWhileHolding(Exception):
+    """The consumer was told to stop while it held an event for another attempt.
+
+    The event is not applied and its offset is not committed, so the next consumer reads it again —
+    which every handler takes without harm. Waiting for the database to come back instead would be
+    waiting past the orchestrator's patience, and end the same way, only killed.
+    """
+
+
+async def pause(seconds: float, *, sleep: Sleep, stop: asyncio.Event | None) -> bool:
+    """Wait ``seconds``, or less if ``stop`` is set meanwhile. Returns whether it was."""
+    if stop is None:
+        await sleep(seconds)
+        return False
+    if stop.is_set():
+        return True
+    sleeping = asyncio.ensure_future(sleep(seconds))
+    stopping = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({sleeping, stopping}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for waiting in (sleeping, stopping):
+            if not waiting.done():
+                waiting.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await waiting
+    return stop.is_set()
+
+
 async def apply_one_message(
-    sessionmaker: async_sessionmaker[AsyncSession], message: Any, *, sleep: Sleep = asyncio.sleep
+    sessionmaker: async_sessionmaker[AsyncSession],
+    message: Any,
+    *,
+    sleep: Sleep = asyncio.sleep,
+    stop: asyncio.Event | None = None,
 ) -> str | None:
     """Apply one configuration event, and **survive it if it cannot be applied**.
 
@@ -122,6 +157,10 @@ async def apply_one_message(
     revoked. Such an event is held and tried again, after a pause that grows to
     :data:`RETRY_LONGEST_SECONDS`, for as long as it takes — nothing behind it on the topic could
     be applied meanwhile either.
+
+    **A stop ends the holding, never an application.** An event being applied is applied and its
+    offset committed before the consumer stops; one held for another attempt raises
+    :class:`StoppedWhileHolding` when ``stop`` is set, uncommitted.
 
     Returns the event type it applied, or ``None`` if it skipped.
     """
@@ -169,7 +208,8 @@ async def apply_one_message(
                         error=loggable(exc),
                         error_type=type(exc).__name__,
                     )
-                    await sleep(delay)
+                    if await pause(delay, sleep=sleep, stop=stop):
+                        raise StoppedWhileHolding(event_type) from exc
                     continue
                 # Marked on the span as well: the `except` keeps the failure from reaching it on
                 # its own, and a green trace beside a red log is read as the green one.
@@ -278,6 +318,7 @@ async def consume_forever(
     *,
     sleep: Sleep = asyncio.sleep,
     health: Health | None = None,
+    stop: asyncio.Event | None = None,
 ) -> int:
     """Start the consumer, apply everything that arrives, and stop it. Returns messages seen.
 
@@ -292,16 +333,27 @@ async def consume_forever(
     loses it. A stop before the commit delivers the event again, which every handler takes twice
     without harm.
 
+    **``stop`` ends it between two events** (`FRD-631` FR-4): the wait for the next one is given
+    up, an event being applied is applied and committed first, and one held for another attempt is
+    left uncommitted. Then the consumer leaves its group — so the broker hands the partitions on at
+    once rather than after its session timeout — which a process killed after its grace period
+    never did.
+
     ``health``, when given, is told of every step and looks at the consumer between events
     (:class:`Health`).
     """
     seen = 0
     looking = asyncio.create_task(health.watch(consumer)) if health is not None else None
     try:
-        await _start(consumer, target, group, sleep)
+        if not await _start(consumer, target, group, sleep, stop):
+            return seen
         if health is not None:
             health.started()
-        async for message in consumer:
+        incoming = aiter(consumer)
+        while True:
+            message = await _next(incoming, stop)
+            if message is None:
+                return seen
             seen += 1
             with health.applying() if health is not None else contextlib.nullcontext():
                 # `apply_one_message` swallows its own failures; `applied` carries the difference.
@@ -312,37 +364,83 @@ async def consume_forever(
                     partition=getattr(message, "partition", None),
                     offset=getattr(message, "offset", None),
                 ) as call:
-                    applied = await apply_one_message(sessionmaker, message, sleep=sleep)
+                    try:
+                        applied = await apply_one_message(
+                            sessionmaker, message, sleep=sleep, stop=stop
+                        )
+                    except StoppedWhileHolding:
+                        _log.info(
+                            "config_event_left_for_the_next_consumer",
+                            event_type=decode_event_type(message.headers),
+                            topic=getattr(message, "topic", None),
+                            partition=getattr(message, "partition", None),
+                            offset=getattr(message, "offset", None),
+                        )
+                        return seen
                     call.note(event_type=applied, applied=applied is not None)
                 await _commit(consumer, message)
             if health is not None:
                 health.applied()
-        return seen
     finally:
         if looking is not None:
             looking.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await looking
         # Also after a start that failed: a client left open is reported by its finaliser while
-        # the interpreter shuts down, as a traceback about something else entirely.
+        # the interpreter shuts down, as a traceback about something else entirely. And after a
+        # stop: leaving the group is what lets the broker hand the partitions on at once.
         await consumer.stop()
 
 
-async def _start(consumer: Any, target: str, group: str, sleep: Sleep) -> None:
+async def _next(incoming: Any, stop: asyncio.Event | None) -> Any:
+    """The next message, or ``None`` when there is none or ``stop`` was set while waiting."""
+    if stop is not None and stop.is_set():
+        return None
+    receiving = asyncio.ensure_future(anext(incoming))
+    if stop is None:
+        try:
+            return await receiving
+        except StopAsyncIteration:
+            return None
+    stopping = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({receiving, stopping}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not stopping.done():
+            stopping.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stopping
+    if not receiving.done():
+        receiving.cancel()
+        with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+            await receiving
+        return None
+    try:
+        return receiving.result()
+    except StopAsyncIteration:
+        return None
+
+
+async def _start(
+    consumer: Any, target: str, group: str, sleep: Sleep, stop: asyncio.Event | None = None
+) -> bool:
     """``consumer.start()``, **waiting for a broker that is not ready yet** rather than exiting.
 
     At start the broker is often not up yet — a stack starting together, a broker restarting — or
     has not got the topics yet. Exiting would make that a traceback and a restart loop, which an
     orchestrator backs off from for longer each time, so configuration would arrive later than the
     broker. What aiokafka marks retriable is waited out, one line per attempt; anything else — a
-    refused authorization, a broker it cannot speak to — still ends the process.
+    refused authorization, a broker it cannot speak to — still ends the process. A stop ends the
+    waiting. Returns whether the consumer started.
     """
     failures = 0
     while True:
+        if stop is not None and stop.is_set():
+            return False
         try:
             with watch("kafka", "consumer.start", target=target, group=group):
                 await consumer.start()
-            return
+            return True
         except KafkaError as exc:
             if not exc.retriable:
                 raise
@@ -357,7 +455,8 @@ async def _start(consumer: Any, target: str, group: str, sleep: Sleep) -> None:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            await sleep(delay)
+            if await pause(delay, sleep=sleep, stop=stop):
+                return False
 
 
 async def _commit(consumer: Any, message: Any) -> None:
@@ -398,11 +497,38 @@ def consumer_options(settings: GatewaySettings) -> dict[str, Any]:
     }
 
 
-async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
+@contextlib.contextmanager
+def stopped_by_signals(stop: asyncio.Event) -> Iterator[None]:
+    """SIGTERM and SIGINT set ``stop`` for as long as the consumer runs.
+
+    **Without them the consumer did not stop at all** as a container's first process: the kernel
+    delivers no signal to PID 1 that it has left at its default, so `docker stop` waited its ten
+    seconds, killed it — exit code 137 — and the consumer never left its group nor handed over
+    the telemetry it held.
+    """
+    loop = asyncio.get_running_loop()
+    installed: list[signal.Signals] = []
+    for number in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(number, stop.set)
+        except NotImplementedError, RuntimeError, ValueError:
+            # Not the main thread, or no signals on this platform: whoever runs it stops it.
+            continue
+        installed.append(number)
+    try:
+        yield
+    finally:
+        for number in installed:
+            loop.remove_signal_handler(number)
+
+
+async def run_consumer(
+    settings: GatewaySettings, stop: asyncio.Event | None = None
+) -> int:  # pragma: no cover
     from aiokafka import AIOKafkaConsumer
 
     # Before the first message, or the spans `apply_one_message` opens have no tracer (`FRD-615`).
-    configure_worker(settings)
+    configure_worker(settings, process="consumer")
 
     engine = build_engine(settings.database_url(use_sqlite=False))
     # **No `create_all` here.** `gateway-migrate` runs the migrations first, and `create_all` beside
@@ -413,20 +539,34 @@ async def run_consumer(settings: GatewaySettings) -> None:  # pragma: no cover
     consumer = AIOKafkaConsumer(*subscriptions(settings.kafka_stage), **options)
     heartbeat = Heartbeat("consumer", MAX_AGE_SECONDS, log=_log)
     heartbeat.start()
+    stop = stop or asyncio.Event()
+    seen = 0
     try:
-        await consume_forever(
-            consumer,
-            sessionmaker,
-            settings.kafka_bootstrap_servers,
-            options["group_id"],
-            health=Health(heartbeat),
-        )
+        with stopped_by_signals(stop):
+            seen = await consume_forever(
+                consumer,
+                sessionmaker,
+                settings.kafka_bootstrap_servers,
+                options["group_id"],
+                health=Health(heartbeat),
+                stop=stop,
+            )
     finally:
         await engine.dispose()
+        _log.info("worker_stopped", worker="consumer", messages=seen)
+    return seen
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
-    asyncio.run(run_consumer(GatewaySettings()))
+    # Named before the settings are read: reading them from Vault writes this process's first lines.
+    process_named("consumer")
+    settings = GatewaySettings()
+    try:
+        asyncio.run(run_consumer(settings))
+    finally:
+        # The last lines, `worker_stopped` among them, while the process still decides the order.
+        say_stopped(service=settings.app_name)
+        flush_telemetry()
     return 0
 
 

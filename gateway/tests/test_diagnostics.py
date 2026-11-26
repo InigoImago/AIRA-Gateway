@@ -242,6 +242,9 @@ async def test_an_unreachable_upstream_degrades_rather_than_failing_readiness() 
                 postgres_host=host,
                 postgres_port=port,
                 kafka_bootstrap_servers=f"{host}:{port}",
+                # Held up for the same reason as the counter store below: a key each process
+                # draws for itself reads `degraded` too (`FRD-631` FR-10), whatever the upstream.
+                pseudonym_secret="the suite's key",
             )
         )
         app.state.providers = ProviderRegistry([_Broken("x")])

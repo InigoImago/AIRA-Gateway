@@ -21,12 +21,17 @@ from typing import Any
 
 from django.db import migrations, models
 
+from aira_common.logging import get_logger
+
+# A line like every other a migration run writes (`FRD-631` FR-2), not text beside them.
+_log = get_logger("aira_management.migrations")
+
 
 def drop_member_budgets(apps: Any, schema_editor: Any) -> None:
     budget = apps.get_model("budgets", "Budget")
     removed = budget.objects.filter(scope="member").delete()[0]
     if removed:
-        print(f"  removed {removed} budget(s) scoped to one named person")
+        _log.info("member_budgets_removed", count=removed)
 
 
 class Migration(migrations.Migration):
