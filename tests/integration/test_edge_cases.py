@@ -193,7 +193,9 @@ async def test_a_malformed_request_names_what_is_wrong(
 @pytest.mark.parametrize(
     ("role", "expect"),
     [
-        ("", (400,)),
+        # Empty is proto3's "not set", which Google reads as a turn left blank: the caller's. The
+        # PHP client sends every field so (`FRD-155` FR-3).
+        ("", (200,)),
         ("assistant", (400,)),
         ("system", (200,)),
         ("USER", (400,)),
@@ -205,9 +207,9 @@ async def test_an_unexpected_role_is_refused_by_name(
     fixture: Fixture, role: str | None, expect: tuple[int, ...]
 ) -> None:
     """Roles a caller might send. A turn is `user` or `model`, plus the two older spellings Google
-    clients still send (`system`, `function`); a missing role is the caller's turn. Anything else is
-    **refused by name** rather than read as `user`: an `assistant` turn taken for the user's own
-    words changes the conversation, and nothing in the answer would show it."""
+    clients still send (`system`, `function`); a missing or empty role is the caller's turn.
+    Anything else is **refused by name** rather than read as `user`: an `assistant` turn taken for
+    the user's own words changes the conversation, and nothing in the answer would show it."""
     content: dict[str, Any] = {"parts": [{"text": "hi"}]}
     if role is not None:
         content["role"] = role
