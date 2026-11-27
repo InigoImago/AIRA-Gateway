@@ -1,6 +1,7 @@
 """The application's exception handlers: every error in the envelope of the surface it was aimed at.
 
-KIRA paths answer in KIRA's envelope, `/v1beta` in Google's, everything else in AIRA's. Handled
+KIRA paths answer in KIRA's envelope, the paths Google's clients call (`/v1beta`, `/v1`) in
+Google's, everything else in AIRA's. Handled
 here rather than in each route, because the errors that matter most — no credential, an oversized
 body, a wrong URL, an unexpected bug — never reach a route that could name them, and a handler
 cannot be forgotten by a route not written yet (`test_kira_envelope_everywhere.py` walks every
@@ -8,6 +9,8 @@ route on the surface).
 """
 
 from __future__ import annotations
+
+import re
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,8 +45,22 @@ from aira_gateway.middleware import (
     too_large_response,
 )
 
-#: The Gemini surface's path prefix.
-GEMINI_BASE = "/v1beta"
+#: The paths Google's clients address: the Gemini API's two versions, and Vertex AI's ``v1beta1``.
+#: A wrong URL under any of them is answered in Google's envelope, which every SDK reads — the
+#: framework's own, with its `code` a word, reached a Go or JavaScript developer as raw JSON.
+GOOGLE_PATH = re.compile(r"^/v1(beta1?)?(/|$)")
+
+#: Vertex AI's address for a model (`…/projects/{p}/locations/{l}/publishers/{pub}/models/…`), which
+#: a client in Vertex mode builds. This gateway speaks the Gemini API's paths, and says so.
+VERTEX_MODEL_PATH = re.compile(r"^/v1(beta1)?/(projects/[^/]+/locations/[^/]+/)?publishers/")
+
+#: What a client in Vertex mode is told.
+NOT_VERTEX = (
+    "This gateway serves the Gemini API's paths (/v1beta/models/{model}:generateContent), not "
+    "Vertex AI's (/v1/projects/{project}/locations/{location}/publishers/…). Configure the client "
+    "for the Gemini API with this gateway's address as its base URL — for google-genai, without "
+    "vertexai=True — and its key or token as the credential."
+)
 
 #: A wrong URL and a wrong method, named per surface by status rather than all called "not found".
 #: KIRA's contract has a word for neither, so these name the case (`MIGRATION-KIRA.md`: extra codes
@@ -77,8 +94,8 @@ def _kira(request: Request) -> bool:
 
 
 def _gemini(request: Request) -> bool:
-    """Whether this request was aimed at the Gemini surface."""
-    return request.url.path.startswith(GEMINI_BASE)
+    """Whether this request was aimed at the Gemini surface, or anywhere a Google client calls."""
+    return GOOGLE_PATH.match(request.url.path) is not None
 
 
 async def _handle_too_large(request: Request, exc: RequestTooLarge) -> JSONResponse:
@@ -129,6 +146,8 @@ async def _handle_routing_error(request: Request, exc: StarletteHTTPException) -
         return surface_refusal(request, exc.status_code, code, detail, headers=headers)
     if _gemini(request):
         status = "NOT_FOUND" if exc.status_code == 404 else "INVALID_ARGUMENT"
+        if exc.status_code == 404 and VERTEX_MODEL_PATH.match(request.url.path):
+            detail = NOT_VERTEX
         return gemini_error_response(exc.status_code, detail, status, headers)
     code = _AIRA_ROUTING_CODES.get(exc.status_code, "invalid_request")
     envelope = ErrorResponse(error=ErrorDetail(code=code, message=detail))

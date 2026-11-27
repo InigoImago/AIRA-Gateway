@@ -137,6 +137,15 @@ class Accounting:
         if region and self.trail is not None:
             self.trail.served_region = region
 
+    def counted(self, model: str, *, tokens: int) -> None:
+        """A count (`FRD-155`): free at the vendor, so booked as nothing — no token on the row, no
+        request against a budget — and the row keeps the figure the caller was told, where the use
+        case keeps what was answered."""
+        self.served(
+            model, CanonicalUsage(prompt_tokens=0, completion_tokens=0), {"totalTokens": tokens}
+        )
+        self.requests = 0
+
     def spent(self, model: str, usage: CanonicalUsage | None) -> None:
         """The upstream answered and billed this, whatever becomes of the answer now.
 

@@ -1,0 +1,8 @@
+{
+    "description": "google-gemini-php/client, pointed at AIRA",
+    "require": {
+        "php": ">=8.2",
+        "google-gemini-php/client": "^2.8",
+        "guzzlehttp/guzzle": "^8.6"
+    }
+}

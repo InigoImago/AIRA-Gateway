@@ -83,6 +83,9 @@ WEIRD: list[str] = [
 #: completeness check below be an assertion rather than a comment.
 BODIES_ELSEWHERE: dict[str, str] = {
     "/v1beta/models/{resource}": "test_no_silent_drop.py, test_edge_cases.py",
+    # The same route at Google's other version: one handler, held to answer alike in
+    # `test_the_gemini_surface_reads_what_google_reads.py`.
+    "/v1/models/{resource}": "test_the_gemini_surface_reads_what_google_reads.py",
     "/kira/api/external/chat": "test_kira_surface.py",
     "/kira/api/external/embed": "test_kira_surface.py",
     "/kira/api/external/streaming-chat": "test_kira_surface.py",

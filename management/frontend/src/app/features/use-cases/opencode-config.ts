@@ -26,7 +26,20 @@ export interface OpenCodeModel {
   name: string;
   limit?: { context: number; output: number };
   cost?: OpenCodeCost;
+  /** What every request for the model carries, whichever variant is chosen or none. */
+  options?: OpenCodeOptions;
   variants?: Record<string, OpenCodeVariant>;
+}
+
+/**
+ * The question for the model's reasoning, on every request (`FRD-135` §5.7): the gateway returns
+ * it to a caller who asks, as Google does, and OpenCode asks only where its file says so. Written
+ * where the use case returns reasoning and nowhere else — there `includeThoughts: true` is refused
+ * by name — so a file downloaded before reasoning was turned off asks for what is now refused, and
+ * is downloaded again.
+ */
+export interface OpenCodeOptions {
+  thinkingConfig: { includeThoughts: true };
 }
 
 /**
@@ -69,12 +82,12 @@ const OPENCODE_LEVELS: readonly string[] = ['minimal', 'low', 'medium', 'high'];
  * One thinking setting OpenCode offers for a model (`FRD-151`), as the Gemini field it sends —
  * which both OpenCode generations read from this shape.
  *
- * **No `includeThoughts`.** The gateway asks for the reasoning itself wherever the use case
- * returns it; written here, it would be refused by name on a use case that does not, and the file
- * would break the day somebody turned reasoning off.
+ * **`includeThoughts` where the use case returns reasoning** (`OpenCodeOptions`), on every
+ * setting that thinks, so the question travels whether OpenCode merges a variant into the model's
+ * options or puts it in their place. Never on `none`, which leaves nothing to show.
  */
 export interface OpenCodeVariant {
-  thinkingConfig: { thinkingLevel?: string; thinkingBudget?: number };
+  thinkingConfig: { thinkingLevel?: string; thinkingBudget?: number; includeThoughts?: true };
 }
 
 /**
@@ -87,23 +100,28 @@ export interface OpenCodeVariant {
  * budget needs a number, the only ones a vendor states are its bounds, and its ceiling does not fit
  * inside the output cap OpenCode sends with every request. A request with no variant chosen gets
  * the model's declared default, which is where such a model's thinking is set.
+ *
+ * ``reasoning`` is whether the use case returns the model's reasoning: each setting that thinks
+ * then asks for it (`OpenCodeVariant`).
  */
 export function openCodeVariants(
   thinking: ThinkingDeclaration | null | undefined,
+  reasoning = false,
 ): Record<string, OpenCodeVariant> | undefined {
   const modes = thinking?.modes ?? [];
   const levels = thinking?.levels ?? [];
+  const shown: { includeThoughts?: true } = reasoning ? { includeThoughts: true } : {};
   const variants: Record<string, OpenCodeVariant> = {};
   if (modes.includes('disabled')) {
     variants['none'] = { thinkingConfig: { thinkingBudget: 0 } };
   }
   for (const level of OPENCODE_LEVELS) {
     if (levels.includes(level)) {
-      variants[level] = { thinkingConfig: { thinkingLevel: level } };
+      variants[level] = { thinkingConfig: { thinkingLevel: level, ...shown } };
     }
   }
   if (modes.includes('auto')) {
-    variants['auto'] = { thinkingConfig: { thinkingBudget: -1 } };
+    variants['auto'] = { thinkingConfig: { thinkingBudget: -1, ...shown } };
   }
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
@@ -173,7 +191,15 @@ function priced(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function openCodeModel(model: CatalogModel, currency: string): OpenCodeModel {
+/**
+ * One model as OpenCode's file describes it. ``reasoning`` is whether the use case returns the
+ * model's reasoning, which a request must then ask for (`OpenCodeOptions`).
+ */
+export function openCodeModel(
+  model: CatalogModel,
+  currency: string,
+  reasoning = false,
+): OpenCodeModel {
   // Both or neither: `limit` is a pair, and a missing `context` would be a gauge at 0% forever.
   const context = model.context_window ?? null;
   const output = model.max_output_tokens ?? null;
@@ -201,7 +227,10 @@ export function openCodeModel(model: CatalogModel, currency: string): OpenCodeMo
       entry.cost.context_over_200k = longer;
     }
   }
-  const variants = openCodeVariants(model.thinking);
+  if (reasoning) {
+    entry.options = { thinkingConfig: { includeThoughts: true } };
+  }
+  const variants = openCodeVariants(model.thinking, reasoning);
   if (variants) {
     entry.variants = variants;
   }

@@ -124,15 +124,15 @@ def _gateway_operations() -> dict[Route, Callable[..., Any]]:
 
     `POST /v1beta/models/{resource}` is one route that splits `model:verb` at the last colon and
     dispatches on the verb, so the operations a reader looks for are the verbs. They are read from
-    the two sets the route dispatches on, not typed here.
+    what the route dispatches on, not typed here.
     """
     from aira_gateway.api.gemini.routes import GENERATION_METHODS, generate
-    from aira_gateway.api.serving import EMBEDDING_METHODS
+    from aira_gateway.api.serving import COUNT_METHOD, EMBEDDING_METHODS
 
     operations: dict[Route, Callable[..., Any]] = {}
     for (method, path), endpoint in _gateway_routes().items():
         if endpoint is generate:
-            for verb in sorted(GENERATION_METHODS | EMBEDDING_METHODS):
+            for verb in sorted(GENERATION_METHODS | EMBEDDING_METHODS | {COUNT_METHOD}):
                 operations[(method, f"{path}:{verb}")] = endpoint
         else:
             operations[(method, path)] = endpoint

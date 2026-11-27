@@ -46,6 +46,7 @@ READER_DOCUMENTS = sorted(
         ROOT / "tools" / "loadtest" / "README.md",
         ROOT / "tools" / "opencode" / "README.md",
         ROOT / "management" / "frontend" / "README.md",
+        ROOT / "examples" / "README.md",
     }
 )
 

@@ -1,0 +1,14 @@
+# What running the examples in place leaves behind.
+.env
+.venv/
+node_modules/
+package-lock.json
+target/
+Cargo.lock
+vendor/
+composer.lock
+Gemfile.lock
+.bundle/
+bin/
+obj/
+*.wav

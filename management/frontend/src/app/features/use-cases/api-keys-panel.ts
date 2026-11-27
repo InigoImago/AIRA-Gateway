@@ -39,6 +39,8 @@ export class ApiKeysPanel {
   /** What this use case may call (`FRD-308`) — the gateway refuses every other model by name. */
   readonly released = input<string[]>([]);
   readonly currency = input('');
+  /** Whether the use case returns the model's reasoning, which OpenCode's file then asks for. */
+  readonly reasoning = input(false);
   /** The installation's key policy, as `/me` states it; the server decides (`ADR-0015`). */
   readonly defaultKeyDays = input.required<number>();
   readonly maxKeyDays = input.required<number>();
@@ -151,7 +153,10 @@ export class ApiKeysPanel {
               apiKey: issued.api_key,
             },
             models: Object.fromEntries(
-              this.toolModels().map((m) => [m.name, openCodeModel(m, this.currency())]),
+              this.toolModels().map((m) => [
+                m.name,
+                openCodeModel(m, this.currency(), this.reasoning()),
+              ]),
             ),
           },
         },

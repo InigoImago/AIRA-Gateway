@@ -60,9 +60,12 @@ async def test_a_catalogued_model_is_listed_with_the_verbs_it_declares() -> None
         "batchEmbedContents",
     ]
     assert "models/chat-1" not in listed, "an unapproved model would be refused, so not offered"
+    # And `countTokens`, which its adapter answers with its own count (`FRD-155`) — the embedding
+    # model on the same platform is offered no count: it generates nothing.
     assert listed["models/mock-1"]["supportedGenerationMethods"] == [
         "generateContent",
         "streamGenerateContent",
+        "countTokens",
     ], "a model declared to generate only must not offer the embedding verb it would refuse"
     assert one.status_code == 200, one.text
     assert [model["id"] for model in kira] == [7]

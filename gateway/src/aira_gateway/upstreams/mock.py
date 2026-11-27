@@ -123,6 +123,11 @@ class MockProvider:
         """Answers instantly and contacts nothing, which is the honest verdict for a double."""
         return f"{len(self._models)} model(s) listed"
 
+    async def count_tokens(self, request: CanonicalRequest, *, region: str = "") -> int:
+        """The prompt as this double counts it when it answers, so a count and the usage of the
+        answer to the same request agree, as a vendor's do."""
+        return self._prompt_tokens(request)
+
     async def generate(self, request: CanonicalRequest) -> CanonicalResponse:
         if request.speech is not None:
             return self._speech(request)
@@ -295,8 +300,16 @@ class MockProvider:
         task = None if request.task_in_text else request.task_type
         if request.aggregate:
             # One vector for every part together, as Google combines the parts of one content.
-            return [self._vector("\x1f".join(request.texts), task, dimensions)]
-        return [self._vector(text, task, dimensions) for text in request.texts]
+            return [
+                self._vector(
+                    _titled("\x1f".join(request.texts), request.title_of(0)), task, dimensions
+                )
+            ]
+        # A title changes the vector, as it does Google's (`FRD-155`), so a test can see it travel.
+        return [
+            self._vector(_titled(text, request.title_of(index)), task, dimensions)
+            for index, text in enumerate(request.texts)
+        ]
 
     async def rerank(self, request: CanonicalRerankRequest) -> RankedRecords:
         """Each record scored by how many of the query's words it contains, best first.
@@ -332,6 +345,11 @@ class MockProvider:
         attachment_tokens = sum(part.size // 4 for part in request.attachments)
         words = sum(len(message.text.split()) for message in request.messages)
         return words + attachment_tokens
+
+
+def _titled(text: str, title: str) -> str:
+    """The text an embedding is made of: its title, where it has one, and the text."""
+    return f"{title}\x1e{text}" if title else text
 
 
 def _overlap(words: set[str], text: str) -> float:

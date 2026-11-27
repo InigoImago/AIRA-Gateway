@@ -70,6 +70,21 @@ class SchemaType(StrEnum):
     NULL = "NULL"
 
 
+#: Google's numbers for the same types (`google/ai/generativelanguage/v1beta/content.proto`), which
+#: a GAPIC client — the deprecated Python and Go SDKs, LangChainGo — sends in their place. ``None``
+#: for ``0``, ``TYPE_UNSPECIFIED``: no type, which only a union may leave out.
+TYPES_BY_NUMBER: dict[int, SchemaType | None] = {
+    0: None,
+    1: SchemaType.STRING,
+    2: SchemaType.NUMBER,
+    3: SchemaType.INTEGER,
+    4: SchemaType.BOOLEAN,
+    5: SchemaType.ARRAY,
+    6: SchemaType.OBJECT,
+    7: SchemaType.NULL,
+}
+
+
 class ResponseSchema(BaseModel):
     """One node of an OpenAPI-3.0-flavoured schema.
 
@@ -112,8 +127,14 @@ class ResponseSchema(BaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def _accept_either_case(cls, value: Any) -> Any:
-        """``"string"`` and ``"STRING"`` are the same request; the type set is identical."""
-        return value.upper() if isinstance(value, str) else value
+        """``"string"``, ``"STRING"`` and ``1`` are the same request: the type set is identical, and
+        a GAPIC client sends Google's enum numbers (`TYPES_BY_NUMBER`). Unspecified is no type."""
+        if isinstance(value, int) and not isinstance(value, bool):
+            return TYPES_BY_NUMBER.get(value, value)
+        if isinstance(value, str):
+            upper = value.upper()
+            return None if upper in ("", "TYPE_UNSPECIFIED") else upper
+        return value
 
     @model_validator(mode="after")
     def _typed_unless_a_union(self) -> ResponseSchema:

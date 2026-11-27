@@ -436,8 +436,9 @@ goes back with the turns it was made in. A message of the model's that calls a f
 thinking sealed into that call's signature, which a client hands back unread, so the gateway keeps
 no state between requests: it goes back on the turn in progress, as Anthropic requires, and on an
 earlier turn wherever the history before it is unchanged — a block made on a history the client has
-since changed stays out. It is sealed only where the use case returns reasoning or the model showed
-none; otherwise the next turn goes without it. Where Anthropic refuses what was carried back, the
+since changed stays out. It is sealed only where the model showed no reasoning, or where the request
+asked for the reasoning and the use case returns it — the envelope is readable, and the reasoning
+goes to nobody who did not ask for it; otherwise the next turn goes without it. Where Anthropic refuses what was carried back, the
 turn is sent again carrying less — without the earlier turns' thinking, then without any — rather
 than refused. Gemini and the managed open models on Google Cloud take no marker: they cache a long
 prompt on their own, whatever the switch says, from 2 048 to 6 144 tokens depending on the model,

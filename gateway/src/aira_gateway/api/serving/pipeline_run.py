@@ -95,10 +95,18 @@ async def run_pipeline_over_texts(
 
     The embedding sibling of :func:`run_pipeline`: no model to route to and no answer to carry a
     notice, so it returns the request with its texts replaced. Without it, a use case with
-    redaction switched on embedded and stored its callers' text unredacted.
+    redaction switched on embedded and stored its callers' text unredacted. A document's title is
+    the caller's text too (`FRD-155`), and is read after the texts, in their order.
     """
-    texts = await run_pipeline_over_strings(request, embed.texts, embed.model, trail)
-    return embed if texts is None else embed.model_copy(update={"texts": texts})
+    titled = [index for index, title in enumerate(embed.titles) if title]
+    read = [*embed.texts, *(embed.titles[index] for index in titled)]
+    texts = await run_pipeline_over_strings(request, read, embed.model, trail)
+    if texts is None:
+        return embed
+    titles = list(embed.titles)
+    for index, title in zip(titled, texts[embed.size :], strict=True):
+        titles[index] = title
+    return embed.model_copy(update={"texts": texts[: embed.size], "titles": titles})
 
 
 async def run_pipeline_over_rerank(

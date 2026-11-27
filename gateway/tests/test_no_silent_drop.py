@@ -13,14 +13,19 @@ gateway accepts is a promise, and accepting a field is a promise to honour it.
 Three shapes of answer:
 
     portable and supported     → carried to the dialect       (`topP`, `seed`, `stopSequences`, …)
-    known but out of scope     → refused, saying why          (`toolConfig`, `safetySettings`, …)
-    the dialect cannot say it  → the candidate is skipped     (`top_k` on OpenAI, `seed` on Claude)
+    known but out of scope     → refused, saying why          (`cachedContent`, `logprobs`, …)
+    the dialect cannot say it  → the candidate is skipped     (`top_k` on OpenAI, `seed` on Claude,
+                                                               `safetySettings` on either)
 
 **`tools` moved from the second row to the first on 2026-08-08** (`FRD-131`). It was refused
 because the canonical core had nowhere to put a declaration, and the refusal cited `ADR-0013` —
 which forbids *executing* a tool and has always allowed carrying one through. The refusal was the
 right answer to a missing capability and the wrong answer once the capability exists. Nothing about
 the rule changed; one field changed rows, and the cases below moved with it.
+
+**`safetySettings` moved on 2026-11-27** (`FRD-155`), from the second row to the first for Gemini
+and the third for every other dialect: refused because one vendor alone has the filter, which is
+exactly what passing the others over by name answers.
 """
 
 from __future__ import annotations
@@ -35,7 +40,13 @@ from aira_gateway.api.gemini import schemas
 from aira_gateway.api.gemini.mapping import gemini_to_canonical
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
-from aira_gateway.core.canonical import SAMPLING_CONTROLS, CanonicalMessage, CanonicalRequest, Role
+from aira_gateway.core.canonical import (
+    SAMPLING_CONTROLS,
+    CanonicalMessage,
+    CanonicalRequest,
+    Role,
+    SafetySetting,
+)
 from aira_gateway.core.schema import SchemaBounds
 from aira_gateway.requirements import SamplingExpressible
 from aira_gateway.upstreams.base import DialectUnsupported, ProviderRegistry
@@ -76,7 +87,6 @@ def _base(**config: object) -> dict:
         # Google's four modes are carried now (`FRD-145`); a word outside them is refused by name.
         ("toolConfig", {"functionCallingConfig": {"mode": "SOMETIMES"}}, "not a function-calling"),
         ("cachedContent", "cachedContents/abc", "context caching"),
-        ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT"}], "safety"),
     ],
 )
 def test_a_field_this_gateway_does_not_serve_is_refused_and_says_why(
@@ -259,6 +269,22 @@ def test_the_openai_dialect_refuses_top_k_rather_than_dropping_it() -> None:
     the one holding the request."""
     with pytest.raises(DialectUnsupported, match="top_k"):
         canonical_to_openai(_canonical(top_k=5))
+
+
+def test_a_harm_filter_reaches_gemini_and_no_other_dialect_drops_it() -> None:
+    """`safetySettings` in its new rows: carried where the filter exists, the candidate skipped by
+    name everywhere else — never answered unfiltered under a 200."""
+    filtered = _canonical(
+        safety_settings=(SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),)
+    )
+
+    assert canonical_to_gemini_request(filtered)["safetySettings"] == [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"}
+    ]
+    with pytest.raises(DialectUnsupported, match="safetySettings"):
+        canonical_to_openai(filtered)
+    with pytest.raises(DialectUnsupported, match="safetySettings"):
+        canonical_to_anthropic(filtered, max_tokens=64)
 
 
 @pytest.mark.parametrize("field", ["seed", "presence_penalty", "frequency_penalty"])

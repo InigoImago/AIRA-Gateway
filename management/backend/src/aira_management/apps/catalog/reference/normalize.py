@@ -21,6 +21,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from aira_common.counts import display_count
+from aira_management.apps.catalog.reference.embedding_defaults import with_vendor_embedding
 from aira_management.apps.catalog.reference.thinking_defaults import with_vendor_default
 
 #: The list's providers this gateway reaches, as `(platform, publisher)` — the provider name the
@@ -47,6 +48,11 @@ DEFAULT_VERSION_SUFFIX = "@default"
 
 #: The vendor word for "no reasoning", which is this gateway's own `disabled` mode.
 NO_REASONING = "none"
+
+#: Models the list marks `temperature: false` that take a temperature on their vendor's wire: Google
+#: answers one sent to its speech models with speech, measured on Vertex AI (`FRD-155`). The mark
+#: is right for the Claude models, which answer 400.
+SAMPLES_DESPITE_THE_LIST = frozenset({"gemini-2.5-flash-tts", "gemini-2.5-pro-tts"})
 
 
 def _split(model_id: str, fixed: str | None) -> tuple[str, str]:
@@ -179,13 +185,18 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
     if _price(cost.get("cache_read")) is not None and not embeds:
         capabilities.append("prompt_caching")
 
+    name = name.removesuffix(DEFAULT_VERSION_SUFFIX)
     # The list's `temperature: false` is a model that refuses sampling controls outright (the newer
     # Claude models answer 400). Only an explicit `false` says so: an entry that does not mention it
     # is not a claim of a restriction, and an embedding model samples nothing.
     fixed_sampling = entry.get("temperature") is False and not embeds
-
-    name = name.removesuffix(DEFAULT_VERSION_SUFFIX)
+    if fixed_sampling and name in SAMPLES_DESPITE_THE_LIST:
+        fixed_sampling = False
+        notes.append(
+            "takes a temperature, which the list says it does not — Google answers one with speech"
+        )
     thinking = with_vendor_default(name, thinking, notes)
+    embedding = with_vendor_embedding(name, notes) if embeds else None
     long_context = None if embeds else _long_context(cost, notes)
     if cost.get("input_audio") is not None:
         notes.append("audio input is priced apart")
@@ -206,6 +217,8 @@ def draft(name: str, entry: dict[str, Any], platform: str, publisher: str) -> di
             "thinking": thinking,
             "attachments": attachments,
             "fixed_sampling": fixed_sampling,
+            # Only where the vendor documents one: an absent block is the catalogue's own default.
+            **({"embedding": embedding} if embedding is not None else {}),
         },
         "prices": {
             "input": _price(cost.get("input")),

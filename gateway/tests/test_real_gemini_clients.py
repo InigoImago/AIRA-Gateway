@@ -79,11 +79,15 @@ TEMP_DIR = "tmp"
 #: How the catalogue declares the model these clients talk to: two level words, no default.
 THINKING: dict[str, Any] = {"modes": [], "levels": ["low", "high"]}
 
-#: The variants the console writes for that declaration (`opencode-config.ts`, `FRD-151`).
+#: The variants the console writes for that declaration (`opencode-config.ts`, `FRD-151`), on a
+#: use case that returns reasoning: each asks for it, as Google wants it asked (`FRD-135` §5.7).
 CONSOLE_VARIANTS = {
-    "low": {"thinkingConfig": {"thinkingLevel": "low"}},
-    "high": {"thinkingConfig": {"thinkingLevel": "high"}},
+    "low": {"thinkingConfig": {"thinkingLevel": "low", "includeThoughts": True}},
+    "high": {"thinkingConfig": {"thinkingLevel": "high", "includeThoughts": True}},
 }
+
+#: What the console writes on every model of such a use case, for a request with no variant chosen.
+CONSOLE_OPTIONS = {"thinkingConfig": {"includeThoughts": True}}
 
 #: What the mock streams as its reasoning wherever it is thinking and the use case returns it.
 MOCK_THOUGHT = "[mock thought]"
@@ -596,12 +600,14 @@ def _project(
     plugin: str | None = None,
     reasoning: bool = False,
     variants: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> Path:
     """A git project with one file, an AIRA provider, and optionally the budget plugin.
 
     ``configuration`` is ``"v1"`` — the shape the AIRA console generates, `provider`, `npm` and
     `options`, which OpenCode 2 still reads — or ``"v2"``, OpenCode 2's own `providers`, `package`
-    and `settings`. ``variants`` are the thinking settings the console offers in the first.
+    and `settings`. ``variants`` are the thinking settings the console offers in the first, and
+    ``options`` what it writes on the model for every request.
     """
     project = root / "project"
     (project / ".opencode").mkdir(parents=True)
@@ -612,6 +618,8 @@ def _project(
     thinks = {"reasoning": True} if reasoning else {}
     if variants is not None:
         thinks["variants"] = variants
+    if options is not None:
+        thinks["options"] = options
     if configuration == "v1":
         provider = {
             "provider": {
@@ -828,9 +836,12 @@ def test_opencode_shows_the_reasoning_at_the_variant_somebody_chose(
 ) -> None:
     """The console's variants (`FRD-151`), read by both generations from the console's own shape:
     the chosen one is the thinking level sent, and the reasoning the model streams is shown — with
-    no `reasoning` flag in the file and no `includeThoughts` from the client."""
+    no `reasoning` flag in the file. The variant asks for the reasoning itself, as a Google client
+    must (`FRD-135` §5.7)."""
     with _served() as (base, recorder):
-        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        project = _project(
+            tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS, options=CONSOLE_OPTIONS
+        )
         completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
             _shows_thinking(generation, "high", "read hello.py"),
             cwd=project,
@@ -849,11 +860,15 @@ def test_opencode_shows_the_reasoning_at_the_variant_somebody_chose(
     assert turns, "OpenCode sent no turn"
     # The call the thinking model signed came back signed (`FRD-152`).
     assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
-    # OpenCode 2 asks for the thoughts itself once a variant is chosen; the level is the console's.
-    assert all(setting.get("thinkingLevel") == "high" for setting in turns), turns
+    # The level is the console's, and so is the question for the thoughts.
+    assert all(
+        setting == {"thinkingLevel": "high", "includeThoughts": True} for setting in turns
+    ), turns
     if generation == "1":
         # OpenCode 1 sends its own small requests with the first variant, which is the cheapest.
-        assert _thinking_sent(recorder, turns=False) == [{"thinkingLevel": "low"}]
+        assert _thinking_sent(recorder, turns=False) == [
+            {"thinkingLevel": "low", "includeThoughts": True}
+        ]
 
 
 def _conversation_turns(recorder: _Recorder) -> list[dict[str, Any]]:
@@ -870,7 +885,9 @@ def test_opencode_sends_a_conversation_as_one_growing_prefix_signatures_included
     an earlier turn's call still carries its signature. Measured because nothing else can say it:
     the gateway can keep a prefix stable only if the client sends one."""
     with _served() as (base, recorder):
-        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        project = _project(
+            tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS, options=CONSOLE_OPTIONS
+        )
         for prompt, more in (("read hello.py", []), ("and now read it again", ["--continue"])):
             binary, *standalone = _command(generation)
             chosen = ["--variant", "high"] if generation == "1" else ["--model", "aira/mock-1#high"]
@@ -909,9 +926,12 @@ def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
     opencode: None, opencode_cache: Path, tmp_path: Path, generation: str
 ) -> None:
     """No variant chosen, so nothing OpenCode sends names thinking: the model's declared default
-    does (`FRD-151`), and the reasoning the model produces anyway is shown."""
+    does (`FRD-151`), and the reasoning the model produces anyway is shown — because the file asks
+    for it on the model, for every request (`FRD-135` §5.7)."""
     with _served(thinking=THINKS_UNASKED) as (base, recorder):
-        project = _project(tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS)
+        project = _project(
+            tmp_path, base, configuration="v1", variants=CONSOLE_VARIANTS, options=CONSOLE_OPTIONS
+        )
         completed = subprocess.run(  # noqa: S603 — our own installed binary, fixed arguments
             _shows_thinking(generation, None, "read hello.py"),
             cwd=project,
@@ -926,7 +946,9 @@ def test_opencode_shows_the_reasoning_of_a_model_that_thinks_unasked(
     assert completed.returncode == 0, output[-3000:]
     assert "acted on the tool result" in output, output[-3000:]
     assert MOCK_THOUGHT in output, output[-3000:]
-    assert not any(_thinking_sent(recorder, turns=True)), "the client asked, not the default"
+    turns = _thinking_sent(recorder, turns=True)
+    # The file asks for the thoughts and names no thinking: how much is the default's to say.
+    assert turns and all(setting == {"includeThoughts": True} for setting in turns), turns
     assert _signatures_handed_back(recorder) == [MOCK_SIGNATURE]
 
 

@@ -157,6 +157,15 @@ def _declared_parameters(tool: ToolDeclaration) -> dict[str, Any]:
     return {}
 
 
+def _declared_result(tool: ToolDeclaration) -> dict[str, Any]:
+    """What a function returns, in the field matching its vocabulary (`FRD-155`)."""
+    if tool.response_json_schema is not None:
+        return {"responseJsonSchema": tool.response_json_schema.to_wire()}
+    if tool.response is not None:
+        return {"response": tool.response.to_wire()}
+    return {}
+
+
 def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
     """Build a Gemini ``generateContent`` request body from a canonical request."""
     contents: list[dict[str, Any]] = []
@@ -185,6 +194,7 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
                         "name": tool.name,
                         "description": tool.description,
                         **_declared_parameters(tool),
+                        **_declared_result(tool),
                     }
                     for tool in request.tools
                 ]
@@ -196,6 +206,12 @@ def canonical_to_gemini_request(request: CanonicalRequest) -> dict[str, Any]:
         if request.tool_choice.allowed:
             calling["allowedFunctionNames"] = list(request.tool_choice.allowed)
         body["toolConfig"] = {"functionCallingConfig": calling}
+    if request.safety_settings:
+        # The caller's harm filters, in Google's names, as sent (`FRD-155`).
+        body["safetySettings"] = [
+            {"category": setting.category, "threshold": setting.threshold}
+            for setting in request.safety_settings
+        ]
 
     generation_config: dict[str, Any] = {}
     if request.temperature is not None:
@@ -299,6 +315,8 @@ def canonical_to_gemini_embedding(request: CanonicalEmbeddingRequest) -> dict[st
     body: dict[str, Any] = {"content": {"parts": [{"text": text} for text in texts]}}
     if request.task_type is not None and not request.task_in_text:
         body["taskType"] = request.task_type
+    if request.title_of(0):
+        body["title"] = request.title_of(0)
     if request.dimensions is not None:
         body["outputDimensionality"] = request.dimensions
     return body
@@ -314,9 +332,13 @@ def batch_embedding_body(request: CanonicalEmbeddingRequest, model: str) -> dict
         "requests": [
             {
                 "model": f"models/{model}",
-                **canonical_to_gemini_embedding(request.model_copy(update={"texts": [text]})),
+                **canonical_to_gemini_embedding(
+                    request.model_copy(
+                        update={"texts": [text], "titles": [request.title_of(index)]}
+                    )
+                ),
             }
-            for text in request.texts
+            for index, text in enumerate(request.texts)
         ]
     }
 

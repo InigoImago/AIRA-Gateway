@@ -1,0 +1,7 @@
+# The libraries the Python examples use, at least at the versions they were run with.
+google-genai>=2.34
+httpx>=0.28
+langchain-google-genai>=4.4
+llama-index-core>=0.14
+llama-index-llms-google-genai>=0.12
+llama-index-embeddings-google-genai>=0.7

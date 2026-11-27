@@ -336,6 +336,8 @@ export interface ReferenceEntry {
     attachments: { media_types: Record<string, { tokens?: number } | null> } | null;
     /** Set where the list says the model takes no temperature at all. */
     fixed_sampling: boolean;
+    /** What the vendor documents an embedding model taking, where it does; absent otherwise. */
+    embedding?: EmbeddingDeclaration | null;
   };
   /** Per million tokens, in the reference's currency (US dollars), as decimal strings. */
   prices: {

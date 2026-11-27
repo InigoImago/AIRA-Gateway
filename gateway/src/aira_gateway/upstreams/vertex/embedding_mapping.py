@@ -23,18 +23,23 @@ def embeds_content(wire_model: str) -> bool:
     return wire_model.startswith(EMBED_CONTENT_MODELS)
 
 
-def embed_content_body(request: CanonicalEmbeddingRequest, texts: list[str]) -> dict[str, Any]:
+def embed_content_body(
+    request: CanonicalEmbeddingRequest, texts: list[str], title: str = ""
+) -> dict[str, Any]:
     """``texts`` as one `:embedContent` body: one part each, of one content, so one vector.
 
     ``autoTruncate`` is off for the reason `predict_body` gives. The task type goes in the config
     only where the caller named one and it is not already in the text (``task_in_text``): sending
-    both would ask the model for the task twice.
+    both would ask the model for the task twice. A document's ``title`` goes in the config too,
+    where Google's own SDK puts it for this method (`FRD-155`).
     """
     config: dict[str, Any] = {"autoTruncate": False}
     if request.dimensions is not None:
         config["outputDimensionality"] = request.dimensions
     if request.task_type is not None and not request.task_in_text:
         config["taskType"] = request.task_type
+    if title:
+        config["title"] = title
     return {
         "content": {"parts": [{"text": text} for text in texts]},
         "embedContentConfig": config,
@@ -56,8 +61,8 @@ def embed_content_tokens(data: dict[str, Any]) -> int | None:
     return int(count) if isinstance(count, int | float) and not isinstance(count, bool) else None
 
 
-def predict_body(request: CanonicalEmbeddingRequest, text: str) -> dict[str, Any]:
-    """One text as a `:predict` body.
+def predict_body(request: CanonicalEmbeddingRequest, text: str, title: str = "") -> dict[str, Any]:
+    """One text as a `:predict` body, with its document ``title`` where it has one (`FRD-155`).
 
     One instance per call, because `gemini-embedding-001` accepts one per request. ``autoTruncate``
     is off: Vertex's default embeds the beginning of an over-long text and answers 200 — a vector
@@ -66,6 +71,8 @@ def predict_body(request: CanonicalEmbeddingRequest, text: str) -> dict[str, Any
     instance: dict[str, Any] = {"content": text}
     if request.task_type is not None:
         instance["task_type"] = request.task_type
+    if title:
+        instance["title"] = title
     parameters: dict[str, Any] = {"autoTruncate": False}
     if request.dimensions is not None:
         parameters["outputDimensionality"] = request.dimensions

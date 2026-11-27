@@ -36,9 +36,10 @@ SPEC_VERSION = "1.6"
 #: The source document's component name, beside the images' own.
 SOURCE_NAME = "aira-source"
 
-#: Test tooling with lock files of its own: the browser suite and the client harnesses. Nothing in
-#: them ships, and listing them would put Playwright in an inventory of the product.
-SOURCE_EXCLUDES = ("./e2e/**", "./tools/clients/**")
+#: Test tooling and examples with manifests of their own: the browser suite, the client harnesses
+#: and the examples for every framework. Nothing in them ships, and listing them would put
+#: Playwright — or LangChain and Spring AI — in an inventory of the product.
+SOURCE_EXCLUDES = ("./e2e/**", "./tools/clients/**", "./examples/**")
 
 #: A component name reaches a file name; the images are `aira-<word>`.
 _NAME = re.compile(r"aira-[a-z]+")

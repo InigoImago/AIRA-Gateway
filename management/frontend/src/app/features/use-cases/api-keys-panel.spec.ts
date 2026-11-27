@@ -37,6 +37,8 @@ interface Options {
   released?: string[];
   issueApiKey?: Observable<unknown>;
   confirm?: boolean;
+  /** Whether the use case returns the model's reasoning. */
+  reasoning?: boolean;
 }
 
 /** Let the clipboard's promise settle, as the browser would before anything is painted. */
@@ -90,6 +92,9 @@ function setup(options: Options = {}) {
   fixture.componentRef.setInput('released', options.released ?? models.map((m) => m.name));
   fixture.componentRef.setInput('defaultKeyDays', 30);
   fixture.componentRef.setInput('maxKeyDays', 180);
+  if (options.reasoning !== undefined) {
+    fixture.componentRef.setInput('reasoning', options.reasoning);
+  }
   fixture.componentInstance.changed.subscribe(() => (changed += 1));
   fixture.detectChanges();
   return {
@@ -413,8 +418,8 @@ describe('ApiKeysPanel — accountability for a key', () => {
 
 /** The OpenCode configuration (`FRD-132`), built while the plaintext exists. */
 describe('ApiKeysPanel — the OpenCode configuration', () => {
-  function configFor(models?: unknown[]) {
-    const { component } = setup({ models });
+  function configFor(models?: unknown[], reasoning?: boolean) {
+    const { component } = setup({ models, reasoning });
     component.issueKey();
     return JSON.parse(component.openCodeConfig(component.issued()!));
   }
@@ -483,6 +488,41 @@ describe('ApiKeysPanel — the OpenCode configuration', () => {
       low: { thinkingConfig: { thinkingLevel: 'low' } },
       high: { thinkingConfig: { thinkingLevel: 'high' } },
     });
+  });
+
+  it('asks for the reasoning where the use case returns it, as Google wants it asked', () => {
+    // `FRD-135` §5.7: the gateway returns reasoning to a caller who asks, and OpenCode asks only
+    // where its file says so — on the model for a request with no variant, and in each variant
+    // that thinks.
+    const thinking = { modes: ['disabled'], levels: ['low', 'high'] };
+    const model = { name: 'qwen2.5:3b', capabilities: ['tools', 'thinking'], thinking };
+
+    const returned = configFor([model], true).provider.aira.models['qwen2.5:3b'];
+    const withheld = configFor([model], false).provider.aira.models['qwen2.5:3b'];
+
+    expect(returned.options).toEqual({ thinkingConfig: { includeThoughts: true } });
+    expect(returned.variants).toEqual({
+      none: { thinkingConfig: { thinkingBudget: 0 } },
+      low: { thinkingConfig: { thinkingLevel: 'low', includeThoughts: true } },
+      high: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } },
+    });
+    // Where it returns none, a request asking for it is refused by name.
+    expect(JSON.stringify(withheld)).not.toContain('includeThoughts');
+  });
+
+  it('says beside the file whether it asks for the reasoning, and what turning it off costs', () => {
+    const asks = setup({ reasoning: true });
+    asks.component.issueKey();
+    asks.fixture.detectChanges();
+    const silent = setup({ reasoning: false });
+    silent.component.issueKey();
+    silent.fixture.detectChanges();
+
+    const hint = (h: typeof asks) =>
+      h.html().querySelector('[data-testid="thinking-variants-hint"]')?.textContent ?? '';
+    expect(hint(asks)).toContain('asks for the model');
+    expect(hint(asks)).toContain('download the file again');
+    expect(hint(silent)).toContain('returns no reasoning');
   });
 
   it('leaves a limit out rather than writing a zero the catalog never declared', () => {

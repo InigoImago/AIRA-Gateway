@@ -1,12 +1,12 @@
-"""A model that thinks when nothing is asked returns that reasoning once its default says so
-(`FRD-151`).
+"""A model that thinks when nothing is asked returns that reasoning, to a caller who asks for it,
+once its default says so (`FRD-151`, `FRD-135` §5.7).
 
-Most requests name no thinking setting — OpenCode sends none until somebody picks a variant. The
-gateway asks for the reasoning only where it knows the model is thinking (`FRD-135` FR-5): Google
-refuses `includeThoughts` from a model that is not, and Claude's newest models return their
-thinking empty unless asked for a summary. What tells the gateway is the model's declared thinking
-default — the setting that reproduces what the vendor does anyway — so with it the reasoning comes
-back at no extra cost, and without it, nothing changes.
+Most requests name no thinking setting — OpenCode sends none until somebody picks a variant, only
+the question for the thoughts. The gateway passes that question on only where it knows the model is
+thinking (`FRD-135` FR-5): Google refuses `includeThoughts` from a model that is not, and Claude's
+newest models return their thinking empty unless asked for a summary. What tells the gateway is the
+model's declared thinking default — the setting that reproduces what the vendor does anyway — so
+with it the reasoning comes back at no extra cost, and without it, nothing changes.
 """
 
 from __future__ import annotations
@@ -98,12 +98,13 @@ async def _seed(app: Any, thinking: dict[str, Any]) -> None:
         await session.commit()
 
 
-def _thoughts(client: TestClient) -> list[str]:
-    """The thought parts of a streamed answer to a request that names no thinking setting."""
-    response = client.post(
-        "/uc/uc/v1beta/models/mock-1:streamGenerateContent?alt=sse",
-        json={"contents": [{"role": "user", "parts": [{"text": "hello"}]}]},
-    )
+def _thoughts(client: TestClient, *, asked: bool) -> list[str]:
+    """The thought parts of a streamed answer to a request that names no thinking setting — and,
+    where ``asked``, asks for the thoughts, as the console's OpenCode file does."""
+    body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": "hello"}]}]}
+    if asked:
+        body["generationConfig"] = {"thinkingConfig": {"includeThoughts": True}}
+    response = client.post("/uc/uc/v1beta/models/mock-1:streamGenerateContent?alt=sse", json=body)
     assert response.status_code == 200, response.text
     elements = [
         json.loads(line.removeprefix("data: "))
@@ -120,17 +121,22 @@ def _thoughts(client: TestClient) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("thinking", "shown"),
-    [(THINKS_UNASKED, ["[mock thought] "]), (UNDECLARED_DEFAULT, [])],
-    ids=["default-declared", "no-default"],
+    ("thinking", "asked", "shown"),
+    [
+        (THINKS_UNASKED, True, ["[mock thought] "]),
+        (UNDECLARED_DEFAULT, True, []),
+        # Thinking, and nobody asked to see it: none, as Google answers (`FRD-135` §5.7).
+        (THINKS_UNASKED, False, []),
+    ],
+    ids=["default-declared", "no-default", "not-asked"],
 )
 async def test_a_stream_that_names_no_setting_carries_the_thinking_the_default_declares(
-    thinking: dict[str, Any], shown: list[str]
+    thinking: dict[str, Any], asked: bool, shown: list[str]
 ) -> None:
     app = create_app(GatewaySettings(auth_required=False, log_queue_size=0))
     with TestClient(app) as client:
         await _seed(app, thinking)
-        thoughts = _thoughts(client)
+        thoughts = _thoughts(client, asked=asked)
 
     assert thoughts == shown
 

@@ -494,6 +494,21 @@
               {{ fixedSamplingHelp }}
             </app-info-hint>
           </label>
+          @if (proposedFreeSampling()) {
+            <span class="field__hint" data-testid="free-sampling-proposed">
+              The model reference does not mark this model as sampling at fixed settings: its vendor
+              answers a temperature from it. While it is ticked, the gateway refuses every request
+              that sets one.
+              <button
+                type="button"
+                class="btn btn--sm"
+                (click)="adoptFreeSampling()"
+                data-testid="adopt-free-sampling"
+              >
+                Let it sample
+              </button>
+            </span>
+          }
           <div class="field">
             <label for="model-default-top-p">
               Default top_p
@@ -817,6 +832,21 @@
                 </span>
               </div>
             </div>
+            @if (proposedEmbedding(); as proposed) {
+              <span class="field__hint" data-testid="embedding-proposed">
+                The model reference proposes the task types its vendor documents for this model —
+                {{ proposed.task_types?.join(', ') }}. Without them a request naming one is refused,
+                and LangChain names one on every embedding.
+                <button
+                  type="button"
+                  class="btn btn--sm"
+                  (click)="adoptProposedEmbedding()"
+                  data-testid="adopt-embedding"
+                >
+                  Use them
+                </button>
+              </span>
+            }
             <label class="checkline">
               <input
                 type="checkbox"

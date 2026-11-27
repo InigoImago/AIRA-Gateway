@@ -142,7 +142,8 @@ def check_shape(request: CanonicalEmbeddingRequest, bounds: EmbeddingBounds | No
             f"A batch of {len(texts)} exceeds the {bounds.max_batch} texts this gateway accepts "
             "in one request.",
         )
-    total = sum(len(text) for text in texts)
+    # A title is text the request carries too (`FRD-155`).
+    total = sum(len(text) for text in texts) + sum(len(title) for title in request.titles)
     if total > bounds.max_total_chars:
         raise EmbeddingRejected(
             EMBEDDING_BOUND_EXCEEDED,

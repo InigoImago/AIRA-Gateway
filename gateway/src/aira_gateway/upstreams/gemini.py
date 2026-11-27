@@ -24,7 +24,7 @@ from aira_gateway.core.canonical import (
     wire_name,
 )
 from aira_gateway.residency import check_region, parse_allowed
-from aira_gateway.upstreams.base import ModelNotListed, OfferedModel, UpstreamModel
+from aira_gateway.upstreams.base import ModelNotListed, OfferedModel, UpstreamError, UpstreamModel
 from aira_gateway.upstreams.exchange import (
     json_object,
     opened_stream,
@@ -41,6 +41,7 @@ from aira_gateway.upstreams.gemini_mapping import (
     batch_embedding_body,
     canonical_to_gemini_embedding,
     canonical_to_gemini_request,
+    count_tokens_body,
     embedding_values,
     gemini_response_to_canonical,
 )
@@ -194,6 +195,27 @@ class GeminiUpstream:
             canonical_to_gemini_request(request),
         )
         return gemini_response_to_canonical(data, request.model)
+
+    async def count_tokens(self, request: CanonicalRequest, *, region: str = "") -> int:
+        """Google's own count of ``request``, at `:countTokens`, which it does not charge for.
+
+        Sent as the generation it stands for, which is how this API counts a system instruction
+        and declared functions with the conversation; one endpoint, so ``region`` changes nothing.
+        """
+        wire = wire_name(request.model, request.addressing)
+        data = await self._post(
+            _model_path(wire, "countTokens"),
+            {
+                "generateContentRequest": {
+                    "model": f"models/{wire}",
+                    **count_tokens_body(canonical_to_gemini_request(request)),
+                }
+            },
+        )
+        total = data.get("totalTokens")
+        if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+            raise UpstreamError(f"{NAME} counted the request without a token total.", 502)
+        return total
 
     async def embed(self, request: CanonicalEmbeddingRequest) -> list[list[float]]:
         # One embedding of several parts is `embedContent` too: Google combines them.

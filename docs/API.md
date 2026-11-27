@@ -214,6 +214,8 @@ thins every span. The guides say the rest.
 | `POST /v1beta/models/{model}:streamGenerateContent` | the same | The answer in chunks: a JSON array, or server-sent events with `?alt=sse`. The status waits at most `AIRA_STREAM_KEEPALIVE_SECONDS` (15) for the model's first chunk; a failure after it went out — every model of the chain failing before its first word, or the answer breaking off — arrives as the stream's last element, Google's error object, after a `200`. A blank line whenever the stream was quiet for that long: SSE dispatches nothing for it, and in the array it is whitespace. Every element is one line: U+2028, U+2029 and U+0085 in its text are written as JSON escapes, as Google writes them, since a client that reads the stream line by line — Google's own Python SDK does — would split the element there. `X-Accel-Buffering: no`. |
 | `POST /v1beta/models/{model}:embedContent` | the same | `{embedding: {values}}`. A `model` in the body that names another model than the URL — with or without `models/` — is `400`: the URL decides which model serves. |
 | `POST /v1beta/models/{model}:batchEmbedContents` | the same | `{embeddings: [{values}]}`, one per entry of the body's `requests`. The batch's own `model` and each entry's are held to the URL alike: one naming another model is `400`. |
+| `POST /v1beta/models/{model}:countTokens` | the same | `{totalTokens}`: the model vendor's own count of what a generation of the request is billed for as input, from its endpoint that charges nothing. The body is `contents` or a `generateContentRequest`, one of the two (`400` for both or neither). The use case, the rate limit at one request, the pipeline and the model's approval, release and region apply as to a generation; the audit row (operation `countTokens`) books no token and nothing against a budget. Only the model named is counted, never a fallback; a model whose vendor counts nothing for this gateway is `400`, named. |
+| `GET /v1/models` · `GET /v1/models/{model}` · `POST /v1/models/{model}:generateContent` · `:streamGenerateContent` · `:embedContent` · `:batchEmbedContents` · `POST /v1/models/{model}:countTokens` | as their `/v1beta` twins | The same routes and handlers at the API's stable version, which Google's JavaScript and Go SDKs call unless told otherwise. |
 | `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | a grant on the use case it is attributed to | Google's ranking API: `{model, query, records: [{id, title?, content?}], topN?, ignoreRecordDetailsInResponse?}` answered with `{records: [{id, score, title?, content?}]}` in the reranker's order. `model` is required and names a catalogue entry declared `rerank`; the path's project, location and configuration select nothing — the gateway ranks in its own project, at the locations the catalogue gives the model. At most `AIRA_RERANK_MAX_RECORDS` (200) records, each with a title or a content. Booked as one ranking unit per hundred records: that many requests against a rate limit — one per text where a pipeline step reads each text — and that many units as the input figure the entry's input price applies to. |
 | `POST /kira/api/external/chat` | a grant on the use case it is attributed to | The whole answer in one response, in the predecessor's shape. `tools` declares functions (`{type?: "function", name, description, parameters}`, parameters a JSON Schema object under the predecessor's rule) where the use case enables tool calling; a call comes back as a part `{type: "function_call", id, name, arguments, opaque_metadata}` (`opaque_metadata` `null` or `{thoughtSignature}`), and its result goes back as `{type?: "function_result", call_id, name, result, error?}` in the next request. `usage_data.token_output` leaves out thinking. An answer with no text, no call and no output token is `502 EXTERNAL_KI_API_ERROR`; one that cost output and says nothing is `parts: []`. |
 | `POST /kira/api/external/streaming-chat` | the same | Server-sent events: an `update` per text chunk — none for a `responseSchema` answer, which comes whole in `completed` — a `function_call` event per call, then `completed` with the whole answer and its usage. A `: ping` comment every `AIRA_STREAM_KEEPALIVE_SECONDS` (15) while nothing else was sent — from the moment the model is asked, before its first word too; `X-Accel-Buffering: no`. A stream whose models all failed after that, or that broke off, ends without `completed`. |
@@ -231,8 +233,27 @@ KIRA response carries `Deprecation: true` and `Link: </docs/migration>; rel="dep
 `Sunset` where `AIRA_KIRA_SUNSET` is set, and — where the request sent fields the surface accepts
 without acting on them — `X-AIRA-Unmodelled-Fields` naming them.
 
-The four Gemini verbs are one route, `/v1beta/models/{model}:{verb}`, split at the **last** colon so
-a model name may contain one; any other verb, `:countTokens` among them, is `400`.
+The five Gemini verbs are one route, `/v1beta/models/{model}:{verb}`, split at the **last** colon so
+a model name may contain one; any other verb is `400`. The listing, the
+model and the verbs answer at `/v1/…` as at `/v1beta/…` — Google's JavaScript and Go SDKs call `/v1`
+unless told otherwise — and a wrong URL under `/v1`, `/v1beta` or `/v1beta1` is answered in Google's
+envelope; one in Vertex AI's shape (`…/publishers/…/models/…`) says that this is the Gemini API.
+
+A request body is read as Google's own parser reads it: each field by its camelCase or its
+snake_case proto name, an enum by its name or its number, a field at its default (`null`, `[]`,
+`""`, `false`, `0`, `…_UNSPECIFIED`) as one not sent, and one object where a list is expected as a
+list of one. A generation body may repeat the URL's model as `model`; naming another is `400`. A
+function declaration may say what it returns (`response`, `responseJsonSchema`), which reaches a
+Gemini model and passes a Claude or OpenAI-dialect candidate over by name; `behavior` is
+`BLOCKING` or absent. An embedding entry may carry a document `title`, read by the use case's
+pipeline and carried to Google's embedding models; an OpenAI-dialect model is passed over. Google's
+own tools (`googleSearch`, `codeExecution`, …) are refused by name. `safetySettings` — Google's five
+Gemini categories and five thresholds — reach a Gemini model as sent and pass a Claude or
+OpenAI-dialect candidate over by name; an entry naming no threshold is left out. A thinking model's
+reasoning comes back where the request sends `includeThoughts: true` and the use case returns
+reasoning, and not otherwise; `true` where it does not is `400`. The ranking path accepts the
+body's `rankingConfig` (it selects nothing), `userLabels` only empty, and `topN: 0` as every
+record.
 
 ### 2.2 Health and build
 

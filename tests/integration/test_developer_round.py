@@ -504,7 +504,8 @@ async def test_a_control_the_dialect_cannot_express_is_refused_by_name(fixture) 
         # disappear — it moved: a use case **without** the toggle refuses a declaration by name,
         # asserted in `test_agent_round.py`. Left here as a comment because a row deleted without
         # one reads as a requirement that was dropped.
-        ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT"}], "safetySettings"),
+        # `safetySettings` left it with `FRD-155`: carried to Gemini, and refused by name by a
+        # dialect without the filter — the model here — below.
         ("cachedContent", "cachedContents/abc", "cachedContent"),
         ("quantumMode", True, "quantumMode"),
     ],
@@ -520,6 +521,28 @@ async def test_a_field_this_gateway_does_not_serve_is_refused(
 
     assert response.status_code == 400
     assert expected in response.json()["error"]["message"]
+
+
+async def test_a_harm_filter_the_serving_dialect_has_no_word_for_is_refused_by_name(
+    fixture,
+) -> None:
+    """`FRD-155`. Google's harm filters exist on Gemini alone; this model is served over the OpenAI
+    chat API, so a request setting one is refused naming it rather than answered unfiltered."""
+    body = _gemini_body()
+    body["safetySettings"] = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]
+    response = await _post(fixture, f"/v1beta/models/{CHAT}:generateContent", body)
+
+    assert response.status_code == 400
+    assert "safetySettings" in response.json()["error"]["message"]
+
+
+async def test_a_harm_filter_naming_no_threshold_asks_for_nothing(fixture) -> None:
+    """LangChainGo's entries name no threshold: the model's default, which every model has."""
+    body = _gemini_body()
+    body["safetySettings"] = [{"category": "HARM_CATEGORY_HARASSMENT"}]
+    response = await _post(fixture, f"/v1beta/models/{CHAT}:generateContent", body)
+
+    assert response.status_code == 200, response.text[:300]
 
 
 async def test_several_candidates_are_refused_rather_than_answered_with_one(fixture) -> None:

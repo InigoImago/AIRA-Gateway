@@ -230,10 +230,13 @@ async def check_tools_permitted(request: Request, canonical: CanonicalRequest) -
 async def resolve_reasoning(
     request: Request, canonical: CanonicalRequest, *, asked_for: bool | None
 ) -> CanonicalRequest:
-    """Whether the model's reasoning comes back (`FRD-135` FR-3/FR-4) — the use case decides.
+    """Whether the model's reasoning comes back (`FRD-135` FR-3/FR-4, §5.7): when the caller asks
+    and the use case allows it.
 
-    Enabled: the request carries it and the adapter asks for thoughts. Disabled but asked for:
-    refused by name, because a 200 without thoughts would be a silent drop (`FRD-124`).
+    Asked for and allowed: the request carries it and the adapter asks for thoughts. Asked for but
+    disabled: refused by name, because a 200 without thoughts would be a silent drop (`FRD-124`).
+    Not asked for: none, as Google answers — a client that reads the first part of an answer as its
+    text would otherwise read the reasoning as the answer.
     """
     use_case = getattr(attribution_of(request), "use_case", None)
     record = await use_case_record(request, use_case) if use_case else None
@@ -250,9 +253,9 @@ async def resolve_reasoning(
             "false, or omit it.",
             "FAILED_PRECONDITION",
         )
-    # An explicit no withholds them even where the use case allows them: Google's own meaning of
-    # the field, and a caller who declined must not receive text it did not ask for.
-    returned = allowed and asked_for is not False
+    # Only an explicit yes returns them: Google's own meaning of the field, under which a caller
+    # that says nothing — or declines — receives no text it did not ask for.
+    returned = allowed and asked_for is True
     return canonical.model_copy(update={"include_reasoning": True}) if returned else canonical
 
 

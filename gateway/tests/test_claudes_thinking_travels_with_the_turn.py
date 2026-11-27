@@ -317,11 +317,14 @@ def test_a_default_budget_without_its_thinking_goes_on_without_thinking() -> Non
 
 
 def test_a_budget_the_caller_asked_for_is_still_refused_without_its_thinking() -> None:
+    """And says what brings the block back: the reasoning travels to a caller who asks for it
+    (`FRD-135` §5.7), and the block is the reasoning."""
     call = ToolCallPart(id="c", name="read_file", arguments={})
     budget = Thinking(mode=ThinkingMode.LIMITED, tokens=2048)
 
-    with pytest.raises(DialectUnsupported, match="does not carry it back"):
+    with pytest.raises(DialectUnsupported, match="does not carry it back") as refused:
         _body(_turn(call), thinking=budget)
+    assert "'includeThoughts'" in str(refused.value)
 
 
 def test_google_is_never_sent_another_dialects_state_as_its_signature() -> None:

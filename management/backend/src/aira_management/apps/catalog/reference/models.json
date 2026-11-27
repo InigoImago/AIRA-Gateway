@@ -1234,6 +1234,24 @@
      "embed"
     ],
     "context_window": 2048,
+    "embedding": {
+     "dimensions": [
+      768,
+      1536,
+      3072
+     ],
+     "supports_batch": true,
+     "task_types": [
+      "RETRIEVAL_QUERY",
+      "RETRIEVAL_DOCUMENT",
+      "SEMANTIC_SIMILARITY",
+      "CLASSIFICATION",
+      "CLUSTERING",
+      "QUESTION_ANSWERING",
+      "FACT_VERIFICATION",
+      "CODE_RETRIEVAL_QUERY"
+     ]
+    },
     "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
@@ -1243,7 +1261,9 @@
    "family": "gemini",
    "knowledge": "2025-05",
    "name": "gemini-embedding-001",
-   "notes": [],
+   "notes": [
+    "task types, batches and widths proposed \u2014 what Google documents for this model, so a client naming a task type is served"
+   ],
    "platform": "generative-language",
    "prices": {
     "cache_write": null,
@@ -1271,6 +1291,9 @@
      "attachments"
     ],
     "context_window": 8192,
+    "embedding": {
+     "supports_batch": true
+    },
     "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
@@ -1281,6 +1304,7 @@
    "knowledge": "2025-11",
    "name": "gemini-embedding-2",
    "notes": [
+    "batches proposed and no task type \u2014 Google documents the task written into the text for this model, so a request naming one is refused rather than sent to be ignored",
     "audio input is priced apart"
    ],
    "platform": "generative-language",
@@ -2777,7 +2801,7 @@
      "speech"
     ],
     "context_window": 32768,
-    "fixed_sampling": true,
+    "fixed_sampling": false,
     "max_output_tokens": 16384,
     "thinking": null
    },
@@ -2786,7 +2810,9 @@
    "family": "gemini-flash",
    "knowledge": "2025-01",
    "name": "gemini-2.5-flash-tts",
-   "notes": [],
+   "notes": [
+    "takes a temperature, which the list says it does not \u2014 Google answers one with speech"
+   ],
    "platform": "vertex",
    "prices": {
     "cache_write": null,
@@ -2865,7 +2891,7 @@
      "speech"
     ],
     "context_window": 32768,
-    "fixed_sampling": true,
+    "fixed_sampling": false,
     "max_output_tokens": 16384,
     "thinking": null
    },
@@ -2874,7 +2900,9 @@
    "family": "gemini-pro",
    "knowledge": "2025-01",
    "name": "gemini-2.5-pro-tts",
-   "notes": [],
+   "notes": [
+    "takes a temperature, which the list says it does not \u2014 Google answers one with speech"
+   ],
    "platform": "vertex",
    "prices": {
     "cache_write": null,
@@ -3563,6 +3591,24 @@
      "embed"
     ],
     "context_window": 2048,
+    "embedding": {
+     "dimensions": [
+      768,
+      1536,
+      3072
+     ],
+     "supports_batch": true,
+     "task_types": [
+      "RETRIEVAL_QUERY",
+      "RETRIEVAL_DOCUMENT",
+      "SEMANTIC_SIMILARITY",
+      "CLASSIFICATION",
+      "CLUSTERING",
+      "QUESTION_ANSWERING",
+      "FACT_VERIFICATION",
+      "CODE_RETRIEVAL_QUERY"
+     ]
+    },
     "fixed_sampling": false,
     "max_output_tokens": null,
     "thinking": null
@@ -3572,7 +3618,9 @@
    "family": "gemini",
    "knowledge": "2025-05",
    "name": "gemini-embedding-001",
-   "notes": [],
+   "notes": [
+    "task types, batches and widths proposed \u2014 what Google documents for this model, so a client naming a task type is served"
+   ],
    "platform": "vertex",
    "prices": {
     "cache_write": null,

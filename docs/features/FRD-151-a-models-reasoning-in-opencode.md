@@ -68,11 +68,15 @@ the reasoning that follows from either.
   takes belongs there. Before, those requests named no setting. Where a model's only variant is
   `auto` they are now sent `auto`: what a model that thinks unasked does anyway, and thinking for
   one that does not — Gemini 2.5 Flash-Lite, whose drafted declaration cannot say `disabled`.
-- **FR-3 The variants do not ask for the reasoning.** No `includeThoughts`: the gateway asks
-  wherever the use case returns reasoning, and a file that asked itself would be refused by name
-  on a use case that does not (`FRD-135` FR-4). OpenCode 2 adds `includeThoughts: true` on its
-  own once a variant is chosen (measured); on a use case that returns no reasoning that request is
-  refused by name, as it is from any client.
+- **FR-3 The file asks for the reasoning where the use case returns it** (revised by `FRD-135`
+  §5.7, 2026-11-27). The gateway returns the reasoning to a caller who asks, as Google does, so the
+  file asks: `includeThoughts: true` in the model's `options`, for a request with no variant chosen,
+  and in each variant that thinks — not `none`. Where the use case returns no reasoning the file
+  asks for none, since such a request is refused by name (`FRD-135` FR-4) — and a file downloaded
+  before reasoning was turned off asks for what is then refused; the console says so beside the
+  file. OpenCode 2 adds `includeThoughts: true` on its own once a variant is chosen (measured).
+  *Before the revision the variants did not ask: the gateway asked for the reasoning itself
+  wherever the use case returned it.*
 - **FR-4 The reference proposes the vendor's default.** A draft of a model whose vendor documents
   what it does when a request names no thinking setting carries that as its default: the setting
   that, on this gateway's wire, reproduces it. `auto` for Gemini 2.5 Pro and 2.5 Flash (Google's
@@ -162,16 +166,18 @@ carry one.
 
 ## 7. API / Interface Contract
 
-No API changes. The configuration the console hands out gains `variants` per model:
+No API changes. The configuration the console hands out gains `variants` per model, and — for a
+use case that returns reasoning — the question for it (FR-3):
 
 ```json
 "gemini-3.5-flash": {
   "name": "gemini-3.5-flash via AIRA",
+  "options": { "thinkingConfig": { "includeThoughts": true } },
   "variants": {
-    "minimal": { "thinkingConfig": { "thinkingLevel": "minimal" } },
-    "low": { "thinkingConfig": { "thinkingLevel": "low" } },
-    "medium": { "thinkingConfig": { "thinkingLevel": "medium" } },
-    "high": { "thinkingConfig": { "thinkingLevel": "high" } }
+    "minimal": { "thinkingConfig": { "thinkingLevel": "minimal", "includeThoughts": true } },
+    "low": { "thinkingConfig": { "thinkingLevel": "low", "includeThoughts": true } },
+    "medium": { "thinkingConfig": { "thinkingLevel": "medium", "includeThoughts": true } },
+    "high": { "thinkingConfig": { "thinkingLevel": "high", "includeThoughts": true } }
   }
 }
 ```
@@ -193,9 +199,11 @@ because the default names what the model did anyway.
 ## 10. Testing & Acceptance Criteria
 
 - `opencode-config.spec.ts`: the four words and no others; least thinking first whatever the
-  declared order; `none` and `auto` as Google spells them; no budget variant; no `includeThoughts`;
-  nothing for a model without thinking. `api-keys-panel.spec.ts`: the variants in the file handed
-  out, and the hint beside it that names `ctrl+t`.
+  declared order; `none` and `auto` as Google spells them; no budget variant; `includeThoughts`
+  on the model and every variant that thinks where the use case returns reasoning, and nowhere
+  where it does not (FR-3 as revised); nothing for a model without thinking.
+  `api-keys-panel.spec.ts`: the variants in the file handed out, and the hint beside it that names
+  `ctrl+t` and says whether the file asks for the reasoning.
 - `test_model_reference.py`: a model that thinks unasked is proposed its default, with `auto`
   declared where needed; one that thinks only when asked, nothing; a level the list does not
   declare is not proposed and the draft says why; the shipped copy carries exactly the table.

@@ -18,7 +18,9 @@ from aira_gateway.core.canonical import (
     ToolCallPart,
     ToolMode,
     ToolResultPart,
+    declares_results,
     paired_tool_results,
+    sets_harm_filters,
 )
 from aira_gateway.core.schema import ResponseSchema, to_json_schema
 from aira_gateway.upstreams.base import DialectUnsupported
@@ -200,11 +202,19 @@ def canonical_to_openai(
     ``output_cap_field`` is the platform's name for the output cap (`Routes.output_cap_field`): a
     platform whose reasoning deployments refuse `max_tokens` takes `max_completion_tokens`.
     """
+    # Google's harm filters have no field here (`FRD-155`): passed over, not answered without them.
+    unfiltered = sets_harm_filters(request)
+    if unfiltered is not None:
+        raise DialectUnsupported(unfiltered)
     body: dict[str, Any] = {
         "model": request.model,
         "messages": _wire_messages(request),
     }
     if request.tools:
+        # A function's result schema has no field here (`FRD-155`): passed over, not dropped.
+        no_word = declares_results(request)
+        if no_word is not None:
+            raise DialectUnsupported(no_word)
         body["tools"] = _wire_tools(request)
         choice = _tool_choice(request)
         if choice is not None:
@@ -355,8 +365,16 @@ def schema_refusal(schema: ResponseSchema) -> str | None:
 def canonical_to_openai_embedding(request: CanonicalEmbeddingRequest) -> dict[str, Any]:
     """`/v1/embeddings` takes the whole batch in one ``input`` array.
 
-    This format has no task type; `FRD-113` refuses an undeclared one before dispatch.
+    This format has no task type; `FRD-113` refuses an undeclared one before dispatch. Nor has it a
+    document title (`FRD-155`): a titled request is passed over, not embedded without its titles.
     """
+    if request.titled:
+        raise DialectUnsupported(
+            "This dialect has no word for a document's title, which the request gives "
+            f"{request.titled} of its texts. It is passed over rather than embedded without them: "
+            "the vectors would differ from what was asked for. A Gemini embedding model takes it, "
+            "or leave 'title' out."
+        )
     body: dict[str, Any] = {"model": request.model, "input": list(request.texts)}
     if request.dimensions is not None:
         body["dimensions"] = request.dimensions

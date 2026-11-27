@@ -19,19 +19,34 @@ Related reading: [`deployment/`](deployment/README.md) to get a stack running,
 
 ## 1. The surface
 
-Mounted at **`/v1beta`**, with Google's colon-verb convention — behind `/uc/<use-case>`, which a
-model call carries whatever its credential (§3):
+Mounted at **`/v1beta`** and at **`/v1`**, Google's two versions of the API, with Google's
+colon-verb convention — behind `/uc/<use-case>`, which a model call carries whatever its
+credential (§3). Google's JavaScript and Go SDKs call `/v1` unless told otherwise, its Python and
+Java SDKs `/v1beta`; either works, and `/v1beta` is what the examples below set explicitly:
 
 | | |
 |---|---|
 | `POST /v1beta/models/{model}:generateContent` | one answer |
 | `POST /v1beta/models/{model}:streamGenerateContent?alt=sse` | SSE, as the SDK expects |
 | `POST /v1beta/models/{model}:embedContent` · `:batchEmbedContents` | vectors |
+| `POST /v1beta/models/{model}:countTokens` | the model vendor's own count of a request, free |
 | `GET /v1beta/models` · `GET /v1beta/models/{model}` | the catalog |
+| `GET /v1/models` · `GET /v1/models/{model}` · `POST /v1/models/{model}:generateContent` · `:streamGenerateContent` · `:embedContent` · `:batchEmbedContents` · `:countTokens` | the same routes at `/v1` |
 | `GET /v1beta/me/budget` | not Google's: what the calling credential is allowed, and what is left of it |
 | `POST /v1/projects/{project}/locations/{location}/rankingConfigs/{config}:rank` | Google's ranking API: records ordered against a query and scored |
 
-Any other verb — `:countTokens`, for one — is answered `400` *"Unknown method"*.
+Any other verb is answered `400` *"Unknown method"*.
+
+**`:countTokens`** takes `contents`, or a whole `generateContentRequest` — one of the two — and
+answers `{"totalTokens": n}`: what the model's vendor counts a generation of that request as, its
+system instruction and functions included, from the vendor's own endpoint, which it does not
+charge for. It passes what a generation passes before anything leaves — the use case, the rate
+limit at one request, the use case's pipeline (a redactor sees the text before the vendor does),
+the model's release and region — and leaves a row in the audit trail that books no token and
+nothing against a budget. Only the model asked for is counted, never a fallback, and a model whose
+vendor counts nothing for this gateway (Claude, an OpenAI-compatible server) is refused by name
+rather than estimated. A model's `supportedGenerationMethods` names `countTokens` where it can be
+counted.
 
 **Ranking** is served on Google's own path, so Google's ranking client is pointed at the gateway by
 its endpoint, with an API key or token of the gateway as its credential — and names the use case
@@ -138,6 +153,11 @@ so is a key naming a use case other than its own.
 ---
 
 ## 4. Verified clients
+
+**A runnable program for each of the clients below** — Google's SDKs in Python, Java, JavaScript
+and Go, LangChain, LlamaIndex, LangChain4j, Spring AI, the AI SDK, the PHP client, RubyLLM,
+`gemini-rust`, plain HTTP in Python and C#, and curl — is in [`examples/`](../examples/README.md),
+each with every credential its client can carry.
 
 ### `google-genai` (the official Python SDK)
 
@@ -277,8 +297,11 @@ a session's title. Choose one with `ctrl+t`, or on the command line with `--vari
 reasoning. With none chosen, a model whose catalogue entry has a thinking default returns its
 reasoning as well: the default names what the model does when nothing is asked, so it costs nothing
 more, and the model reference proposes it wherever the vendor documents it. The reasoning comes
-back wherever the use case returns it. On a use case that does not, OpenCode 2 is refused once a
-variant is chosen, because it then asks for the reasoning itself. What shows is what the vendor
+back where the request asks for it and the use case returns it, so the file asks — on each model,
+and in each variant that thinks — wherever the use case returns reasoning, and nowhere else. A file
+downloaded before reasoning was turned off asks for what is then refused: download it again. On a
+use case that returns none, OpenCode 2 is refused once a variant is chosen, because it then asks
+for the reasoning itself. What shows is what the vendor
 sends: Gemini a summary of its thinking — Gemini 3.5 Flash for some steps only, and at `low` often
 none — GLM its thinking whole, and OpenAI's reasoning models on Azure nothing.
 
@@ -313,17 +336,94 @@ Three things that make OpenCode fail against a Gemini endpoint and are not the g
   configuration rolled out before every call had to name its use case lacks it, and every turn is
   answered `400` until it is added.
 
-### Anything else
+### Every other language and framework
 
-Any client that lets you override the base URL should work — that is the whole claim of a
-compatible surface — given a base URL that names its use case, `…/uc/<use-case>/v1beta`. AIRA has
-not been run against LangChain, LlamaIndex or the Vertex SDK, and this page will not pretend
-otherwise. If you try one, the fastest check is `GET /v1beta/models` with your key: a `200` means
-the credential is accepted, and lists what this gateway serves. It checks only that the credential
-may name the use case in the base URL, not that the gateway holds it yet — a model call does: a
-`400` *"Missing use case"* means the base URL lacks `/uc/<use-case>`, and a `403` saying the use
-case is *not known to this gateway* means its configuration has not arrived yet.
-Anything after that is the client's own configuration.
+Each client below was run against the gateway — generation, a stream, a function call, a
+structured answer, embeddings single and batched, speech where the client has a word for it,
+ranking where it is a ranking client — with the key in the client's own setting, a Keycloak token
+in the same setting, a token as `Authorization: Bearer`, a client-credentials token, and the use
+case by path and by header. The configuration shown is the one that was run. `<gateway>` is the
+gateway's address and `<use-case>` the use case's slug.
+
+| Language | Client | Pointed at AIRA by |
+| --- | --- | --- |
+| Python | `google-genai` (also through LlamaIndex, PydanticAI, Haystack, Google ADK) | `HttpOptions(base_url="https://<gateway>/uc/<use-case>", api_version="v1beta")` |
+| Python | any framework built on `google-genai` without a base-URL setting (Haystack) | `GOOGLE_GEMINI_BASE_URL=https://<gateway>/uc/<use-case>` and `GEMINI_API_KEY` |
+| Python | `google-generativeai` (deprecated) | `configure(api_key=…, transport="rest", client_options={"api_endpoint": "https://<gateway>/uc/<use-case>"})` |
+| Python | LangChain `langchain-google-genai` | `ChatGoogleGenerativeAI(model=…, google_api_key=…, base_url="https://<gateway>/uc/<use-case>")`, the same for `GoogleGenerativeAIEmbeddings`; headers in `additional_headers` |
+| Python | LiteLLM (and what runs on it) | `completion(model="gemini/<model>", api_key=…, api_base="https://<gateway>/uc/<use-case>/v1beta")`; headers in `extra_headers` |
+| Python | PydanticAI | `GoogleProvider(api_key=…, base_url="https://<gateway>/uc/<use-case>")` |
+| Python | Google ADK | `Gemini(model=…, base_url="https://<gateway>/uc/<use-case>")`, the key in `GOOGLE_API_KEY` |
+| Java | `com.google.genai` (also under Spring AI) | `Client.builder().apiKey(…).httpOptions(HttpOptions.builder().baseUrl("https://<gateway>/uc/<use-case>").apiVersion("v1beta").build())`; Spring AI's chat and embedding models take that `Client` (`genAiClient(…)`) |
+| Java | LangChain4j `langchain4j-google-ai-gemini` | `GoogleAiGeminiChatModel.builder().apiKey(…).baseUrl("https://<gateway>/uc/<use-case>/v1beta")`; headers in `customHeaders` |
+| Go | `google.golang.org/genai` | `HTTPOptions: genai.HTTPOptions{BaseURL: "https://<gateway>/uc/<use-case>"}` with `Backend: genai.BackendGeminiAPI` |
+| Go | `github.com/google/generative-ai-go` (deprecated) | `option.WithEndpoint("https://<gateway>/uc/<use-case>")`, `option.WithAPIKey(…)` |
+| Go | LangChainGo `llms/googleai` | `googleai.WithAPIKey(…)`, the endpoint as an option of the underlying client (`option.WithEndpoint`), and `googleai.WithHarmThreshold(googleai.HarmBlockUnspecified)` — see below |
+| JavaScript | `@google/genai` | `httpOptions: { baseUrl: "https://<gateway>/uc/<use-case>" }` |
+| JavaScript | `@google/generative-ai` (deprecated), and LangChain.js on it | `getGenerativeModel({ model }, { baseUrl: "https://<gateway>/uc/<use-case>" })`; LangChain.js `new ChatGoogleGenerativeAI({ model, apiKey, baseUrl })` |
+| JavaScript | Genkit `@genkit-ai/google-genai` | `googleAI({ apiKey, baseUrl: "https://<gateway>/uc/<use-case>", apiVersion: "v1beta" })` |
+| JavaScript | Gemini CLI | `GOOGLE_GEMINI_BASE_URL=https://<gateway>/uc/<use-case>`, `GEMINI_API_KEY`, the API-key sign-in |
+| PHP | `google-gemini-php/client` | `Gemini::factory()->withApiKey(…)->withBaseUrl('https://<gateway>/uc/<use-case>/v1beta/')`; headers with `withHttpHeader` |
+| Ruby | `ruby_llm` | `gemini_api_key`, `gemini_api_base = "https://<gateway>/uc/<use-case>/v1beta"` |
+| Rust | `gemini-rust` | `GeminiBuilder::new(key).with_base_url("https://<gateway>/uc/<use-case>/v1beta/")` — with the final `/` |
+| Rust | `genai` | a `ServiceTargetResolver` whose endpoint is `https://<gateway>/uc/<use-case>/v1beta/` |
+
+**Google's ranking client** is pointed at the gateway by its endpoint and REST transport, in every
+language: Python `RankServiceClient(transport="rest", client_options=ClientOptions(api_endpoint="https://<gateway>/uc/<use-case>", api_key=…))`,
+Java `RankServiceSettings.newHttpJsonBuilder().setEndpoint("https://<gateway>/uc/<use-case>").setApiKey(…)`,
+Go `discoveryengine.NewRankRESTClient(ctx, option.WithEndpoint("https://<gateway>/uc/<use-case>"), option.WithAPIKey(…))`.
+The Node client takes a host and a port and no path: it names the use case in the
+`X-AIRA-Use-Case` header (`otherArgs.headers`). A token goes where a key would, or as the
+client's credentials (`google.oauth2.credentials.Credentials(token=…)` in Python, a fixed
+`AccessToken` in Java, an `oauth2.StaticTokenSource` in Go).
+
+**A Keycloak token is read wherever a key is** — `x-goog-api-key`, `?key=` or a bearer header —
+so a client whose only credential setting is its key can carry a person's or a service account's
+token there. A token expires (Keycloak's default is minutes, not days), so a long-running
+application refreshes it; one that cannot is better served by a key.
+
+What the clients themselves get wrong, measured:
+
+- **gRPC is not served.** The deprecated Python SDK uses gRPC unless told `transport="rest"`, and
+  so do Google's Vertex SDKs; the gateway speaks REST alone.
+- **Vertex mode is not served.** A client in Vertex mode — `google-genai` with `vertexai=True`,
+  Spring AI's and LangChain4j's Vertex modules, the Vertex SDK — builds Vertex AI's paths
+  (`…/projects/{project}/locations/{location}/publishers/…`). The gateway answers them `404` saying
+  so; configure the client for the Gemini API instead, as above.
+- **LiteLLM** (1.80) sends no credential at all on an embedding when `api_base` is set — neither
+  its `api_key` nor `extra_headers` — so its embeddings cannot reach the gateway; and its speech
+  call ignores `api_base` and goes to Google with the key it was given, a gateway key included.
+- **LangChainGo** sends a safety threshold for every category on every call: carried to a Gemini
+  model, and refused by a model of another vendor (§5); with its threshold "unspecified" it sends
+  none. It has no endpoint option of its own.
+- **LangChain4j's embedding model** and the Gemini CLI have no header setting: name the use case in
+  the path.
+- **In Go's deprecated SDK**, `option.WithHTTPClient` replaces the transport that adds the key.
+- **The `gemini-ai` Ruby gem** has no base-URL setting.
+- **The PHP client's** model listing fails on a catalogue entry without declared limits.
+- **Genkit** sends the speech model `gemini-2.5-flash-tts` to Google's Interactions API
+  (`/v1beta/interactions`), which the gateway does not serve; through `generateContent` the same
+  model speaks.
+- **Semantic Kernel's Google AI connector** in Python (1.36) cannot be pointed anywhere: it runs
+  Google's deprecated SDK over gRPC with no endpoint setting, and sent its key to Google.
+- **C#** was not run: Google's .NET SDK, `Mscc.GenerativeAI` and Semantic Kernel's .NET connector
+  are unmeasured.
+
+**A thinking model's reasoning comes back only when the request asks for it**
+(`includeThoughts: true`), as Google answers (§5) — as `thought: true` parts before the answer.
+Google's current SDKs, LlamaIndex, LiteLLM, PydanticAI, Haystack, Spring AI, Genkit, the AI SDK,
+LangChain.js, `ruby_llm`, the Rust `genai` crate and the Gemini CLI keep such parts apart. The
+deprecated SDKs in Python, JavaScript and Go, LangChain4j, `gemini-rust`, the PHP client and a
+hand-written integration that reads `parts[0].text` would show the reasoning as the answer, or fail
+on it, and LangChain in Python returns the answer as a list of blocks: with these, do not ask for
+it.
+
+If a client of yours is not listed, the fastest check is `GET /v1beta/models` with your key: a
+`200` means the credential is accepted, and lists what this gateway serves. It checks only that the
+credential may name the use case in the base URL, not that the gateway holds it yet — a model call
+does: a `400` *"Missing use case"* means the base URL lacks `/uc/<use-case>`, and a `403` saying
+the use case is *not known to this gateway* means its configuration has not arrived yet. Anything
+after that is the client's own configuration.
 
 ---
 
@@ -336,6 +436,22 @@ Anything after that is the client's own configuration.
 cannot take comes back as its 400, with its reason. Both are bounded alike: 32 KiB, eight levels,
 256 properties. `thinkingLevel` (`low`, `high`, …) is the model's own level word and must be one the
 catalogue declares for the model. `tools` may be a list or a single tool object.
+
+**Every spelling Google reads is read here.** Google's API is protobuf behind proto3's JSON
+mapping, and clients use each spelling it allows, so each is the same request: a field by its
+camelCase name or its proto name in snake_case (`function_declarations`, `response_mime_type`); an
+enum by its name or its number (`"type": 6` for an object, `"taskType": 1`, `"mode": 2`); a field at
+its default — `null`, `[]`, `""`, `false`, `0`, `…_UNSPECIFIED` — as a field not sent; one object
+where a list is expected (`"contents": {…}`, `"parts": {…}`) as a list of one; and the model's name
+in the body, where it names the model of the URL. A refusal names the field as Google documents it,
+and every bound below counts every spelling.
+
+**What a function returns** — `response` in Google's subset or `responseJsonSchema` in JSON Schema,
+which Google's SDKs fill from a typed function's return type whenever they run its calls themselves
+— is carried to a Gemini model; Claude and the OpenAI dialect have no word for it, and are passed
+over by name. **A document's `title`** on an embedding is carried to Google's embedding models —
+read first by the use case's pipeline, like the text it titles — and an OpenAI-dialect model is
+passed over by name.
 
 **How much one request may hold.** At most 128 function declarations across its tools — Google's
 own maximum for a request to Gemini — 10 000 turns in `contents` and 20 000 parts across them, and a
@@ -376,7 +492,10 @@ So there are three answers, and never a silent one:
 * **carried** — portable across the models AIRA serves;
 * **refused by name, with the reason** — out of scope by design:
   * `cachedContent` — provider-side state;
-  * `safetySettings` — a safety threshold that holds on one vendor and silently not on its fallback;
+  * Google's own tools — `googleSearch`, `codeExecution`, `urlContext`, `googleSearchRetrieval`,
+    `computerUse`, `fileSearch`, `googleMaps` — which run at Google, even as an empty object, since
+    its presence is what switches the tool on; and a function declared `NON_BLOCKING`, a behaviour of
+    the Live API;
   * parts as `fileData`, `executableCode` or `codeExecutionResult` — attachments go inline, and code
     execution is not offered;
   * `responseLogprobs`, `logprobs`, `mediaResolution`, `enableEnhancedCivicAnswers`;
@@ -390,14 +509,24 @@ So there are three answers, and never a silent one:
     were asked for;
   * a `thinkingConfig` at the top level rather than inside `generationConfig`;
 * **the candidate is skipped** — the model or its dialect has no word for it, so a fallback chain
-  moves on rather than answering with less than was asked for.
+  moves on rather than answering with less than was asked for. `safetySettings` is one: Google's
+  five Gemini categories and five thresholds, by name or by number, reach a Gemini model as sent,
+  and a Claude or OpenAI-compatible model is passed over by name — or refuses the request where
+  nothing is behind it. An entry naming no threshold, or "unspecified", asks for the model's default
+  and is left out, so `safetySettings: []`, which LangChain and Google's deprecated JavaScript SDK
+  send on every call, reaches every model. A category Gemini does not filter, or a threshold Google
+  does not name, is refused naming what is accepted.
 
 Three that surprise people:
 
-* **`includeThoughts`** follows the use case. A thinking model's reasoning comes back by default,
-  buffered or streamed, as `thought: true` parts before the answer, and is stored with it; `false`
-  withholds it. `true` where the use case has turned reasoning off is refused by name, rather than
-  answered without the thoughts.
+* **`includeThoughts`** is the question, and the use case the answer. With `true`, a thinking
+  model's reasoning comes back, buffered or streamed, as `thought: true` parts before the answer,
+  and is stored with it; with `false`, or nothing, none comes back — as Google answers, so a client
+  that does not know `thought` parts is never shown it as the answer (§4). `true` where the use
+  case has turned reasoning off is refused by name, rather than answered without the thoughts. On a
+  Claude model of the budget generation (4.5 and earlier), a function call is continued with the
+  caller's own thinking budget only where the request asks for the reasoning: the model's thinking
+  block travels with the call, and it is the reasoning.
 * **speech is carried.** `responseModalities: ["AUDIO"]` with a `speechConfig` returns one
   `inlineData` part of audio from a model the catalogue declares as speaking, buffered or streamed.
   The audit trail keeps the audio's description and hash, not the audio.

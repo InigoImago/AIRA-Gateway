@@ -515,6 +515,26 @@ describe('UseCaseDetail — the keys tab', () => {
     expect(Object.keys(config.provider.aira.models)).toEqual(['qwen2.5:3b']);
   });
 
+  it('asks for the reasoning in the OpenCode file exactly where the use case returns it', () => {
+    // `FRD-135` §5.7: returned to a caller who asks; asked where it is off, refused by name.
+    const models = of([{ name: 'qwen2.5:3b', capabilities: ['generate', 'tools'] }]);
+    const fileOf = (reasoning: boolean | undefined) => {
+      const keys = keysPanel(
+        setup({
+          get: of({ ...USE_CASE, allowed_models: ['qwen2.5:3b'], include_reasoning: reasoning }),
+          models,
+        }),
+      );
+      keys.issueKey();
+      return keys.openCodeConfig(keys.issued()!);
+    };
+
+    expect(fileOf(true)).toContain('includeThoughts');
+    expect(fileOf(false)).not.toContain('includeThoughts');
+    // Unknown is not "on": a file asking where reasoning is off fails every request.
+    expect(fileOf(undefined)).not.toContain('includeThoughts');
+  });
+
   it('still issues a key when the catalog cannot be read', () => {
     // The catalogue is a nicety on this form; the key is the point, and the config falls back to
     // a named model.

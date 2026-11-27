@@ -74,7 +74,9 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
 ### Calling a model
 
 - **Two API surfaces on one core.** The Gemini dialect (`/v1beta/models/…:generateContent`,
-  `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents`, and `GET /v1beta/models`) and
+  `:streamGenerateContent`, `:embedContent`, `:batchEmbedContents`, `:countTokens` with the
+  vendor's own count, and `GET /v1beta/models`, the same at `/v1`), read in every spelling Google's
+  own API reads, and
   the predecessor KIRA contract (`/kira/api/external`), both served by the same provider-agnostic
   pipeline. Neither is a copy of the other: a test compares the audit rows the two produce.
   **Reranking** is on both — the KIRA surface's `/rerank`, and Google's ranking API
@@ -91,8 +93,8 @@ the [gap analysis](docs/GAP-ANALYSIS.md).
 - **Thinking, structured output, batch embedding with task types.** Declared per model. One flag
   says *whether*; three vendors do each of these three unrelated ways the caller never sees.
   Thinking is a **word** — `low`, `high`, whatever the vendor calls it — checked against the model
-  itself rather than translated through a token table nobody could fill. Whether the
-  reasoning comes back is the use case's decision.
+  itself rather than translated through a token table nobody could fill. The reasoning comes
+  back where the caller asks for it and the use case allows it, as Google answers.
 - **Speech output.** `responseModalities: ["AUDIO"]` from a model the catalogue declares as
   speaking; the audit trail keeps the audio's description and hash, not the audio.
 - **Tool calling**, carried and never executed, off by default per use case. **Prompt caching**,
@@ -247,6 +249,7 @@ Full picture: [**Architecture**](docs/ARCHITECTURE.md) ·
 | [**Logging**](docs/LOGGING.md) | Every line a process writes, every field, and how a person and an address are written — for the log store and the SIEM |
 | [**Migrating a KIRA client**](docs/MIGRATION-KIRA.md) | Use case, released models, members, key — and the use case in the base URL |
 | [**Pointing a Gemini client at AIRA**](docs/MIGRATION-GEMINI.md) | The same steps, for `google-genai` and anything that speaks it |
+| [**Examples**](examples/README.md) | A short program per language and framework — Python, Java, JavaScript, Go, C#, PHP, Ruby, Rust, curl — with every credential |
 | [**Operations**](docs/DEPLOYMENT.md) | Deploying it: §0 is a runbook for an integration, in order, with the command that checks each step. Then topics, jobs, degradation, backups |
 | [**Sizing**](docs/DEPLOYMENT.md#1a-sizing-what-one-instance-carries) | What one instance carries, measured: the CPU a request of each workload costs, the three places a deployment gives way, and what the audit trail fills |
 | [**Releasing**](docs/DEPLOYMENT.md#1b-releasing-cutting-a-version-and-publishing-the-images) | Cutting a version: an annotated tag whose message is the release notes, checked before anything is published. Where the version lives, what gates a release, and what a failure leaves behind |

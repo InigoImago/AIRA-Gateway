@@ -905,7 +905,8 @@ one), cache tokens count as input, and there are no embeddings.
   every later model require, with the level as its effort. The reference list declares each Claude
   model this way.
 - **Its reasoning** is returned, buffered or streamed, and stored with the answer under the same
-  `store_payloads` gate when the use case's `include_reasoning` is on, which is the default.
+  `store_payloads` gate, where the request asks for it and the use case's `include_reasoning` is on,
+  which is the default.
 - **Sampling.** The same models answer `400` to `top_k`, to a `temperature` other than 1 and to a
   `top_p` below 0.99. Their catalogue entry says *fixed sampling*, and the gateway sends them no
   request that sets one: it moves on to the next model in the chain, or refuses naming the control.
@@ -934,7 +935,9 @@ reasoning is returned only to a use case that asked for it, and there are no emb
   `gemini-2.5-flash-lite-preview-tts` answer in `europe-west1` and `europe-west4`;
   `gemini-2.5-flash-preview-tts` and `gemini-2.5-pro-preview-tts` only in `us-central1`.
 - Catalogue a speech model with the capability `speech` and without `generate`. It then answers
-  only a request for audio, and a text request to it is refused by name.
+  only a request for audio, and a text request to it is refused by name. Leave *fixed sampling*
+  unticked: Google answers a temperature from these models with speech. The model reference drafts
+  them so, and offers it for an entry on file that is ticked.
 - The audit trail keeps a description and hash of the audio, not the audio.
 
 **Ranking models** — `semantic-ranker-default-004` and later — are Google's ranking API, which the
@@ -2053,9 +2056,10 @@ access one click above and needs none of this; a SIEM filters flat events by fie
 these attributes the model access would say only *somebody POSTed to a host and got a 200* — not
 even which model, since an OpenAI-compatible upstream carries that in the request body.
 
-`aira.model_call.purpose` is one of five: `serve` (answering a caller), `pipeline` (a classifier or
-redactor the pipeline ran), `embed`, `rerank` (a ranking request), `probe` (an operator's thinking
-check, `:checkThinking`). A
+`aira.model_call.purpose` is one of six: `serve` (answering a caller), `pipeline` (a classifier or
+redactor the pipeline ran), `embed`, `rerank` (a ranking request), `count` (a caller's
+`:countTokens`, which sends the whole request to the vendor to be counted), `probe` (an operator's
+thinking check, `:checkThinking`). A
 record is one HTTP call: a fallback chain marks **each attempt**, so a chain that tried three models
 leaves three records naming three models, and a regional failover inside one attempt leaves one per
 region it tried.

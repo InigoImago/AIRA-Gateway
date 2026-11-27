@@ -638,13 +638,57 @@ export class ModelEditor {
    */
   protected readonly proposedThinkingDefault = computed<string | null>(() => {
     if (!this.editing() || this.thinkingDefault()) return null;
-    const platform = this.provider().trim();
-    const name = this.name().trim();
-    const word =
-      this.reference()?.entries.find((entry) => entry.platform === platform && entry.name === name)
-        ?.declaration.thinking?.default?.mode ?? null;
+    const word = this.referenceOnFile()?.declaration.thinking?.default?.mode ?? null;
     return word === AUTO_THINKING || (word && this.thinkingLevels().includes(word)) ? word : null;
   });
+
+  /** The reference's entry for a model on file, by where it lives and its id, if it has one. */
+  private readonly referenceOnFile = computed<ReferenceEntry | null>(() => {
+    if (!this.editing()) return null;
+    const platform = this.provider().trim();
+    const name = this.name().trim();
+    return (
+      this.reference()?.entries.find(
+        (entry) => entry.platform === platform && entry.name === name,
+      ) ?? null
+    );
+  });
+
+  /**
+   * The task types the reference proposes for an embedding model on file that declares none
+   * (`FRD-155`): what its vendor documents the model taking. Without them a request naming a task
+   * type is refused — every embedding from LangChain names one. Offered, never applied.
+   */
+  protected readonly proposedEmbedding = computed<EmbeddingDeclaration | null>(() => {
+    if (!this.hasCapability('embed') || this.taskTypes().trim()) return null;
+    const proposed = this.referenceOnFile()?.declaration.embedding ?? null;
+    return proposed?.task_types?.length ? proposed : null;
+  });
+
+  /** Take the proposal: its task types, batches where it proposes them, and its widths where the
+   *  form names none — a width on file is somebody's measurement. */
+  protected adoptProposedEmbedding(): void {
+    const proposed = this.proposedEmbedding();
+    if (!proposed) return;
+    this.taskTypes.set((proposed.task_types ?? []).join(', '));
+    if (proposed.supports_batch) this.supportsBatch.set(true);
+    if (!this.dimensions().trim() && proposed.dimensions?.length) {
+      this.dimensions.set(proposed.dimensions.join(', '));
+    }
+  }
+
+  /**
+   * Whether the reference lets a model on file sample that the form marks as fixed (`FRD-155`):
+   * the gateway refuses every sampling control for such a model, and Google answers a temperature
+   * from its speech models. Offered, never applied — a person may have measured a refusal.
+   */
+  protected readonly proposedFreeSampling = computed<boolean>(
+    () => this.fixedSampling() && this.referenceOnFile()?.declaration.fixed_sampling === false,
+  );
+
+  protected adoptFreeSampling(): void {
+    this.fixedSampling.set(false);
+  }
 
   /** Take the proposal — and `auto` with it where the form does not offer it yet. */
   protected adoptProposedThinkingDefault(): void {
@@ -694,6 +738,7 @@ export class ModelEditor {
       name: entry.name,
       thinking: declared.thinking,
       attachments: declared.attachments,
+      embedding: declared.embedding ?? null,
     } as CatalogModel);
 
     const filled = ['name', 'display name', 'publisher'];
@@ -702,6 +747,7 @@ export class ModelEditor {
     if (declared.capabilities.length) filled.push('capabilities');
     if (declared.thinking) filled.push('thinking');
     if (declared.attachments) filled.push('documents and images');
+    if (declared.embedding) filled.push('embedding');
     if (declared.fixed_sampling) filled.push('fixed sampling');
 
     const prices = entry.prices;

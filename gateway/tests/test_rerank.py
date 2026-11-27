@@ -196,11 +196,14 @@ async def test_ids_only_leaves_the_records_out() -> None:
     ("path", "body", "status"),
     [
         (NATIVE, {k: v for k, v in _native().items() if k != "model"}, 400),
+        # Labels for a Google bill, refused by name: the gateway ranks in its own project.
         (NATIVE, _native(userLabels={"a": "b"}), 400),
-        (NATIVE, _native(topN=0), 400),
+        # `0` is proto3's default and Google's "every record" (`FRD-155`); a negative limit is a
+        # mistake, and refused rather than read as one.
+        (NATIVE, _native(topN=-1), 400),
         (NATIVE.replace(":rank", ":search"), _native(), 404),
     ],
-    ids=["no-model", "a-field-not-modelled", "topN-zero", "another-method"],
+    ids=["no-model", "labels", "topN-negative", "another-method"],
 )
 async def test_googles_path_refuses_what_it_cannot_honour(
     path: str, body: dict[str, Any], status: int

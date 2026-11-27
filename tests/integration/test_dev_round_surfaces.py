@@ -251,15 +251,6 @@ async def test_a_carried_generation_option_is_served(
             "candidateCount",
             id="candidateCount",
         ),
-        pytest.param(
-            {
-                "safetySettings": [
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}
-                ]
-            },
-            "safetySettings",
-            id="safetySettings",
-        ),
         pytest.param({"cachedContent": "caches/abc"}, "cachedContent", id="cachedContent"),
     ],
 )
@@ -274,6 +265,21 @@ async def test_an_option_out_of_scope_is_refused_by_name(
 
     assert response.status_code == 400, response.text[:300]
     assert names.lower() in _envelope(response, "gemini").lower()
+
+
+async def test_a_harm_filter_this_model_cannot_apply_is_refused_by_name(
+    governed: Governed,
+) -> None:
+    """`FRD-155`: carried to Gemini; this model is served over the OpenAI dialect, which has no
+    such filter, so the request is refused naming the field rather than answered unfiltered."""
+    filtered = {
+        **_gemini(),
+        "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}],
+    }
+    response = await governed.generate(filtered)
+
+    assert response.status_code == 400, response.text[:300]
+    assert "safetysettings" in _envelope(response, "gemini").lower()
 
 
 @pytest.mark.parametrize(

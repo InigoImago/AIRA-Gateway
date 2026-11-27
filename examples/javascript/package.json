@@ -1,0 +1,16 @@
+{
+  "name": "aira-examples-javascript",
+  "private": true,
+  "description": "Gemini clients for JavaScript and TypeScript, pointed at AIRA",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.128",
+    "@google/genai": "^3.6.1",
+    "@langchain/core": "^1.5.1",
+    "@langchain/google-genai": "^2.3.7",
+    "ai": "^7.0.183"
+  }
+}

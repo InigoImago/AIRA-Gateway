@@ -189,7 +189,7 @@ recipients = "By role and use case (see “Who has access within the organisatio
 
 [activities.content]
 title = "Request and response content"
-data = "The text of the request and of the response, including the model's reasoning where the use case asks for it. Attached files and embedding vectors are not stored, only their size and a fingerprint. Credentials such as keys and tokens are removed before storage; other personal details in your text remain."
+data = "The text of the request and of the response, including the model's reasoning where the request asks for it and the use case allows it. Attached files and embedding vectors are not stored, only their size and a fingerprint. Credentials such as keys and tokens are removed before storage; other personal details in your text remain."
 purpose = "Investigating security incidents and errors, and traceability within the use case. {content_storage}"
 legal_basis = "Art. 6(1)(f) GDPR (information security and troubleshooting); Art. 6(1)(b) GDPR where the use case serves the performance of your duties."
 retention = "For as long as the use case specifies (1 to 3650 days), and for requests without a use case {default_retention}. The content is then deleted; the request record remains for the period that applies to it."

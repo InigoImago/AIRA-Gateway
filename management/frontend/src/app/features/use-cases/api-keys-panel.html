@@ -164,8 +164,14 @@
       </span>
       <span class="field__hint" data-testid="thinking-variants-hint">
         <strong>The model's thinking</strong>: each model's thinking settings are in the file as
-        OpenCode variants — <code>ctrl+t</code> switches between them — and the model's reasoning
-        shows in OpenCode wherever this use case returns it.
+        OpenCode variants — <code>ctrl+t</code> switches between them.
+        @if (reasoning()) {
+          The file asks for the model's reasoning, which this use case returns, so OpenCode shows
+          it. Should reasoning be turned off here, those requests are refused — download the file
+          again.
+        } @else {
+          This use case returns no reasoning, so the file asks for none.
+        }
       </span>
       <span class="field__hint" data-testid="budget-plugin-hint">
         <strong>The budget plugin</strong> shows what is left of this use case's allowance in

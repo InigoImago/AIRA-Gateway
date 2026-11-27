@@ -33,6 +33,7 @@ from aira_gateway.api.serving.answers import (
 )
 from aira_gateway.api.serving.body import BodyTooComplex, ensure_body_is_encodable, json_body
 from aira_gateway.api.serving.context import (
+    COUNT_METHOD,
     attribution_of,
     catalog_of,
     declared_model,
@@ -71,6 +72,7 @@ from aira_gateway.api.serving.pipeline_run import (
 )
 from aira_gateway.api.serving.prepare import (
     Prepared,
+    count,
     embed_along_chain,
     fitting,
     prepare_for_dispatch,
@@ -90,6 +92,7 @@ from aira_gateway.api.serving.refusals import (
 from aira_gateway.api.serving.streaming import AccountedStream, Opening, StreamAccounting
 
 __all__ = [
+    "COUNT_METHOD",
     "EMBEDDING_METHODS",
     "REFUSALS",
     "STREAM_HEADERS",
@@ -110,6 +113,7 @@ __all__ = [
     "catalog_of",
     "check_declaration",
     "check_structured_result",
+    "count",
     "declared_model",
     "declared_routing",
     "deprecation_headers",

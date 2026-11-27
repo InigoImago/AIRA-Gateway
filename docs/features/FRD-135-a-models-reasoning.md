@@ -1,6 +1,6 @@
 # FRD-135 — A model's reasoning: counted always, shown when a use case says so
 
-> Phase: 8 · Status: **Done** — on by default (§5.6) · Owner: Vadim Scheibe
+> Phase: 8 · Status: **Done** — returned when asked (§5.7) · Owner: Vadim Scheibe
 > Related: `FRD-111` (thinking control), `FRD-119` §5.4 (the decision this revises),
 > `FRD-133` (cache tokens — the same invariant), `ADR-0016` (why stored content is gated),
 > `FRD-122` (the audit row), `FRD-406` (stored prompts)
@@ -61,17 +61,18 @@ and an installation watching its own agents has no way to see why a model did wh
   it whole is what lets every existing budget, report and index carry on meaning the same thing.
   `completion_tokens` therefore *includes* thinking, which is what the provider bills.
 - **FR-2 On the audit row and in reporting**, beside the other token columns.
-- **FR-3 A use-case switch**, `include_reasoning`, default **on** (§5.6). Carried to the gateway on
-  the config event like every other use-case setting.
+- **FR-3 A use-case switch**, `include_reasoning`, default **on** (§5.6): whether the reasoning
+  may come back, to a caller who asks for it (§5.7). Carried to the gateway on the config event
+  like every other use-case setting.
 - **FR-4 Off means refused, not dropped.** With the switch off, `includeThoughts: true` is refused
   by name exactly as today (`FRD-124`): answering 200 with no thoughts is the silent drop. The same
   holds for a **stream**, whatever the switch says: streamed answers carry no reasoning (§5.4), so
   `includeThoughts: true` on `streamGenerateContent` is refused rather than answered without it.
-- **FR-5 On means returned and stored like the answer.** The thoughts travel in the response and
-  are written into the stored response payload — same column, same `store_payloads` gate, same
-  retention, same role check on reading (`ADR-0016`, `FRD-406`). No second path. An explicit
-  `includeThoughts: false` withholds them — Google's own meaning of the field, and a caller who
-  declined must not receive, or have stored, text it did not ask for. Thoughts are asked for only
+- **FR-5 On and asked for means returned and stored like the answer.** The thoughts travel in the
+  response and are written into the stored response payload — same column, same `store_payloads`
+  gate, same retention, same role check on reading (`ADR-0016`, `FRD-406`). No second path. A
+  request that sends no `includeThoughts: true` receives none (§5.7) — Google's own meaning of the
+  field, and a caller who did not ask must not receive, or have stored, text it did not ask for. Thoughts are asked for only
   where thinking is on for the request, by the caller's setting or the model's declared default.
   Google refuses `includeThoughts` whenever the model is not thinking: with thinking off, for a
   speech model, and for a model that thinks only when given a budget. A model with no declared
@@ -181,10 +182,33 @@ by default, because the smallest set of use cases that may declare functions is 
 - **Requests without a use case.** They have no switch, so they get no reasoning, and
   `includeThoughts: true` is refused by name.
 
+### 5.7 Only when asked (2026-11-27)
+
+The owner's decision, reversing §5.6's default and keeping its switch: **the reasoning comes back
+where the request asks for it (`includeThoughts: true`) and the use case allows it**, as Google
+answers. Measured first (`FRD-155` §11): with the reasoning unasked, the deprecated SDKs in Python,
+JavaScript and Go, LangChain4j, `gemini-rust`, LangChain in Python, the PHP client and every
+integration reading `parts[0].text` showed the thought summary as the answer, or failed on it.
+
+- **What callers see.** Nothing they did not ask for. `includeThoughts: true` returns it where the
+  use case allows it and is refused by name where it does not, as before; `false` and no field
+  return none.
+- **OpenCode** asks only where its file says so. The file the console hands out asks on every model
+  and in each variant that thinks, wherever the use case returns reasoning (`FRD-151` FR-3), and
+  both generations show it again — measured.
+- **Where it is kept.** Only what was returned is stored, so a caller that did not ask leaves no
+  reasoning in the stored payload; the privacy notice's edition of the day says so.
+- **A Claude model's thinking block** goes back to the next turn inside a call's signature only
+  where the reasoning was returned, since the envelope can be read (`FRD-152`). A Claude model of
+  the budget generation (4.5 and earlier) therefore continues a function call with the caller's own
+  budget only for a caller who asks for the reasoning, and refuses otherwise saying so; a default
+  budget goes on without thinking, as it did for a caller who declined.
+- **The KIRA surface** has no field to ask with, so it receives none — as its contract always said.
+
 ## 6. Data Model
 
-- `usecases.include_reasoning` (boolean, default true since §5.6) on both planes, on the config
-  event.
+- `usecases.include_reasoning` (boolean, default true since §5.6; whether a request may ask since
+  §5.7) on both planes, on the config event.
 - `request_logs.reasoning_tokens` (integer, nullable) — nullable because every row written before
   this existed knows nothing, and zero would claim the model did not think.
 
@@ -211,7 +235,8 @@ by default, because the smallest set of use cases that may declare functions is 
 
 - A provider response carrying thoughts produces `completion_tokens` **including** them and
   `reasoning_tokens` equal to them; cost equals the output rate applied to the whole.
-- A new use case returns reasoning and cannot declare functions. Turned off, `includeThoughts: true`
+- A new use case returns reasoning to a caller who asks, and none to one who does not (§5.7); it
+  cannot declare functions. Turned off, `includeThoughts: true`
   is refused by name, hermetically and on the live stack (`tests/integration/`).
 - The migration switches every live use case on and announces each with the complete event; a
   retired one is not announced.

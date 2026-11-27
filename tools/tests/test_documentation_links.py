@@ -26,6 +26,7 @@ PAGES = [
     ROOT / "README.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "CLAUDE.md",
+    ROOT / "examples" / "README.md",
 ]
 
 #: `[text](target)` — markdown links only. Bare URLs and image sources are handled below.

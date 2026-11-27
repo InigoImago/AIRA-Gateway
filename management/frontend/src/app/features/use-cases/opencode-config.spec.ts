@@ -1,4 +1,4 @@
-import { CatalogModel } from '../../core/api/models';
+import { CatalogModel, ThinkingDeclaration } from '../../core/api/models';
 import { openCodeModel, openCodeVariants } from './opencode-config';
 
 /**
@@ -258,14 +258,37 @@ describe('openCodeVariants', () => {
     ).toBeUndefined();
   });
 
-  it('never asks for the reasoning itself, which the use case decides', () => {
-    // `includeThoughts: true` is refused by name where the use case does not return reasoning.
-    const offered = openCodeVariants({
+  it('asks for the reasoning on every setting that thinks, where the use case returns it', () => {
+    // `FRD-135` §5.7: returned to a caller who asks, as Google answers. Off thinks nothing, so it
+    // asks for nothing.
+    const offered = openCodeVariants({ modes: ['disabled', 'auto'], levels: ['low'] }, true);
+
+    expect(offered).toEqual({
+      none: { thinkingConfig: { thinkingBudget: 0 } },
+      low: { thinkingConfig: { thinkingLevel: 'low', includeThoughts: true } },
+      auto: { thinkingConfig: { thinkingBudget: -1, includeThoughts: true } },
+    });
+  });
+
+  it('asks for no reasoning where the use case returns none', () => {
+    // There `includeThoughts: true` is refused by name.
+    const declaration: ThinkingDeclaration = {
       modes: ['disabled', 'auto'],
       levels: ['minimal', 'low', 'medium', 'high'],
-    });
+    };
 
-    expect(JSON.stringify(offered)).not.toContain('includeThoughts');
+    expect(JSON.stringify(openCodeVariants(declaration))).not.toContain('includeThoughts');
+    expect(JSON.stringify(openCodeVariants(declaration, false))).not.toContain('includeThoughts');
+  });
+
+  it('asks for the reasoning on the model, for a request with no variant chosen', () => {
+    // A model that thinks unasked is sent no thinking setting at all; its reasoning shows only if
+    // the request asks for it.
+    expect(openCodeModel(model(), 'USD', true).options).toEqual({
+      thinkingConfig: { includeThoughts: true },
+    });
+    expect(openCodeModel(model(), 'USD', false)).not.toHaveProperty('options');
+    expect(openCodeModel(model(), 'USD')).not.toHaveProperty('options');
   });
 
   it('writes no variants for a model that declares no thinking', () => {

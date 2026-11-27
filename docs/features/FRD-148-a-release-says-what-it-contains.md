@@ -68,7 +68,8 @@ Every release now carries a **software bill of materials** in two places:
   `<image>-<version>.cdx.json`.
 - **FR-3** It writes one more, `aira-source-<version>.cdx.json`, from the tagged commit's checkout:
   the lock files of the Python workspace, the console and the GitHub Actions the workflow uses. The
-  browser suite and the client harnesses (`e2e/`, `tools/clients/`) are test tooling and excluded.
+  browser suite and the client harnesses (`e2e/`, `tools/clients/`) are test tooling and excluded,
+  and so are the examples for every framework (`examples/`, since `FRD-155`).
 - **FR-4** A document is refused, and the release stops, unless it is CycloneDX, specification 1.6,
   names the component it describes, and lists at least one package.
 - **FR-5** Each document has a `.sha256` beside it, in `sha256sum` format.

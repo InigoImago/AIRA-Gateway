@@ -16,7 +16,9 @@ from aira_gateway.core.canonical import (
     ToolDeclaration,
     ToolMode,
     ToolResultPart,
+    declares_results,
     paired_tool_results,
+    sets_harm_filters,
 )
 from aira_gateway.upstreams.base import DialectUnsupported
 from aira_gateway.upstreams.vertex.anthropic_mapping.schema import (
@@ -102,6 +104,10 @@ def anthropic_body(
     (`FRD-152`), ``carry_earlier`` those of earlier turns among them (`ADR-0051`); each off is an
     attempt of the adapter's where Anthropic refused the blocks.
     """
+    # Google's harm filters have no field here (`FRD-155`): passed over, not answered without them.
+    unfiltered = sets_harm_filters(request)
+    if unfiltered is not None:
+        raise DialectUnsupported(unfiltered)
     messages: list[dict[str, Any]] = []
     #: Where in ``messages`` a turn of the caller's begins, for `_mark_conversation`.
     turn_starts: list[int] = []
@@ -209,6 +215,10 @@ def _system_text(conversation: list[CanonicalMessage]) -> str:
 
 
 def _wire_tools(request: CanonicalRequest, *, strict_tools: bool) -> list[dict[str, Any]]:
+    # A function's result schema has no field in Anthropic's tools (`FRD-155`): passed over.
+    no_word = declares_results(request)
+    if no_word is not None:
+        raise DialectUnsupported(no_word)
     return [_tool(tool, strict_tools=strict_tools) for tool in _offered(request)]
 
 
@@ -311,8 +321,9 @@ def _budget(request: CanonicalRequest, max_tokens: int, *, carried: bool) -> dic
         # With a budget, Anthropic requires the model's own `thinking` block, signature and all, in
         # front of a call it is continuing, and thinks no further in the turn without one.
         # `adaptive` has no such rule. The block travels with the call (`thinking_blocks`); a
-        # history that did not bring it back — a client that drops a call's signature, or a use
-        # case whose reasoning the block would have disclosed — cannot continue with a budget.
+        # history that did not bring it back — a client that drops a call's signature, or a
+        # request whose reasoning the block would have disclosed, because the caller did not ask
+        # for it or the use case does not return it — cannot continue with a budget.
         if request.thinking_from_default:
             # The installation's default, not the caller's request: the turn goes on without
             # thinking, as Anthropic itself would carry it on, rather than refusing a request that
@@ -322,8 +333,10 @@ def _budget(request: CanonicalRequest, max_tokens: int, *, carried: bool) -> dic
             "This turn continues a function call on a Claude model with a thinking budget. "
             "Anthropic requires the model's own thinking block in front of the call it continues, "
             "and this request's history does not carry it back — the call's signature is missing, "
-            "or this use case does not return reasoning. Send this turn with thinking disabled, "
-            "or use a level word or 'auto' on a model that thinks adaptively."
+            "or the block was not returned with it: the block is the model's reasoning, which goes "
+            "back to a caller only where the request asks for it ('includeThoughts') and the use "
+            "case returns it. Ask for the reasoning, send this turn with thinking disabled, or use "
+            "a level word or 'auto' on a model that thinks adaptively."
         )
     block: dict[str, Any] = {"type": "enabled", "budget_tokens": budget}
     return block

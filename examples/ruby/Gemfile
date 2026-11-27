@@ -1,0 +1,4 @@
+# RubyLLM, pointed at AIRA: bundle install && bundle exec ruby chat.rb
+source 'https://rubygems.org'
+
+gem 'ruby_llm', '~> 2.2'

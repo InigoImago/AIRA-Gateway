@@ -20,12 +20,15 @@ from aira_gateway.embedding import EmbeddingBounds
 from aira_gateway.pipeline.dispatch import Routing, RoutingOf
 from aira_gateway.requirements import ModelApproved
 from aira_gateway.state import providers_of, sessionmaker_of, settings_of
-from aira_gateway.upstreams.base import UpstreamModel, can_rank
+from aira_gateway.upstreams.base import UpstreamModel, can_count, can_rank
 
 #: The verbs of a model that generates. The embedding verbs follow the declaration's batch flag.
 _GENERATION_VERBS = ("generateContent", "streamGenerateContent")
 #: The ranking verb, as Google's ranking path ends (`FRD-147`).
 RANK_VERB = "rank"
+#: Google's verb for "how many tokens is this" (`FRD-155`): free at the vendor, so nothing is held
+#: back for it and nothing is booked.
+COUNT_METHOD = "countTokens"
 
 
 def attribution_of(request: Request) -> Attribution | None:
@@ -172,6 +175,7 @@ async def served_models(request: Request) -> list[UpstreamModel]:
                 await catalog.declaration(model.name),
                 model.supported_methods,
                 ranks=can_rank(registry.provider_for(model.name)),
+                counts=can_count(registry.provider_for(model.name)),
             ),
             model.provider,
             model.publisher,
@@ -193,7 +197,12 @@ async def served_models(request: Request) -> list[UpstreamModel]:
             UpstreamModel(
                 declaration.name,
                 declaration.name,
-                _verbs(declaration, (*_GENERATION_VERBS, "embedContent"), ranks=can_rank(adapter)),
+                _verbs(
+                    declaration,
+                    (*_GENERATION_VERBS, "embedContent"),
+                    ranks=can_rank(adapter),
+                    counts=can_count(adapter),
+                ),
                 declaration.provider,
                 declaration.publisher,
                 declaration.regions[0] if declaration.regions else "",
@@ -214,14 +223,20 @@ async def _withheld(catalog: ModelCatalog, registry: object, model: str) -> bool
 
 
 def _verbs(
-    declaration: ModelDeclaration, offered: tuple[str, ...], *, ranks: bool = False
+    declaration: ModelDeclaration,
+    offered: tuple[str, ...],
+    *,
+    ranks: bool = False,
+    counts: bool = False,
 ) -> tuple[str, ...]:
     """The verbs an adapter offers, narrowed to what the model is declared to do — an undeclared
-    model has the baseline — plus the batch verb where the declaration allows one, and `rank`
-    where the model is declared a reranker and its adapter can rank (`FRD-147`)."""
+    model has the baseline — plus the batch verb where the declaration allows one, `rank` where
+    the model is declared a reranker and its adapter can rank (`FRD-147`), and `countTokens`
+    where it generates and its vendor counts (`FRD-155`)."""
     allowed: set[str] = set()
     # A speech model answers the same two verbs, with audio (`FRD-624`).
-    if declaration.can(Capability.GENERATE) or declaration.can(Capability.SPEECH):
+    generates = declaration.can(Capability.GENERATE) or declaration.can(Capability.SPEECH)
+    if generates:
         allowed.update(_GENERATION_VERBS)
     if declaration.can(Capability.EMBED):
         allowed.add("embedContent")
@@ -232,6 +247,8 @@ def _verbs(
         verbs.append("batchEmbedContents")
     if ranks and declaration.can(Capability.RERANK):
         verbs.append(RANK_VERB)
+    if counts and generates:
+        verbs.append(COUNT_METHOD)
     return tuple(verbs)
 
 

@@ -168,6 +168,62 @@ class ToolDeclaration(BaseModel):
     parameters: ResponseSchema | None = None
     #: The same, written in JSON Schema (`FRD-143`) and carried as written. At most one of the two.
     parameters_json_schema: JsonSchemaDocument | None = None
+    #: What the function returns, in either vocabulary, at most one of them (`FRD-155`). Only
+    #: Gemini has a word for it; another dialect passes the candidate over by name
+    #: (`declares_results`) rather than send the declaration without it.
+    response: ResponseSchema | None = None
+    response_json_schema: JsonSchemaDocument | None = None
+
+    @property
+    def declares_result(self) -> bool:
+        return self.response is not None or self.response_json_schema is not None
+
+
+class SafetySetting(BaseModel):
+    """One of Google's harm filters and the threshold it blocks at (`FRD-155`), in Google's names.
+
+    Only Gemini has the filter. A candidate whose dialect has none is passed over by name
+    (`sets_harm_filters`): answering without the filter the caller set would differ from a correct
+    answer only in what it let through.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    category: str
+    threshold: str
+
+
+def sets_harm_filters(request: CanonicalRequest) -> str | None:
+    """Why a dialect without Google's harm filters cannot carry ``request``, or ``None``.
+
+    The same sentence from every such dialect, so a caller passed over twice reads one reason.
+    """
+    if not request.safety_settings:
+        return None
+    named = ", ".join(
+        f"{setting.category} at {setting.threshold}" for setting in request.safety_settings
+    )
+    return (
+        f"'safetySettings' sets Google's own harm filters ({named}), and this dialect has no such "
+        "filter. It is passed over rather than answered without them; a Gemini model applies "
+        "them, or leave the field out."
+    )
+
+
+def declares_results(request: CanonicalRequest) -> str | None:
+    """Why a dialect without a word for a function's result cannot carry ``request``, or ``None``.
+
+    The same sentence from every such dialect, so a caller passed over twice reads one reason.
+    """
+    named = [tool.name for tool in request.tools if tool.declares_result]
+    if not named:
+        return None
+    return (
+        f"{', '.join(repr(name) for name in named)} declare{'s' if len(named) == 1 else ''} what "
+        "it returns ('response' or 'responseJsonSchema'), and this dialect has no word for a "
+        "function's result. It is passed over rather than sent the declaration without it; a "
+        "Gemini model takes it, or leave the field out."
+    )
 
 
 class ToolMode(StrEnum):
@@ -346,6 +402,18 @@ class CanonicalRequest(BaseModel):
     #: Answer with speech instead of text (`FRD-624`). Only a model that declares `speech`, on a
     #: dialect that can ask for it, serves such a request.
     speech: Speech | None = None
+    #: The caller's harm filters (`FRD-155`): each one names a threshold, since one that names none
+    #: asks for nothing and the surface leaves it out. Carried to Gemini; another dialect passes the
+    #: candidate over (`sets_harm_filters`).
+    safety_settings: tuple[SafetySetting, ...] = ()
+
+    def as_counted(self) -> CanonicalRequest:
+        """What a count is of (`FRD-155`): the conversation and the declared functions, which a
+        generation is billed for as input. What shapes an answer is no input, and is not held
+        against a model that will produce none — a cap above its ceiling, a sampling it refuses."""
+        return CanonicalRequest(
+            model=self.model, addressing=self.addressing, messages=self.messages, tools=self.tools
+        )
 
     def last_user_text(self) -> str:
         for message in reversed(self.messages):
@@ -439,10 +507,22 @@ class CanonicalEmbeddingRequest(BaseModel):
     #: The task type is already written into the texts, as a prompt (`FRD-146` FR-7): it is
     #: validated against the model like any other and **not sent** as a field.
     task_in_text: bool = False
+    #: Each text's document title (`FRD-155`), ``""`` for none — empty where no text has one. Read
+    #: by the use case's pipeline like the texts; carried where the dialect has the field.
+    titles: list[str] = Field(default_factory=list)
 
     @property
     def size(self) -> int:
         return len(self.texts)
+
+    @property
+    def titled(self) -> int:
+        """How many texts carry a title."""
+        return sum(1 for title in self.titles if title)
+
+    def title_of(self, index: int) -> str:
+        """The title of text ``index``, ``""`` for none."""
+        return self.titles[index] if index < len(self.titles) else ""
 
 
 class RerankRecord(BaseModel):

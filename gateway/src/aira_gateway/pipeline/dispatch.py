@@ -295,7 +295,10 @@ class Answered[T]:
     failed: list[Attempted] = field(default_factory=list)
 
 
-async def answer_with_fallback[R: (CanonicalEmbeddingRequest, CanonicalRerankRequest), T](
+async def answer_with_fallback[
+    R: (CanonicalEmbeddingRequest, CanonicalRerankRequest, CanonicalRequest),
+    T,
+](
     registry: ProviderRegistry,
     request: R,
     fallback_models: tuple[str, ...],
@@ -305,8 +308,8 @@ async def answer_with_fallback[R: (CanonicalEmbeddingRequest, CanonicalRerankReq
     routing_of: RoutingOf | None = None,
     fit: Callable[[R], Awaitable[R | str]] | None = None,
 ) -> Answered[T]:
-    """The chain for an embedding or a ranking: `dispatch_with_fallback`'s walk and outcome, for a
-    request whose answer is not text (`FRD-310`, `ADR-0048`).
+    """The chain for an embedding, a ranking or a count: `dispatch_with_fallback`'s walk and
+    outcome, for a request whose answer is not text (`FRD-310`, `ADR-0048`, `FRD-155`).
 
     The same candidates, the same conditions, the same record of who was skipped and who failed —
     one walk (`_candidates`), so a kind of request cannot reach a model the others could not. What

@@ -189,7 +189,7 @@ recipients = "Nach Rolle und Use Case (siehe „Wer innerhalb der Organisation Z
 
 [activities.content]
 title = "Inhalte von Anfragen und Antworten"
-data = "Der Text der Anfrage und der Antwort, einschließlich der Begründung des Modells, sofern der Use Case sie anfordert. Angehängte Dateien und Embedding-Vektoren werden nicht gespeichert, nur ihre Größe und ein Fingerabdruck. Zugangsdaten wie Schlüssel und Token werden vor dem Speichern entfernt; andere personenbezogene Angaben in Ihrem Text bleiben erhalten."
+data = "Der Text der Anfrage und der Antwort, einschließlich der Begründung des Modells, sofern die Anfrage sie anfordert und der Use Case sie zulässt. Angehängte Dateien und Embedding-Vektoren werden nicht gespeichert, nur ihre Größe und ein Fingerabdruck. Zugangsdaten wie Schlüssel und Token werden vor dem Speichern entfernt; andere personenbezogene Angaben in Ihrem Text bleiben erhalten."
 purpose = "Aufklärung von Sicherheitsvorfällen und Fehlern sowie Nachvollziehbarkeit innerhalb des Use Case. {content_storage}"
 legal_basis = "Art. 6 Abs. 1 lit. f DSGVO (Informationssicherheit und Fehleranalyse); Art. 6 Abs. 1 lit. b DSGVO, soweit der Use Case der Erfüllung Ihrer Aufgaben dient."
 retention = "So lange, wie der Use Case festlegt (1 bis 3650 Tage), für Anfragen ohne Use Case {default_retention}. Danach werden die Inhalte gelöscht; das Protokoll der Anfrage bleibt nach der dafür geltenden Frist bestehen."

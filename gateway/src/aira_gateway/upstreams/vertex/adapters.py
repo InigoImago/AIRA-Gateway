@@ -320,9 +320,14 @@ class VertexGeminiAdapter(_VertexAdapter):
             )
             if method == "embedContent":
                 groups = (
-                    [request.texts] if request.aggregate else [[text] for text in request.texts]
+                    [(request.texts, request.title_of(0))]
+                    if request.aggregate
+                    else [
+                        ([text], request.title_of(index))
+                        for index, text in enumerate(request.texts)
+                    ]
                 )
-                bodies = [embed_content_body(request, group) for group in groups]
+                bodies = [embed_content_body(request, group, title) for group, title in groups]
                 values_of, tokens_of = embed_content_values, embed_content_tokens
             else:
                 if request.aggregate and request.size > 1:
@@ -332,7 +337,10 @@ class VertexGeminiAdapter(_VertexAdapter):
                         f"Model '{request.model}' embeds one text per vector; it cannot embed "
                         f"{request.size} texts as one."
                     )
-                bodies = [predict_body(request, text) for text in request.texts]
+                bodies = [
+                    predict_body(request, text, request.title_of(index))
+                    for index, text in enumerate(request.texts)
+                ]
                 values_of, tokens_of = predict_values, predict_tokens
             values: list[list[float]] = []
             counts: list[int | None] = []

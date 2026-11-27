@@ -8,9 +8,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.alias_generators import to_snake
 
-_STRICT = ConfigDict(extra="forbid")
+#: As the Gemini surface reads Google's JSON (`FRD-155`): each field by its camelCase and its proto
+#: name, and a refusal naming the camelCase one.
+_STRICT = ConfigDict(
+    extra="forbid", alias_generator=to_snake, populate_by_name=True, loc_by_alias=False
+)
 
 
 class RankingRecord(BaseModel):
@@ -29,6 +34,28 @@ class RankRequest(BaseModel):
     records: list[RankingRecord]
     topN: Annotated[int, Field(gt=0)] | None = None
     ignoreRecordDetailsInResponse: bool = False
+    #: The ranking configuration's resource name, which the Go client repeats from the path in the
+    #: body. It selects nothing, as the path's does not (`routes`).
+    rankingConfig: str | None = None
+    #: Labels for the caller's own Google bill, which the Node client sends empty on every request.
+    #: Empty is accepted; labels are refused by name (`_no_labels`).
+    userLabels: dict[str, str] | None = None
+
+    @field_validator("topN", mode="before")
+    @classmethod
+    def _no_limit_is_none(cls, value: object) -> object:
+        """``0`` is proto3's default — every record — which is what an absent ``topN`` asks."""
+        return None if value == 0 and not isinstance(value, bool) else value
+
+    @model_validator(mode="after")
+    def _no_labels(self) -> RankRequest:
+        if self.userLabels:
+            raise ValueError(
+                "'userLabels' is not served: labels sort a Google bill, and this gateway ranks in "
+                "its own Google project and bills the use case. Leave them out; the use case is "
+                "the label here."
+            )
+        return self
 
 
 class RankedRecordOut(BaseModel):

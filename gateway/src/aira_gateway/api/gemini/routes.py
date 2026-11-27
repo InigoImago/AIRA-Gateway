@@ -3,6 +3,11 @@
 Requests are validated against the Gemini schema, mapped to canonical, run through the shared
 `api.serving` layer and mapped back; errors use the Gemini envelope. Every branch *raises* its
 refusals and :func:`generate` records them in one place, so no branch can forget to (`FRD-122`).
+
+**At ``/v1`` as well as ``/v1beta``** (`FRD-155`): Google serves the Gemini API under both, and its
+JavaScript and Go SDKs call ``/v1`` unless told otherwise — so a client pointed at this gateway with
+nothing but its base URL changed met a 404 on every call. ``v1`` is ``v1beta``'s stable subset, so
+one route serves both; the gateway's own routes stay where they are.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from aira_gateway.api.gemini.mapping import (
 )
 from aira_gateway.api.gemini.refusals import refusal_response
 from aira_gateway.api.serving import (
+    COUNT_METHOD,
     EMBEDDING_METHODS,
     REFUSALS,
     STREAM_HEADERS,
@@ -40,6 +46,7 @@ from aira_gateway.api.serving import (
     annotate,
     catalog_of,
     check_structured_result,
+    count,
     declared_routing,
     deprecation_headers,
     embed_along_chain,
@@ -91,6 +98,7 @@ LINE_BREAKS_JSON_KEEPS = str.maketrans(
 
 
 @router.get("/v1beta/models")
+@router.get("/v1/models")
 async def list_models(request: Request) -> JSONResponse:
     models = [
         await _described(request, upstream_model_to_gemini(m)) for m in await served_models(request)
@@ -100,6 +108,7 @@ async def list_models(request: Request) -> JSONResponse:
 
 
 @router.get("/v1beta/models/{model}")
+@router.get("/v1/models/{model}")
 async def get_model(model: str, request: Request) -> Response:
     upstream_model = next((m for m in await served_models(request) if m.name == model), None)
     if upstream_model is None:
@@ -131,6 +140,7 @@ async def _described(request: Request, model: schemas.GeminiModel) -> schemas.Ge
 
 
 @router.post("/v1beta/models/{resource}")
+@router.post("/v1/models/{resource}")
 async def generate(resource: str, request: Request) -> Response:
     """Dispatch a Gemini verb, and record the request whether or not it was served."""
     model, _, method = split_resource(resource)
@@ -177,7 +187,17 @@ async def _generate(resource: str, request: Request, trail: AuditTrail, started:
     gemini_request: schemas.GenerateContentRequest | None = None
     if method in GENERATION_METHODS:
         gemini_request = _validated(schemas.GenerateContentRequest, body)
+        _the_url_names_the_model(gemini_request.model, model)
         canonical = gemini_to_canonical(model, gemini_request, bounds=schema_bounds(request))
+    elif method == COUNT_METHOD:
+        # What is counted is the generation it stands for, read as one is (`FRD-155`).
+        counting = _validated(schemas.CountTokensRequest, body)
+        _the_url_names_the_model(counting.model, model)
+        counted = counting.generation()
+        _the_url_names_the_model(counted.model, model)
+        # Read whole, so a malformed request is refused as its generation would be; counted as
+        # the input it carries.
+        canonical = gemini_to_canonical(model, counted, bounds=schema_bounds(request)).as_counted()
     elif method in EMBEDDING_METHODS:
         embed_request = _embedding_request(model, method, body)
     else:
@@ -195,6 +215,8 @@ async def _generate(resource: str, request: Request, trail: AuditTrail, started:
     headers = deprecation_headers(prepared.declaration)
     if prepared.canonical is None:
         return await _embed(request, model, method, prepared, trail, headers, started)
+    if method == COUNT_METHOD:
+        return await _count_tokens(request, prepared, trail, headers, started)
     if method == "generateContent":
         return await _generate_content(request, prepared, trail, headers, started)
     asked = prepared.asked
@@ -248,6 +270,26 @@ async def _generate_content(
         # caller gets, and the row says so.
         response = JSONResponse(payload, headers=headers)
         acct.served(answer.model, answer.usage, stored, [call.name for call in answer.tool_calls])
+    return response
+
+
+async def _count_tokens(
+    request: Request,
+    prepared: Prepared,
+    trail: AuditTrail,
+    headers: dict[str, str],
+    started: float,
+) -> Response:
+    """The vendor's count of the request, recorded like any request that reached a vendor — the
+    whole of it was sent there — and booked as the nothing it costs (`FRD-155`)."""
+    async with accounting(
+        request, trail, prepared, api="gemini", operation=COUNT_METHOD, started=started
+    ) as acct:
+        tokens = await count(request, prepared, trail)
+        acct.counted(trail.served_model, tokens=tokens)
+        response = JSONResponse(
+            schemas.CountTokensResponse(totalTokens=tokens).model_dump(), headers=headers
+        )
     return response
 
 
@@ -439,18 +481,22 @@ def _embedding_request(model: str, method: str, body: dict[str, Any]) -> Canonic
         # model once for the whole — the field the URL fills — and once per entry, which must
         # match it. A body that says another model in either place has misread which one serves.
         named = [batch.model, *(entry.model for entry in entries)]
-    # The URL chooses the model. A body naming a different one is refused rather than ignored, or
-    # the caller would get another model's vector under a 200 (`FRD-124`).
     for name in named:
-        if not schemas.names_the_same_model(name, model):
-            raise GeminiHTTPError(
-                400,
-                f"An embedding request names model '{name}' while the URL addresses "
-                f"'{model}'. The URL decides which model serves a request; remove the field "
-                "or address the model you meant.",
-                "INVALID_ARGUMENT",
-            )
+        _the_url_names_the_model(name, model)
     return gemini_to_embedding(model, entries)
+
+
+def _the_url_names_the_model(named: str | None, model: str) -> None:
+    """The URL chooses the model. A body naming a different one is refused rather than ignored, or
+    the caller would get another model's answer under a 200 (`FRD-124`)."""
+    if not schemas.names_the_same_model(named, model):
+        raise GeminiHTTPError(
+            400,
+            f"The request names model '{named}' while the URL addresses '{model}'. The URL "
+            "decides which model serves a request; remove the field or address the model you "
+            "meant.",
+            "INVALID_ARGUMENT",
+        )
 
 
 def _asked_for_reasoning(parsed: schemas.GenerateContentRequest | None) -> bool | None:

@@ -95,7 +95,7 @@ def test_the_source_leaves_out_the_test_tooling(tmp_path: Path) -> None:
     assert call[:2] == ["scan", "dir:/checkout"]
     assert call[call.index("--source-name") + 1] == "aira-source"
     excluded = [call[i + 1] for i, part in enumerate(call) if part == "--exclude"]
-    assert excluded == ["./e2e/**", "./tools/clients/**"]
+    assert excluded == ["./e2e/**", "./tools/clients/**", "./examples/**"]
 
 
 def test_the_checksum_is_the_documents_and_sha256sum_accepts_it(tmp_path: Path) -> None:

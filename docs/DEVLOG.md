@@ -5,6 +5,166 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The owner's decisions on every Gemini client: reasoning when asked, safety, counts, the reference (2026-11-27)
+
+The owner took `FRD-155` §11's decisions: the reasoning only when asked, safety settings carried,
+`:countTokens` built, the reference's speech temperature and embedding task types corrected,
+Vertex AI's paths not built — and asked for an example per framework, with different credentials.
+On `:countTokens` they asked first how tokens were counted until now. The answer, read in the
+code: the row books the vendor's own report; the reservation before dispatch estimates (characters
+over four, rounded up, deliberately high, replaced by the report); and only a stream abandoned
+before its usage report asks Vertex AI's free `:countTokens` (`FRD-128` FR-6). The last is what the
+verb now serves.
+
+**Reasoning when asked** (`FRD-135` §5.7). One line in `resolve_reasoning` — an explicit yes, not
+"anything but no". What moved with it:
+
+- Five tests expected the reasoning unasked. Three of them ran the real OpenCode: with the console's
+  old file, neither generation showed a thought. Measured with both, the file now asks —
+  `includeThoughts: true` on the model's `options` for a request with no variant, and in each
+  variant that thinks — and both show the reasoning again; OpenCode 1 sends it with its title
+  request too. The console writes it only where the use case returns reasoning, since there a
+  request asking for it is refused by name.
+- The privacy notice said the reasoning is stored "where the use case asks for it". It is stored
+  where the request asks and the use case allows it now: a new edition.
+- **A Claude model of the budget generation** (4.5 and earlier) continues a function call with a
+  budget only with its own thinking block in front of the call. The block travels in the call's
+  signature, and only where the reasoning was returned — the envelope is base64 JSON, readable.
+  Sealing it wherever the use case merely allows reasoning would hand a caller who did not ask the
+  reasoning in a signature, and store it: rejected. So a caller's own budget on such a model
+  continues a tool loop only for a caller who asks, and the refusal now says so, naming
+  `includeThoughts`; a default budget goes on without thinking, as before for a caller who declined.
+- KIRA has no field to ask with: the gateway no longer asks Google for thoughts on a KIRA request
+  and stores them unreturned.
+
+**Safety settings** (`FRD-155` FR-11): Google's five Gemini categories and five thresholds, read
+by name in either case or by number (checked against `google.ai.generativelanguage_v1beta`'s
+enums); the PaLM categories 1–6 and Vertex AI's own (`HARM_CATEGORY_JAILBREAK`, the image ones),
+which the Gemini API refuses, are refused naming the five. Carried to Gemini as sent; a Claude or
+OpenAI-dialect candidate is passed over by name, measured through a chain. **Found reading the
+live-stack suite rather than running it:** `tests/integration/test_developer_round.py` posted a
+setting without a threshold and expected a refusal — since the previous day's change that is a
+setting asking for nothing, answered `200`, so the case would have failed on the first live round
+after it; the branch had not reached CI. It and two siblings now post a threshold to the local
+model, which the OpenAI dialect refuses by name, and one asserts a setting without one is served.
+
+**`:countTokens`** (FR-12): the vendor's count, on Vertex AI (which had one) and now AI Studio and
+the mock; through `prepare_for_dispatch` with a reservation of nothing, `prepare.count` over the
+generation's conditions with no fallback, `Accounting.counted` booking no token and no request.
+Two holes the tests found: a count was refused for an output cap above the model's ceiling — an
+answer it never produces — so what is counted is now the input alone (`as_counted`); and a smoke
+script started the application outside pytest, which read the repository's `.env` and stopped at
+startup on the residency check before serving anything — no key was printed, nothing was written.
+Smoke runs go through pytest, whose root conftest strips the environment. AI Studio's count also
+serves `FRD-128` FR-6: a stream abandoned there is counted now rather than left unknown.
+
+**The reference** (FR-13): `embedding_defaults.py`, one row per model with the vendor's page; no
+task type for `gemini-embedding-2`, whose task Google documents written into the text — a task
+type sent to it changes no vector, so declaring one would answer it under a 200. Google's speech
+models on Vertex AI sample (`normalize.SAMPLES_DESPITE_THE_LIST`): the list said they take no
+temperature, and Google answered LangChain's 0.7 with speech. The shipped copy is corrected in
+place, not refetched, so nothing else in it moved. For an entry on file the editor offers both,
+and changes nothing until clicked.
+
+**Examples** (FR-14): `examples/`, a short program per language and framework — 19 in nine
+languages — each with every credential its client carries, written by a subagent and run 72 times
+against a copy of the matrix harness, its issuer given a client-credentials endpoint so the
+service-account branch runs for real. The five Python ones on Google's SDK and on plain HTTP run in
+the suite now, in each form (23 runs, 23 s), against the gateway on a socket with authentication on
+and an issuer of the test's own; the first run of that test failed on its own fixture — an
+embedding model declaring one task type and no widths, refused by name, as it should be. The
+examples are left out of the release's source SBOM, or the next one would list LangChain and Spring
+AI as parts of the product and the nightly check would scan them.
+
+**Live, on Vertex in `europe-west1`**, eight requests: the reasoning unasked — one text part; asked
+— a thought part, then the text. Safety settings (`HARASSMENT` at `BLOCK_LOW_AND_ABOVE`,
+`DANGEROUS_CONTENT` `OFF`) — answered. `:countTokens` — 15, the prompt-token figure Google reported
+for an answer to the same prompt. `gemini-2.5-flash-tts` and `gemini-2.5-pro-tts` at temperature
+0.7 — speech from both, so the reference's correction is measured for both models it names.
+`gemini-embedding-001` with `RETRIEVAL_DOCUMENT`, a title and 768 widths — 768.
+
+**Mutations.** GR-42 – GR-71 and EXM-1 – EXM-3 are caught. Five older ones pointed at code this
+round changed and were re-anchored, each caught again: GR-7 (the threshold filter), RS2 (an
+explicit no), TO-4 (the `auto` variant), BOM12 (the SBOM's exclusions) and M23, whose anchor
+matched twice once the reservation had a second call — `make ci`'s anchor check found three of
+them, the runner the other two. GR-3 survived: no request field refused by design is a list any more, so nothing
+noticed `[]` losing its meaning of "not sent" — a unit test of `unset` holds it now. 2898
+properties.
+
+## Every Gemini client, in every language: what they send, and what the surface now reads (2026-11-26)
+
+The owner asked whether the gateway covers every framework for Gemini — Java, Python, C# and other
+languages, plain calls, keys and tokens, chat and embeddings, speech and ranking. Answered by
+running them (`FRD-155`).
+
+**Method.** A throwaway gateway: the real application on a socket, an in-memory database,
+authentication on, every call naming its use case, an OIDC issuer of its own whose tokens look like
+Keycloak's, API keys minted as Management mints them, the mock under realistic model names. Every
+request recorded: path, credential carrier, use-case carrier, `x-goog-api-client`, the body's field
+names, the answer, and the whole body of a refusal. Thirty-one clients — Python 10, Java 5 (Google's
+SDK in two majors), Go 4, JavaScript 7, PHP 1, Ruby 2, Rust 2 — each through generation, a stream,
+a function call, a structured answer, embeddings single and batched, speech and ranking where the
+client has them, then through every credential: the key in its own setting, a person's token
+there, a token as bearer, a client-credentials token, and the use case by path and by header. C#
+was not run: NuGet is not reachable from the sandbox.
+
+**Measured, before.** 405 of 573 cases passed. None of the failures was a request Google refuses:
+each was another spelling of a request the surface served —
+
+- `safetySettings: []`, sent on every call by LangChain (Python and JavaScript) and Google's
+  deprecated JavaScript SDK: **every chat call of the three refused**. The PHP client sends it too,
+  with `null` for every other field and `title: null` on embeddings: every call refused.
+- snake_case field names (LiteLLM's tools and structured answers; `google-genai` inside a
+  function declaration);
+- enums by number (the deprecated Python and Go SDKs: `"type": 6`, `"taskType": 1`);
+- `/v1`, the default of Google's JavaScript and Go SDKs: **every call 404**, in an envelope whose
+  `code` was a word, which the Go SDK printed as raw JSON;
+- `model` in the body (the Go SDK), `rankingConfig` (Go's ranking client), `userLabels: {}`
+  (Node's), `contents` and `parts` as objects (the Ruby `gemini-ai` gem);
+- what a function returns (`response`, `responseJsonSchema`), which Google's current Python and
+  Java SDKs add for every typed function they call themselves: automatic function calling refused;
+- an embedding's `title` (Java SDK, PHP).
+
+Every credential carrier worked in every client that can send it, and a key of another use case was
+refused `403` with the reason in every client's own error type (69 calls).
+
+**What changed.** The request models read every spelling proto3's JSON mapping allows: both names,
+enum numbers, defaults as absent, one object as a list of one. The counts made before validation
+read both spellings, so `function_declarations` is no way around the bound on functions. The
+refusals by design hold in either spelling and only where something is asked for — a safety
+setting with a threshold, `"codeExecution": {}`. `/v1` serves the same routes; a wrong URL where
+Google's clients call is answered in Google's envelope, and Vertex AI's paths say what to
+configure. A function's result schema reaches Gemini and passes Claude and the OpenAI dialect over
+by name; an embedding's title goes through the use case's pipeline, weighs at the rate limit where
+the pipeline reads each text, and reaches the three Google embedding bodies. Google's own tools and
+`NON_BLOCKING` are refused by name.
+
+**Measured, after.** 508 of 573. Of the 26 left: LiteLLM's embeddings send no credential with
+`api_base` and its speech call ignores it (LiteLLM's); LangChainGo's default safety thresholds
+(refused by design); clients without a header setting in the header variants; the PHP client's
+model listing on undeclared limits; a structured answer the mock cannot write from a prompt
+(Spring AI, which asks in prose — live it worked).
+
+**Live**, on the installation's Vertex key in `europe-west1`: 226 cases, 195 passed. Speech from
+Google's SDK in four languages, LangChain and raw HTTP — 1.1–1.5 s of 24 kHz PCM per sentence, 37
+audio tokens; `gemini-embedding-001` through `:predict` at 768 dimensions. Ranking answered
+`401 CREDENTIALS_MISSING` from Google for every client: the ranking API takes no API key. And one
+finding the mock could not show: **the reasoning the gateway asks for unasked reached the answer**
+of the deprecated SDKs in three languages, LangChain4j, `gemini-rust`, the PHP client and any
+integration reading `parts[0].text`; the deprecated JavaScript SDK's structured answer no longer
+parsed. With the use case's reasoning off, the same eight clients passed 52 of 52 cases that do not
+need a ranking credential. LangChain's speech request (temperature 0.7) is refused because the
+model reference declares Gemini's speech models as sampling at fixed settings; Google accepted it.
+
+**Not built, for the owner** (`FRD-155` §11): reasoning only when asked, as Google does; safety
+settings with thresholds carried to Gemini; Vertex AI's paths; `:countTokens`; the Interactions
+API; the catalogue's embedding and speech defaults; C#.
+
+Mutations GR-1 – GR-41 (GR-10 folded into MG-1, which names the same code), all caught; two
+survived their first run and were answered — a refusal's location tested only for camelCase
+input, and the empty-list rule enforced twice. Five older mutations named code this round moved
+(Y2, HP-14, MG-1, KP28, STAB-API-15) and were re-anchored onto what carries their property now.
+
 ## The first check of a release found 19 to act on, and v0.1.17 answers 18 (2026-11-26)
 
 The nightly check of known vulnerabilities ran on GitHub for the first time, started by hand

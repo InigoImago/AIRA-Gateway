@@ -137,8 +137,8 @@ async def test_thinking_switched_off_is_switched_off(fixture) -> None:
     [
         # `tools` left this list when `FRD-131` served it (2026-08-08). "Not silently dropped" is
         # still the requirement, and it is now asserted where the field lives: a use case without
-        # the toggle refuses a declaration **by name** (`test_agent_round.py`).
-        ("safetySettings", [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]),
+        # the toggle refuses a declaration **by name** (`test_agent_round.py`). `safetySettings`
+        # left it with `FRD-155`, for the dialect test below.
         ("cachedContent", "cachedContents/abc"),
     ],
 )
@@ -166,6 +166,25 @@ async def test_a_control_the_serving_dialect_cannot_express_names_it(fixture) ->
     assert status == 400
     assert "top_k" in message
     assert "top_p" not in message
+
+
+async def test_a_harm_filter_the_serving_dialect_cannot_apply_names_it(fixture) -> None:
+    """`FRD-155`: Google's harm filters exist on Gemini alone, and this model is served over the
+    OpenAI chat API — refused naming the field, never answered unfiltered under a 200."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{GATEWAY_URL}/v1beta/models/{MODEL}:generateContent",
+            headers=fixture.headers(),
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "safetySettings": [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}
+                ],
+            },
+        )
+
+    assert response.status_code == 400
+    assert "safetySettings" in response.json()["error"]["message"]
 
 
 async def test_a_refused_request_still_leaves_an_audit_row(fixture) -> None:

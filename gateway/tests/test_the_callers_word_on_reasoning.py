@@ -1,4 +1,4 @@
-"""What a caller says about the model's reasoning is what comes back (`FRD-135` FR-4/FR-5).
+"""What a caller says about the model's reasoning is what comes back (`FRD-135` FR-4/FR-5, §5.7).
 
 Three gaps a live round against Gemini found: an explicit `includeThoughts: false` was ignored where
 the use case allows reasoning; thoughts were asked for with thinking switched off, which Google
@@ -31,14 +31,16 @@ def _request_for_a_use_case_that_returns_reasoning() -> Request:
     return request
 
 
-async def test_an_explicit_no_withholds_the_reasoning_the_use_case_allows() -> None:
+async def test_only_a_caller_who_asks_receives_the_reasoning_the_use_case_allows() -> None:
+    """Google's own meaning of the field (`FRD-135` §5.7): a caller that says nothing receives no
+    reasoning, so a client reading the first part of an answer as its text reads the answer."""
     request = _request_for_a_use_case_that_returns_reasoning()
 
     unsaid = await resolve_reasoning(request, _BASE, asked_for=None)
     asked = await resolve_reasoning(request, _BASE, asked_for=True)
     declined = await resolve_reasoning(request, _BASE, asked_for=False)
 
-    assert unsaid.include_reasoning is True, "on means returned (FR-5)"
+    assert unsaid.include_reasoning is False, "none unless asked for, as Google answers"
     assert asked.include_reasoning is True
     assert declined.include_reasoning is False, "a caller who declined must not receive it"
 

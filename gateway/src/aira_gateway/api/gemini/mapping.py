@@ -26,6 +26,7 @@ from aira_gateway.core.canonical import (
     DataPart,
     FinishReason,
     Role,
+    SafetySetting,
     SpeakerVoice,
     Speech,
     TextPart,
@@ -214,12 +215,31 @@ def gemini_to_canonical(
                     if declaration.parametersJsonSchema is not None
                     else None
                 ),
+                # What it returns, under the same parser and bounds (`FRD-155`).
+                response=(
+                    parse_schema(declaration.response, bounds)
+                    if declaration.response is not None
+                    else None
+                ),
+                response_json_schema=(
+                    parse_json_schema(
+                        declaration.responseJsonSchema,
+                        bounds,
+                        what=f"The JSON schema of what '{declaration.name}' returns",
+                    )
+                    if declaration.responseJsonSchema is not None
+                    else None
+                ),
             )
             for tool in request.tools
             for declaration in tool.functionDeclarations
         ),
         tool_choice=_tool_choice(request.toolConfig),
         speech=speech_of(config) if config else None,
+        safety_settings=tuple(
+            SafetySetting(category=setting.category, threshold=setting.threshold)
+            for setting in request.safetySettings
+        ),
     )
 
 
@@ -268,6 +288,7 @@ def gemini_to_embedding(
       as one specification.
     """
     texts: list[str] = []
+    titles: list[str] = []
     task_types: set[str] = set()
     dimensions: set[int] = set()
     for index, entry in enumerate(requests):
@@ -280,6 +301,7 @@ def gemini_to_embedding(
         # content (measured, `FRD-113` §11 — not a centroid). A separator would quietly change the
         # vector; a caller who wants a centroid computes it from `batchEmbedContents`.
         texts.append("".join(part.text or "" for part in entry.content.parts))
+        titles.append(entry.title or "")
         if entry.taskType is not None:
             task_types.add(entry.taskType)
         if entry.outputDimensionality is not None:
@@ -295,6 +317,7 @@ def gemini_to_embedding(
         texts=texts,
         task_type=next(iter(task_types), None),
         dimensions=next(iter(dimensions), None),
+        titles=titles if any(titles) else [],
     )
 
 

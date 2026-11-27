@@ -306,6 +306,7 @@
       [models]="catalog() ?? []"
       [released]="useCase()?.allowed_models ?? []"
       [currency]="currency()"
+      [reasoning]="useCase()?.include_reasoning === true"
       [defaultKeyDays]="defaultKeyDays()"
       [maxKeyDays]="maxKeyDays()"
       [(issued)]="issued"

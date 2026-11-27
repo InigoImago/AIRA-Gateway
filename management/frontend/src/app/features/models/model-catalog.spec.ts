@@ -3873,6 +3873,146 @@ describe('ModelEditor — the thinking default the reference proposes (FRD-151)'
   });
 });
 
+/**
+ * What the reference corrects about the public list (`FRD-155`): the task types an embedding model
+ * takes, which the list never states and without which LangChain's embeddings are refused, and the
+ * temperature Google's speech models take although the list says they take none. Offered for a
+ * model on file, never applied — and carried into a new entry like every other fact.
+ */
+describe('ModelEditor — what the reference corrects (FRD-155)', () => {
+  const TASKS = ['RETRIEVAL_QUERY', 'RETRIEVAL_DOCUMENT'];
+  const EMBEDDER: ReferenceEntry = {
+    ...SONNET,
+    platform: 'vertex',
+    name: 'gemini-embedding-9',
+    publisher: 'google',
+    declaration: {
+      capabilities: ['embed'],
+      context_window: 2048,
+      max_output_tokens: null,
+      thinking: null,
+      attachments: null,
+      fixed_sampling: false,
+      embedding: { task_types: TASKS, supports_batch: true, dimensions: [768, 3072] },
+    },
+    notes: [],
+  };
+  const EMBEDDER_ON_FILE: CatalogModel = {
+    ...FLASH,
+    name: 'gemini-embedding-9',
+    provider: 'vertex',
+    capabilities: ['embed'],
+    embedding: { supports_batch: false },
+  };
+  const SPEAKER: ReferenceEntry = {
+    ...SONNET,
+    name: 'gemini-speech-9',
+    publisher: 'google',
+    declaration: { ...SONNET.declaration, capabilities: ['speech'], fixed_sampling: false },
+    notes: [],
+  };
+  const SPEAKER_ON_FILE: CatalogModel = {
+    ...FLASH,
+    name: 'gemini-speech-9',
+    provider: 'vertex',
+    capabilities: ['speech'],
+    fixed_sampling: true,
+  };
+
+  function editing(model: CatalogModel, entry: ReferenceEntry) {
+    const harness = setup({ reference: of({ ...REFERENCE, entries: [entry] }) });
+    harness.component.edit(model);
+    harness.editor.editorTab.set('capabilities');
+    harness.fixture.detectChanges();
+    return harness;
+  }
+
+  it('offers the task types beside an embedding model on file that declares none', async () => {
+    const harness = editing(EMBEDDER_ON_FILE, EMBEDDER);
+
+    expect(harness.testid('embedding-proposed')?.textContent).toContain('RETRIEVAL_DOCUMENT');
+    harness.click('[data-testid="adopt-embedding"]');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect(harness.editor.taskTypes()).toBe('RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT');
+    expect(harness.editor.supportsBatch()).toBe(true);
+    expect(harness.editor.dimensions()).toBe('768, 3072');
+    expect(harness.testid('embedding-proposed')).toBeNull();
+  });
+
+  it('keeps the widths on file, which somebody measured', () => {
+    const harness = editing(
+      { ...EMBEDDER_ON_FILE, embedding: { supports_batch: false, dimensions: [256] } },
+      EMBEDDER,
+    );
+
+    harness.click('[data-testid="adopt-embedding"]');
+
+    expect(harness.editor.dimensions()).toBe('256');
+    expect(harness.editor.taskTypes()).toContain('RETRIEVAL_QUERY');
+  });
+
+  it('proposes nothing over task types on file, nor where the reference proposes none', () => {
+    const declared = editing(
+      { ...EMBEDDER_ON_FILE, embedding: { task_types: ['CLUSTERING'] } },
+      EMBEDDER,
+    );
+    const taskless = editing(EMBEDDER_ON_FILE, {
+      ...EMBEDDER,
+      declaration: { ...EMBEDDER.declaration, embedding: { supports_batch: true } },
+    });
+
+    expect(declared.testid('embedding-proposed')).toBeNull();
+    expect(taskless.testid('embedding-proposed')).toBeNull();
+    // Shown at all, so the two above are absences and not a tab nobody opened.
+    expect(editing(EMBEDDER_ON_FILE, EMBEDDER).testid('embedding-proposed')).not.toBeNull();
+  });
+
+  it('fills a new entry with them from the reference, like every other fact', async () => {
+    const harness = setup({ reference: of({ ...REFERENCE, entries: [EMBEDDER] }) });
+    const editor = harness.editor as unknown as Editor & {
+      startOn: (upstream: GatewayProvider | null) => void;
+    };
+    editor.startOn(VERTEX);
+    harness.fixture.detectChanges();
+    await harness.fixture.whenStable();
+
+    harness.type('model-name-input', 'gemini-embedding-9');
+    harness.click('[data-testid="fill-from-reference"]');
+
+    expect(editor.taskTypes()).toBe('RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT');
+    expect(editor.supportsBatch()).toBe(true);
+    expect(harness.testid('reference-filled')?.textContent).toContain('embedding');
+  });
+
+  it('offers to let a model on file sample where the reference does not fix it', async () => {
+    const harness = editing(SPEAKER_ON_FILE, SPEAKER);
+
+    expect(harness.testid('free-sampling-proposed')).not.toBeNull();
+    harness.click('[data-testid="adopt-free-sampling"]');
+    await harness.fixture.whenStable();
+    harness.fixture.detectChanges();
+
+    expect(harness.editor.fixedSampling()).toBe(false);
+    expect((harness.testid('model-fixed-sampling') as HTMLInputElement).checked).toBe(false);
+    expect(harness.testid('free-sampling-proposed')).toBeNull();
+  });
+
+  it('offers nothing where the reference fixes the sampling too, or the form does not', () => {
+    const fixedToo = editing(SPEAKER_ON_FILE, {
+      ...SPEAKER,
+      declaration: { ...SPEAKER.declaration, fixed_sampling: true },
+    });
+    const free = editing({ ...SPEAKER_ON_FILE, fixed_sampling: false }, SPEAKER);
+    const unlisted = editing({ ...SPEAKER_ON_FILE, name: 'gemini-speech-8' }, SPEAKER);
+
+    expect(fixedToo.testid('free-sampling-proposed')).toBeNull();
+    expect(free.testid('free-sampling-proposed')).toBeNull();
+    expect(unlisted.testid('free-sampling-proposed')).toBeNull();
+  });
+});
+
 describe('ModelEditor — what a model costs this installation (FRD-509)', () => {
   const BILLED: BillingPrices = {
     model: 'claude-sonnet-9',

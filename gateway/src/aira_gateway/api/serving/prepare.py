@@ -25,6 +25,7 @@ from aira_common.observability import set_span_attributes
 from aira_gateway.api.gemini.errors import GeminiHTTPError
 from aira_gateway.api.serving.conditions import installation_requirements
 from aira_gateway.api.serving.context import (
+    COUNT_METHOD,
     catalog_of,
     declared_routing,
     embedding_bounds,
@@ -95,7 +96,7 @@ from aira_gateway.technical import technical_of
 from aira_gateway.telemetry import model_call_span
 from aira_gateway.thinking import ThinkingRejected, check_budget_fits, reserved_tokens
 from aira_gateway.thinking import resolve as resolve_thinking
-from aira_gateway.upstreams.base import DialectUnsupported, Upstream, can_rank
+from aira_gateway.upstreams.base import DialectUnsupported, Upstream, can_count, can_rank
 
 
 @dataclass(slots=True)
@@ -163,8 +164,11 @@ async def prepare_for_dispatch(
         # limit takes its weight, or one caller's unservable batch spends the use case's allowance.
         check_embedding_shape(embed, embedding_bounds(request))
 
-    # An embedding batch weighs one request per text (`FRD-113` FR-6).
+    # An embedding batch weighs one request per text (`FRD-113` FR-6) — and, where the pipeline
+    # reads each text, one more per title it reads (`FRD-155`), as a ranking does.
     units = embed.size if embed is not None else 1
+    if embed is not None and embed.titled and await reads_each_text(request):
+        units += embed.titled
     await guard_before_work(request, units=units)
 
     fallbacks: tuple[str, ...] = ()
@@ -213,17 +217,24 @@ async def prepare_for_dispatch(
         # platform has nowhere to be sent without it (`FRD-507`).
         embed = embed.model_copy(update={"addressing": declaration.addressing})
 
-    reservation = await enforce_pre_dispatch(
-        request,
-        model=served,
-        max_output_tokens=requested_output,
-        attachments=[part.media_type for part in canonical.attachments] if canonical else None,
-        units=units,
-        input_texts=(
-            prompt_texts(canonical) if canonical is not None else embed.texts if embed else ()
-        ),
-        extra_tokens=reserved_tokens(canonical.thinking, declaration) if canonical else 0,
-    )
+    if method == COUNT_METHOD:
+        # Free at the vendor and booked as nothing (`FRD-155`): holding back what an answer could
+        # cost would refuse a count, near a limit, for spending it never does.
+        reservation = await enforce_pre_dispatch(
+            request, model=served, max_output_tokens=None, units=0, answers_in_tokens=False
+        )
+    else:
+        reservation = await enforce_pre_dispatch(
+            request,
+            model=served,
+            max_output_tokens=requested_output,
+            attachments=[part.media_type for part in canonical.attachments] if canonical else None,
+            units=units,
+            input_texts=(
+                prompt_texts(canonical) if canonical is not None else embed.texts if embed else ()
+            ),
+            extra_tokens=reserved_tokens(canonical.thinking, declaration) if canonical else 0,
+        )
     # Last, so the span describes what will actually be dispatched, not what the caller sent.
     describe_on_the_span(canonical, embed)
     # Every control passed: what follows is the model chain (`FRD-630`).
@@ -448,6 +459,44 @@ async def rank(request: Request, prepared: Prepared, trail: AuditTrail) -> Ranke
         permits=await ranking_requirements(request),
         routing_of=await declared_routing(request),
         fit=ranking_fit(request),
+    )
+    trail.served_by(answered.model, answered.candidate_index)
+    trail.passed_over(answered.skipped, answered.failed)
+    return answered.value
+
+
+async def count(request: Request, prepared: Prepared, trail: AuditTrail) -> int:
+    """Count a prepared request's tokens with the vendor's own tokenizer (`FRD-155`), at the
+    endpoint it does not charge for, and say on ``trail`` which model counted.
+
+    **The model routing chose and no other.** A count is a fact about one tokenizer, so the use
+    case's chain is not walked: another model's figure answers a question nobody asked. The
+    conditions every chain applies still hold for that one model — residency, release, what it
+    can read — because the whole request reaches its vendor. A model whose vendor counts nothing
+    for this gateway is refused by name, never estimated: an estimate here would be presented as
+    the vendor's figure.
+    """
+    asked = prepared.asked
+    assert asked is not None
+
+    async def counted(provider: Upstream, candidate: CanonicalRequest) -> int:
+        if not can_count(provider):
+            raise DialectUnsupported(
+                f"Model '{candidate.model}' is served by an adapter whose vendor counts no tokens "
+                "for this gateway, and its count is not estimated: a figure worked out here would "
+                "be another tokenizer's, presented as this model's."
+            )
+        with model_call_span(candidate.model, purpose="count"):
+            return await provider.count_tokens(candidate)
+
+    answered = await answer_with_fallback(
+        providers_of(request),
+        asked,
+        (),
+        counted,
+        permits=await requirements_for(request, asked),
+        routing_of=await declared_routing(request),
+        fit=fitting(request),
     )
     trail.served_by(answered.model, answered.candidate_index)
     trail.passed_over(answered.skipped, answered.failed)
