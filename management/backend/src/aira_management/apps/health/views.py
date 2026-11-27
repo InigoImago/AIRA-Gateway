@@ -10,14 +10,20 @@ import asyncio
 
 from django.http import HttpRequest, JsonResponse
 
+from aira_common.build import this_build
 from aira_common.health import CheckResult, any_reachable, check_tcp
 from aira_common.logging.lifecycle import pseudonym_state
 from aira_management.config.runtime import get_settings
 
 
 def healthz(_request: HttpRequest) -> JsonResponse:
-    """Liveness probe: the process is up and serving."""
-    return JsonResponse({"status": "ok"})
+    """Liveness probe: the process is up and serving — and which build it is (`FRD-157`), as the
+    gateway's says it: the release, the commit and the time the image was built, `null` where a
+    build is no release. Read from the environment, without I/O."""
+    build = this_build()
+    return JsonResponse(
+        {"status": "ok", "version": build.version, "commit": build.commit, "built": build.time}
+    )
 
 
 def readyz(_request: HttpRequest) -> JsonResponse:

@@ -7,7 +7,7 @@ each FRD's own header is the single source** — this index is generated from th
 and a test fails when they disagree, because feature status kept in two places is feature
 status that goes stale in the copy nobody opens.
 
-**124 of 127 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
+**126 of 129 delivered.** Narrative history: [`../DEVLOG.md`](../DEVLOG.md). Decisions: [`../adr/`](../adr/README.md). Rules this project has paid for: [`../LESSONS.md`](../LESSONS.md).
 
 | FRD | Feature | Phase | Status |
 | --- | ------- | ----- | ------ |
@@ -66,6 +66,8 @@ status that goes stale in the copy nobody opens.
 | [153](FRD-153-every-process-reports-its-health.md) | Every process reports its own health | 7 (deployment) | ✅ Built |
 | [154](FRD-154-known-vulnerabilities-in-a-release.md) | A release is checked for known vulnerabilities, when it is made and every night after | 7 | ✅ Built |
 | [155](FRD-155-every-gemini-client-in-every-language.md) | Every Gemini client, in every language | 8 | ✅ Built |
+| [156](FRD-156-the-callers-address-behind-proxies.md) | The caller's address behind proxies, one rule on both planes | 6 | ✅ Built |
+| [157](FRD-157-every-image-says-which-release-it-is.md) | Every image says which release it is | 7 | ✅ Built |
 | [200](FRD-200-mgmt-backend-foundation.md) | Management backend foundation (DRF API + OIDC) | 2 | ✅ Done (Phase 2) |
 | [201](FRD-201-keycloak-rbac.md) | RBAC: roles + object-level use-case permissions | 2 | ✅ Done (Phase 2) |
 | [202](FRD-202-usecase-crud.md) | Use-case CRUD & membership (self-service) | 2 | ✅ Done (Phase 2) |

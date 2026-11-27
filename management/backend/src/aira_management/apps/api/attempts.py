@@ -18,8 +18,8 @@ import time
 from typing import Any
 
 from django.core.cache import cache
-from rest_framework.throttling import BaseThrottle
 
+from aira_management.apps.api.access import source_of
 from aira_management.config.rates import PERIODS
 
 #: Cache key shape. Namespaced so it cannot collide with DRF's own scoped keys.
@@ -72,13 +72,12 @@ class FailedAuthentications:
 
 
 def _ident(request: Any) -> str:
-    """The source address as DRF resolves it: `NUM_PROXIES` (`AIRA_TRUSTED_PROXY_HOPS`) entries
-    from the right of `X-Forwarded-For`, the socket peer when it is `0`.
+    """The source address the access line names (`source_of`, `FRD-156`): through the proxies the
+    installation names, never further left than the first address it does not.
 
-    Never the whole header: a proxy appends, so everything left of what it appended is whatever
-    the caller sent, and a key the caller can choose is one they can rotate past the bound.
+    Never what a caller wrote: a key the caller can choose is one they can rotate past the bound.
     """
-    return str(BaseThrottle().get_ident(request))
+    return source_of(request) or "unknown"
 
 
 def _parse(rate: str) -> tuple[int, int]:

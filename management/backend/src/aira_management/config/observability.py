@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from aira_common.build import this_build
 from aira_common.integration_debug import report
 from aira_common.observability import configure_observability
-from aira_management import __version__
 from aira_management.config.app_settings import ManagementSettings
 
 #: How a Django command is started: ``manage.py <command>``, ``python -m django <command>`` (whose
@@ -39,7 +39,7 @@ def setup_observability(settings: ManagementSettings) -> bool:
     """
     return configure_observability(
         service_name=settings.app_name,
-        service_version=__version__,
+        service_version=this_build().version,
         environment=settings.environment,
         endpoint=settings.otel_endpoint,
         traces_endpoint=settings.otel_traces_endpoint,

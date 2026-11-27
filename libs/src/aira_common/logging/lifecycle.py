@@ -16,10 +16,13 @@ today, and a secret is a change to somebody else's Vault — but a warning in th
 
 from __future__ import annotations
 
+import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from aira_common.addresses import AddressMode, address_mode, configure_addresses
+from aira_common.build import this_build
+from aira_common.forwarded import RETIRED_SETTINGS, TrustedProxies
 from aira_common.logging.pipeline import get_logger
 from aira_common.pseudonym import configure_pseudonyms, key_is_stable, persons_are_pseudonymised
 
@@ -62,26 +65,41 @@ def pseudonym_state() -> tuple[bool, str]:
 def say_started(
     *,
     service: str,
-    version: str,
     environment: str,
     signals: Iterable[str],
     log_level: str,
+    trusted_proxies: TrustedProxies,
+    environ: Mapping[str, str] = os.environ,
 ) -> None:
-    """The line a process writes once it is configured and its export exists."""
+    """The line a process writes once it is configured and its export exists — with the release and
+    the commit its image says it is (`FRD-157`), so a log store tells from which line on an update
+    ran."""
     global _started_at
     _started_at = time.monotonic()
+    build = this_build()
     _log.info(
         "process_started",
         category=LIFECYCLE,
         service=service,
-        version=version,
+        version=build.version,
+        # `null` for a build that was not told one: a local build, never a published image.
+        commit=build.commit,
         environment=environment,
         strict_data_mode=persons_are_pseudonymised(),
         telemetry_ip=str(address_mode()),
         pseudonym_key="installation" if key_is_stable() else "process",
         signals=sorted(signals),
         log_level=log_level.upper(),
+        # How the caller's address is read (`FRD-156`): the connection's own, or through the
+        # proxies the installation names — and which.
+        client_address="forwarded" if trusted_proxies else "peer",
+        trusted_proxies=trusted_proxies.described(),
     )
+    for setting, replacement in RETIRED_SETTINGS.items():
+        if setting in environ:
+            # Said where an alert sees it: a setting that silently does nothing is one somebody
+            # believes took effect.
+            _log.warning("setting_retired", category=LIFECYCLE, setting=setting, hint=replacement)
     stable, detail = pseudonym_state()
     if not stable:
         # Said once per process, after the export exists, so an alert on warnings in the log store

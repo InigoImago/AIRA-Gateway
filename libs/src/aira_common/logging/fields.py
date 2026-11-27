@@ -84,7 +84,11 @@ FIELDS: dict[str, Field] = {
         "configuration, data_access, suspension, finding or lifecycle.",
     ),
     "change_id": _plain("int", "The configuration history's row for a change, to look it up by."),
+    "client_address": _plain(
+        "str", "How a process reads a caller's address: `peer`, or `forwarded` through its proxies."
+    ),
     "clock_skew_seconds": _plain("float", "The clock skew a token check tolerates."),
+    "commit": _plain("str", "The commit a process's image was built from, as its image says."),
     "constraint": _plain("str", "The database constraint an error names; never the values."),
     "cost_nanos": _plain("int", "What a request cost, in nano-units of the currency."),
     "count": _plain("int", "How many."),
@@ -210,7 +214,10 @@ FIELDS: dict[str, Field] = {
     "results": _plain("int", "How many results a search found."),
     "retry_after": _plain("float", "Seconds until a refused caller may try again."),
     "retry_in_seconds": _plain("float", "Seconds until the next attempt."),
-    "route": _plain("str", "The route a request matched, with its parameters as names."),
+    "route": _plain(
+        "str",
+        "The route a request matched, its parameters as names: `/api/v1/use-cases/{slug}/groups/`.",
+    ),
     "rows_deleted": _plain("int", "How many audit rows were deleted."),
     "rule": _plain("str", "An anomaly rule's name."),
     "rule_id": _plain("int", "An anomaly rule's id."),
@@ -218,6 +225,7 @@ FIELDS: dict[str, Field] = {
     "seconds_past_expiry": _plain("float", "How long ago a token expired."),
     "secret_id_source": _plain("str", "Where the Vault secret id was read from."),
     "service": _plain("str", "Which AIRA process: its AIRA_APP_NAME."),
+    "setting": _plain("str", "A setting a line is about, by its variable's name."),
     "settled": _plain("bool", "Whether a budget reservation was settled."),
     "shown": _plain("int", "How many items of a batch are shown."),
     "signal": _plain("str", "An OTLP signal: traces, metrics or logs."),
@@ -254,6 +262,9 @@ FIELDS: dict[str, Field] = {
     "trace_id": _plain("str", "The trace the line was written in."),
     "traced": _plain("bool", "Whether a Kafka record carried a trace context."),
     "traces": _plain("int", "How many requests' traces an OTLP batch carried."),
+    "trusted_proxies": _plain(
+        "list", "The networks whose X-Forwarded-For a process believes (AIRA_TRUSTED_PROXIES)."
+    ),
     "unmodelled_fields": _plain("list", "Request fields the surface does not model."),
     "unscanned": _plain("int", "How many characters a check did not read."),
     "uptime_seconds": _plain("float", "How long a process ran."),
@@ -267,7 +278,10 @@ FIELDS: dict[str, Field] = {
     "username": _person("A person's username."),
     "value": _plain("str", "A configuration value AIRA did not recognise."),
     "vendor": _plain("str", "A database vendor."),
-    "version": _plain("str", "The version a process runs."),
+    "version": _plain(
+        "str",
+        "The release a process runs, as its image says: `0.1.18`; `0.0.0+local` for no release.",
+    ),
     "why": _plain("str", "Why, as AIRA says it."),
     WITHHELD: _plain(
         "list",

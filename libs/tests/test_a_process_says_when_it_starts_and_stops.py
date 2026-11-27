@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from aira_common.addresses import AddressMode, configure_addresses
+from aira_common.forwarded import TrustedProxies
 from aira_common.logging import configure_logging, process_named
 from aira_common.logging.lifecycle import (
     configure_identities,
@@ -30,34 +31,88 @@ def _events(capsys: Any) -> list[dict[str, Any]]:
     return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
 
 
-def _start(**identities: Any) -> None:
+def _start(proxies: str = "", environ: dict[str, str] | None = None, **identities: Any) -> None:
     configure_identities(**identities)
     configure_logging("INFO")
     say_started(
         service="aira-gateway",
-        version="9.9.9",
         environment="test",
         signals=["logs", "metrics"],
         log_level="info",
+        trusted_proxies=TrustedProxies.parse(proxies),
+        environ=environ or {},
     )
 
 
-def test_the_first_line_says_what_the_process_is_and_how_it_writes(capsys: Any) -> None:
+def test_the_first_line_says_what_the_process_is_and_how_it_writes(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release and the commit are the image's (`FRD-157`): what the build handed in."""
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    monkeypatch.setenv("AIRA_GIT_COMMIT", "0123456789abcdef")
     _start(strict_data_mode=True, pseudonym_secret="key", telemetry_ip="pseudonym")
 
     (line,) = [line for line in _events(capsys) if line["event"] == "process_started"]
     assert line["category"] == "lifecycle"
     assert (line["service"], line["version"], line["environment"]) == (
         "aira-gateway",
-        "9.9.9",
+        "0.1.18",
         "test",
     )
+    assert line["commit"] == "0123456789abcdef"
     assert (line["strict_data_mode"], line["telemetry_ip"], line["pseudonym_key"]) == (
         True,
         "pseudonym",
         "installation",
     )
     assert (line["signals"], line["log_level"]) == (["logs", "metrics"], "INFO")
+
+
+def test_a_build_that_is_no_release_says_so_and_names_no_commit(capsys: Any) -> None:
+    """Without the image's identity the line says `0.0.0+local`, never a number that looks like a
+    release — the `0.1.0` every process said before (`FRD-157`)."""
+    _start(strict_data_mode=True, pseudonym_secret="key", telemetry_ip="pseudonym")
+
+    (line,) = [line for line in _events(capsys) if line["event"] == "process_started"]
+    assert line["version"] == "0.0.0+local"
+    assert line["commit"] is None
+
+
+def test_the_first_line_says_how_the_callers_address_is_read(capsys: Any) -> None:
+    """`FRD-156`: the connection's own address with no proxy named, and which proxies are."""
+    _start(strict_data_mode=True, pseudonym_secret="key", telemetry_ip="pseudonym")
+    _start(
+        "172.18.0.0/16, 10.20.30.40",
+        strict_data_mode=True,
+        pseudonym_secret="key",
+        telemetry_ip="pseudonym",
+    )
+
+    first, second = [line for line in _events(capsys) if line["event"] == "process_started"]
+    assert (first["client_address"], first["trusted_proxies"]) == ("peer", [])
+    assert (second["client_address"], second["trusted_proxies"]) == (
+        "forwarded",
+        ["172.18.0.0/16", "10.20.30.40/32"],
+    )
+
+
+def test_a_retired_setting_still_set_is_a_warning_naming_what_replaced_it(capsys: Any) -> None:
+    """A setting nothing reads any more is one somebody believes took effect."""
+    _start(
+        environ={"AIRA_TRUSTED_PROXY_HOPS": "2", "AIRA_TRUST_FORWARDED_FOR": "true"},
+        strict_data_mode=True,
+        pseudonym_secret="key",
+        telemetry_ip="pseudonym",
+    )
+
+    retired = [line for line in _events(capsys) if line["event"] == "setting_retired"]
+    assert sorted(line["setting"] for line in retired) == [
+        "AIRA_TRUSTED_PROXY_HOPS",
+        "AIRA_TRUST_FORWARDED_FOR",
+    ]
+    assert all(
+        line["level"] == "warning" and "AIRA_TRUSTED_PROXIES" in line["hint"] for line in retired
+    )
 
 
 def test_a_key_the_process_drew_itself_is_a_warning_beside_it(capsys: Any) -> None:

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from aira_gateway import __version__
+from aira_common.build import this_build
 from aira_gateway.app import create_app
 from aira_gateway.config import GatewaySettings
 
@@ -10,8 +10,28 @@ def test_create_app_uses_settings() -> None:
     app = create_app(GatewaySettings(app_name="custom-gw"))
     assert isinstance(app, FastAPI)
     assert app.title == "custom-gw"
-    assert app.version == __version__
+    assert app.version == this_build().version
     assert app.state.settings.app_name == "custom-gw"
+
+
+def test_every_signal_and_the_first_line_name_the_release_the_image_says(monkeypatch) -> None:
+    """`service.version` on every span, metric and exported line, and the first line's `version`,
+    are the image's release (`FRD-157`) — not the `0.1.0` written into the code before."""
+    import aira_gateway.config as config_module
+
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    seen: dict[str, object] = {}
+    said: dict[str, object] = {}
+    monkeypatch.setattr(
+        config_module, "configure_observability", lambda **kwargs: seen.update(kwargs) or True
+    )
+    monkeypatch.setattr(config_module, "say_started", lambda **kwargs: said.update(kwargs))
+
+    config_module.configure_process(GatewaySettings(otel_enabled=True))
+
+    assert seen["service_version"] == "0.1.18"
+    assert said["service"] == "aira-gateway" and "version" not in said
+    assert create_app(GatewaySettings()).version == "0.1.18"
 
 
 def test_create_app_without_settings_uses_defaults() -> None:

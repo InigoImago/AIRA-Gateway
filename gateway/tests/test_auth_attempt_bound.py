@@ -20,14 +20,15 @@ BODY = {"contents": [{"parts": [{"text": "hi"}]}]}
 PATH = "/v1beta/models/mock-1:generateContent"
 
 
-def _client(**overrides: object) -> TestClient:
+def _client(peer: str = "testclient", **overrides: object) -> TestClient:
     # No shared counter store: the bound must be a property of *this* app, not of whatever a
     # previous run left in a Redis that happens to be up on this machine. No `test_database`
     # either: under pytest the gateway is on SQLite regardless, and outside `local` the setting is
     # refused at startup, which the deployed cases below would trip over.
     values: dict[str, object] = {"auth_required": True, "redis_url": ""}
     values.update(overrides)
-    return TestClient(create_app(GatewaySettings(**values)))  # type: ignore[arg-type]
+    app = create_app(GatewaySettings(**values))  # type: ignore[arg-type]
+    return TestClient(app, client=(peer, 50000))
 
 
 def test_a_few_failures_are_just_failures() -> None:
@@ -85,8 +86,8 @@ def test_zero_switches_it_off() -> None:
 def test_rotating_a_forwarded_header_does_not_buy_a_fresh_bucket() -> None:
     """**The bound is only as strong as the address it counts.**
 
-    It keys on `client_ip`, which honours `X-Forwarded-For` when the deployment says a proxy sits
-    in front. A proxy *appends*, so the left of that header is whatever the caller wrote — and
+    It keys on `client_ip`, which honours `X-Forwarded-For` from the proxies the deployment names
+    (`FRD-156`). A proxy *appends*, so the left of that header is whatever the caller wrote — and
     while this read the leftmost entry, a prober could send a different forged address on every
     attempt and never meet the limit. The database round trip per attempt that the bound exists to
     stop was available without limit to anyone who set one header.
@@ -98,7 +99,9 @@ def test_rotating_a_forwarded_header_does_not_buy_a_fresh_bucket() -> None:
     can rescue that.
     """
     real = "203.0.113.7"
-    with _client(max_auth_failures_per_minute=3, trust_forwarded_for=True) as client:
+    with _client(
+        "172.18.0.5", max_auth_failures_per_minute=3, trusted_proxies="172.18.0.0/16"
+    ) as client:
         statuses = [
             client.post(
                 PATH,

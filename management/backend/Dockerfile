@@ -12,7 +12,7 @@
 #   - the outbox relay        (`python manage.py relay --loop`, or once per run of a scheduler)
 
 # ---- build ---------------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm AS builder
+FROM python:3.14-slim-trixie AS builder
 
 # **The installer is pinned to one release and to its digest.** It reads the lock and writes every
 # package into the image, so a tag that can be moved is a way to change what ships — and a moving
@@ -46,7 +46,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --frozen --no-dev --no-editable --package aira-management
 
 # ---- runtime -------------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.14-slim-trixie AS runtime
 
 RUN groupadd --system --gid 10001 aira \
     && useradd --system --uid 10001 --gid aira --home /app --no-create-home aira
@@ -68,6 +68,20 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 USER aira
 EXPOSE 8002
+
+# **What this image is** (`FRD-157`): the release, the commit and the time it was built, handed in
+# by the release job (`--build-arg`). Every process states them in its first line, on every span and
+# metric and on `/healthz`; `docker inspect` shows them as the image's labels. A build without them
+# says `0.0.0+local`, which is true: it is no release. Last, so a new commit rebuilds no layer.
+ARG AIRA_BUILD_VERSION=0.0.0+local
+ARG AIRA_GIT_COMMIT=
+ARG AIRA_BUILD_TIME=
+ENV AIRA_BUILD_VERSION=$AIRA_BUILD_VERSION \
+    AIRA_GIT_COMMIT=$AIRA_GIT_COMMIT \
+    AIRA_BUILD_TIME=$AIRA_BUILD_TIME
+LABEL org.opencontainers.image.version=$AIRA_BUILD_VERSION \
+      org.opencontainers.image.revision=$AIRA_GIT_COMMIT \
+      org.opencontainers.image.created=$AIRA_BUILD_TIME
 
 # **One check for every process this image runs**, as in the gateway's: the relay's heartbeat when
 # it keeps one, the API's `/healthz` otherwise.

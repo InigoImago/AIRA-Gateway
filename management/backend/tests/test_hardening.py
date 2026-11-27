@@ -391,7 +391,7 @@ def test_a_deployment_whose_privacy_notice_names_no_controller_refuses_to_start(
         ({"api_key_default_days": 365, "api_key_max_days": 180}, "AIRA_API_KEY_DEFAULT_DAYS"),
         ({"api_key_default_days": 0}, "AIRA_API_KEY_DEFAULT_DAYS"),
         ({"api_key_max_days": 0}, "AIRA_API_KEY_MAX_DAYS"),
-        ({"trusted_proxy_hops": -1}, "AIRA_TRUSTED_PROXY_HOPS"),
+        ({"trusted_proxies": "172.18.0.0/16,proxy"}, "AIRA_TRUSTED_PROXIES"),
     ],
 )
 def test_a_value_no_environment_can_run_on_refuses_local_too(values: dict, named: str) -> None:
@@ -434,22 +434,23 @@ def test_a_deployment_must_name_its_identity_provider_and_a_real_database() -> N
 def test_the_proxys_scheme_is_believed_only_with_a_proxy_in_front() -> None:
     from aira_management.config.security import proxy_ssl_header
 
-    assert proxy_ssl_header(ManagementSettings(trusted_proxy_hops=1)) == (
+    assert proxy_ssl_header(ManagementSettings(trusted_proxies="172.18.0.0/16")) == (
         "HTTP_X_FORWARDED_PROTO",
         "https",
     )
-    assert proxy_ssl_header(ManagementSettings(trusted_proxy_hops=0)) is None
+    assert proxy_ssl_header(ManagementSettings(trusted_proxies="")) is None
 
 
 def test_hsts_is_sent_behind_a_proxy_that_terminates_tls(settings) -> None:
     """Django sends HSTS only on a request it believes is secure, and behind the proxy every
     request arrives as plain HTTP — so HSTS was configured outside `local` and never sent. The
     deployed value of the header setting is the one `config.security` derives."""
-    from aira_management.config.runtime import get_settings
     from aira_management.config.security import proxy_ssl_header
 
     settings.SECURE_HSTS_SECONDS = 31_536_000
-    settings.SECURE_PROXY_SSL_HEADER = proxy_ssl_header(get_settings())
+    settings.SECURE_PROXY_SSL_HEADER = proxy_ssl_header(
+        ManagementSettings(trusted_proxies="172.18.0.0/16")
+    )
     client = _client(_user("hsts"))
 
     behind_tls = client.get("/api/v1/me", HTTP_X_FORWARDED_PROTO="https")
@@ -468,5 +469,6 @@ def test_the_settings_module_wires_what_config_security_decides() -> None:
 
     configured = get_settings()
     assert proxy_ssl_header(configured) == django_settings.SECURE_PROXY_SSL_HEADER
-    assert django_settings.REST_FRAMEWORK["NUM_PROXIES"] == configured.trusted_proxy_hops
+    # DRF reads no header of its own: the address is `source_of`'s (`FRD-156`).
+    assert django_settings.REST_FRAMEWORK["NUM_PROXIES"] == 0
     assert "aira_management.apps.api.middleware.RefuseNulCharacters" in django_settings.MIDDLEWARE

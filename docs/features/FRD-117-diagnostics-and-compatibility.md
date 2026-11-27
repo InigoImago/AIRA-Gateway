@@ -49,8 +49,9 @@ ask us about.
 ## 4. Functional Requirements
 
 - **FR-1 `GET /version-info`.** Commit, short commit, branch, build time, build number, and the
-  environment. Unauthenticated. Absent build metadata yields nulls, not an error — the predecessor's
-  behaviour, and correct: a development run has no build number and should still answer.
+  environment — and, since `FRD-157`, the release. Unauthenticated. Absent build metadata yields
+  nulls, not an error — the predecessor's behaviour, and correct: a development run has no build
+  number and should still answer.
 - **FR-2 Upstream readiness.** `/readyz` reports, per configured provider, whether it is reachable
   — using a **cached background probe**, never an inline call (§5.2).
 - **FR-3 Upstream failure is degraded, not down.** Consistent with `FRD-405`: `/readyz` returns
@@ -77,9 +78,12 @@ ask us about.
 
 ### 5.1 Build metadata
 
-Written at build time into a file the image carries, read once at startup. Absent file → nulls
-(FR-1). The Compose and CI builds pass the commit and build number; a local `uv run` simply has
-none, and that is a valid state rather than a broken one.
+Written at build time into the image's environment and labels, read from the environment when
+asked (`aira_common.build`, `FRD-157`). The release job hands every image the tag's version, the
+commit and the time, and reads them back before a Release names it; a build of somebody's own has
+none — `0.0.0+local` and nulls (FR-1) — and that is a valid state rather than a broken one. This
+section said a file, and that Compose and CI passed a commit and a build number; neither was so
+until `FRD-157`, and a published image answered nulls.
 
 ### 5.2 Health must not become a load generator
 

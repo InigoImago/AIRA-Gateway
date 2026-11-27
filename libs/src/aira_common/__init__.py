@@ -5,6 +5,6 @@
 healthcheck, ``python -m aira_common.healthcheck``, runs every fifteen seconds in every container,
 inside the core the service itself runs on; a root that imported the settings, the OpenTelemetry
 SDK and an HTTP client made each run of it a third of a second of that core's time.
-"""
 
-__version__ = "0.1.0"
+Which release a process is, the image says (`aira_common.build`), never a number in the code.
+"""

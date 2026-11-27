@@ -177,9 +177,10 @@ def test_a_token_tolerance_out_of_bounds_refuses_to_start_with_oidc_off(
         GatewaySettings(oidc_issuer="", **{setting: value})
 
 
-def test_a_negative_proxy_count_refuses_to_start() -> None:
-    """A count of proxies; 0 when the gateway is reached directly. Management refused a negative
-    one, and the gateway read it as 0 without saying so — two planes, two answers to one setting."""
-    with pytest.raises(ValidationError, match="trusted_proxy_hops"):
-        GatewaySettings(trusted_proxy_hops=-1)
-    assert GatewaySettings(trusted_proxy_hops=0).trusted_proxy_hops == 0
+def test_a_proxy_list_with_an_entry_that_is_no_address_refuses_to_start() -> None:
+    """Management refuses it among its start-up checks; a plane that read it as nothing would record
+    every caller under a proxy's address and say so nowhere (`FRD-156`)."""
+    with pytest.raises(ValidationError, match="AIRA_TRUSTED_PROXIES: '10.0.0.0/33'"):
+        GatewaySettings(trusted_proxies="172.18.0.0/16, 10.0.0.0/33")
+    assert GatewaySettings(trusted_proxies=" 172.18.0.0/16 ").trusted_proxies == " 172.18.0.0/16 "
+    assert GatewaySettings().trusted_proxies == ""

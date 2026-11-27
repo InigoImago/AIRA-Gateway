@@ -3,7 +3,7 @@
 A `FROM` or `COPY --from` is code the build runs or ships, fetched by a name somebody else can
 move. Two rules, of different strength for a reason:
 
-- **A base names a version** — `python:3.14-slim-bookworm`, `nginx:1.30-alpine` — never `latest`
+- **A base names a version** — `python:3.14-slim-trixie`, `nginx:1.30-alpine` — never `latest`
   and never a bare variant such as `alpine`. A version line is still rebuilt by its maintainers
   whenever its distribution ships a fix, which is what keeps a base patched; a moving name is
   whatever was pushed last, and a line that has ended keeps building without being patched — which

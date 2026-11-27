@@ -65,7 +65,8 @@ def test_a_request_is_an_access_line_with_its_route_and_its_actor(
 
     (line,) = [entry for entry in logs if entry["event"] == "http_request"]
     assert (line["method"], line["status"], line["actor"]) == ("DELETE", 404, "boss")
-    assert "members" in line["route"] and "mustermann" not in json.dumps(line)
+    assert line["route"] == "/api/v1/use-cases/{slug}/members/{username}/"
+    assert "mustermann" not in json.dumps(line)
     assert "johannes" not in json.dumps(line)
     assert isinstance(line["duration_ms"], float)
 
@@ -83,7 +84,7 @@ def test_a_refused_sign_in_is_a_line(monkeypatch: pytest.MonkeyPatch) -> None:
         "unauthenticated",
         401,
     )
-    assert line["route"] and "subject" not in line
+    assert line["route"] == "/api/v1/me" and "subject" not in line
 
 
 def test_a_refused_permission_is_a_line_naming_who(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,7 +122,7 @@ def test_an_unexpected_error_says_its_type_and_place_and_not_its_message(
 
     (line,) = [entry for entry in logs if entry["event"] == "unhandled_error"]
     assert isinstance(line["exc_info"], RuntimeError)
-    assert line["route"] == "api/v1/me"
+    assert line["route"] == "/api/v1/me"
     assert "error" not in line and "path" not in line
 
 

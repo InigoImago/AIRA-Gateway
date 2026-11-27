@@ -227,7 +227,7 @@ deployment starts, and whether it starts as a deployment:
 | `AIRA_KAFKA_SECURITY_PROTOCOL` and the SASL settings | `SASL_SSL`, and each plane's broker identity — `AIRA_GATEWAY_KAFKA_SASL_USERNAME` and `AIRA_MANAGEMENT_KAFKA_SASL_USERNAME`, their passwords in Vault (§4) | `PLAINTEXT` is refused on both planes; with only the shared `AIRA_KAFKA_SASL_USERNAME`, both planes authenticate as one identity |
 | `AIRA_DIRECTORY_CLIENT_ID`, `AIRA_DIRECTORY_URL`, `AIRA_DIRECTORY_TOKEN_REALM` | the directory client, where Management and the gateway reach Keycloak, and — for a client kept in `master` — `master` | Without the first two no role can be bound to a group, and no mail finds an address. A client in `master` without the third is refused by your realm as `invalid_client`: the console offers only what it already knows, and Management logs `directory.unavailable` |
 | `AIRA_ALLOWED_REGIONS` | the regions you are permitted to use | A model configured outside them stops the gateway at startup; a catalogued one is refused per request. `AIRA_ALLOWED_MODEL_REGIONS` permits a region for named models alone |
-| `AIRA_TRUST_FORWARDED_FOR`, `AIRA_TRUSTED_PROXY_HOPS` | `true`, and the number of proxies that append, **only** behind proxies you control | Otherwise a caller can dictate the address in your audit trail. The Compose files hand the count to the gateway only: Management keeps its default of 1 — right for the console's nginx alone, one short behind a proxy of yours ([`../INTEGRATIONS.md` §8](../INTEGRATIONS.md#8-reverse-proxy-and-tls)) |
+| `AIRA_TRUSTED_PROXIES` | your proxies' addresses or networks — behind Compose the Docker network, e.g. `172.18.0.0/16`, plus a proxy on another machine by its own address | Otherwise every audit row and line names your proxy, and all callers share one failed-sign-in limit. Name the proxies only, never the workstations' networks: a listed address is believed about whom it forwarded for. One value for both planes; the Compose files hand it to both ([`../INTEGRATIONS.md` §8](../INTEGRATIONS.md#8-reverse-proxy-and-tls)) |
 | `AIRA_MAX_REQUEST_BYTES` | your body ceiling | The product's default is 8 MiB, the integrated example's 1 MiB. Inline documents need more, and so does a coding assistant's long session, which resends the whole conversation with every step |
 | `AIRA_STORE_PAYLOADS` | your policy | A kill switch above the per-use-case setting |
 | `AIRA_OTEL_ENABLED`, `AIRA_OTEL_ENDPOINT` | your collector — or, per signal, `AIRA_OTEL_TRACES_ENDPOINT`, `_METRICS_ENDPOINT`, `_LOGS_ENDPOINT` as whole URLs | The default endpoint names a collector this composition does not start; a signal with no URL at all is not exported |
@@ -545,8 +545,8 @@ not write — both are visible in the gateway's log.
 - [ ] All nine topics exist and are compacted
 - [ ] Every model in the catalog is approved deliberately, not by the migration that approved
       pre-existing rows
-- [ ] `AIRA_TRUST_FORWARDED_FOR` and `AIRA_TRUSTED_PROXY_HOPS` match reality: on, with the right
-      count, behind your proxies; off otherwise
+- [ ] `AIRA_TRUSTED_PROXIES` names your proxies and nothing else, and each process's first line
+      says `"client_address": "forwarded"`
 - [ ] Someone other than you can sign in and sees what their role should see
       ([`../ROLES.md`](../ROLES.md))
 - [ ] A budget and a rate limit exist on at least one use case, and you have watched one refuse

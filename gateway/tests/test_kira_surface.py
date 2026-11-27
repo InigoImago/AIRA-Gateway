@@ -605,6 +605,25 @@ async def test_health_and_version_info_answer_without_authentication() -> None:
     # Absent build metadata is a valid state — a development run has no build number.
     assert version.status_code == 200
     assert "git" in version.json()
+    assert version.json()["version"] == "0.0.0+local"
+
+
+async def test_version_info_names_the_release_the_image_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The predecessor's fields from the image's identity (`FRD-157`), its release beside them."""
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    monkeypatch.setenv("AIRA_GIT_COMMIT", "0123456789abcdef")
+    monkeypatch.setenv("AIRA_BUILD_TIME", "2026-11-27T12:00:00Z")
+    with TestClient(_app()) as client:
+        body = client.get(f"{BASE}/version-info").json()
+
+    assert (body["version"], body["buildTime"], body["buildNumber"]) == (
+        "0.1.18",
+        "2026-11-27T12:00:00Z",
+        None,
+    )
+    assert (body["git"]["commit"], body["git"]["commitShort"]) == ("0123456789abcdef", "0123456")
 
 
 async def test_every_response_announces_that_the_surface_is_transitional() -> None:

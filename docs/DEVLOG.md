@@ -5,6 +5,114 @@ Keep entries short; link to ADRs/FRDs/commits for detail.
 
 ---
 
+## The caller's address behind proxies: one rule, named proxies, both planes (2026-11-27)
+
+A ticket from Stage T on v0.1.17, priority high: every line, audit row and failed-sign-in bucket
+named `172.18.0.0/24` — a Docker-internal proxy — instead of the workstation. The gateway recorded
+the connection unless `AIRA_TRUST_FORWARDED_FOR` was on; Management always read the
+`AIRA_TRUSTED_PROXY_HOPS`-th entry from the right, defaulting to one, and was never handed the
+count by Compose. And no count could be right: through the console a request passes the platform's
+proxy and nginx, straight to the API only the proxy. So every console user shared one address and
+one bucket of the failed-sign-in bound, which one wrong credential emptied for all of them.
+
+Both planes now read the address one way (`aira_common.forwarded`, `ADR-0056`): `AIRA_TRUSTED_PROXIES`
+names the proxies as addresses and networks; `X-Forwarded-For` is read from the right while a named
+proxy wrote the entry, and the first address not named is the caller — every header line, an entry
+with a port or brackets as its address, one that is no address ending the reading. A connection the
+list does not name is the caller whatever it writes. One setting and one default (none) on both
+planes, which Compose hands to both; the two old settings are read no more and say so at start
+(`setting_retired`); DRF reads no header of its own. Each process's first line says
+`client_address` (`peer` or `forwarded`) and the networks, and a private address sending the header
+unread is a warning, `forwarded_for_ignored`, once an hour per address.
+
+Two parts of the ticket's proposal were not taken, and why is `ADR-0056`: its example list
+`172.16.0.0/12,10.0.0.0/8` would let any workstation in `10.0.0.0/8` choose its address once the
+platform's proxy appends to what the workstation sent, so the documentation says to name the
+proxies only — behind Compose the stack's network, which holds nginx and is where a proxy on the
+host connects from; and the console's nginx keeps appending rather than collapsing the chain, which
+would be right only with the same list in a third container.
+
+Measured with the images built from this tree on a network of their own, behind the real nginx:
+through the console and straight to the gateway, and through the console to Management, each
+recorded `10.1.2.3`, the workstation the request named; a container nobody named, forging
+`203.0.113.7` straight and through the console, was recorded as itself; with no list, nginx's and
+Docker's addresses, one warning each; `AIRA_TRUSTED_PROXY_HOPS=2` wrote `setting_retired`. Tests for
+both paths on both planes — access line, audit row, the bound — and for the forgery; mutations
+XFF-1 to XFF-20, and W2, GS-43, DA-14, FXM-M1-5, FXM-M1-9 and DTR15 re-anchored onto the new rule;
+all caught. FRD-156. Nothing changes on Stage T until `AIRA_TRUSTED_PROXIES` is set there.
+
+## Every image says which release it is (2026-11-27)
+
+A ticket from Stage T on v0.1.17: every process of `aira-gateway:v0.1.17` and
+`aira-management:v0.1.17` said `"version": "0.1.0"` in its `process_started` line — and so as
+`service.version` on every span, metric and exported line. The version lives in the tag, and
+nothing handed it to the build; `0.1.0` was the number written into the three packages before the
+first release. `/version-info` answered `null` for every build fact, because the four settings it
+read were set by nothing (GAP-ANALYSIS §4).
+
+The release job now builds each image with the tag's version, the commit and one build time as
+build arguments; each image keeps them in its environment and as its OCI labels; and every process
+reads them in one place, `aira_common.build` — not a setting, so no settings file can claim a
+release the image is not, and no compose file passes them. The first line states `version` and
+`commit`, `service.version` is the release, `/healthz` on both planes answers `version`, `commit`
+and `built`, `/version-info` (both surfaces) adds `version`. A build from a checkout says
+`0.0.0+local`. And a new job, `identified`, reads each pushed image back by digest — its labels,
+and for the two Python images what their processes state — and the Release waits for it.
+
+Measured on the three images built from this tree with the release's arguments: labels, environment
+and statement name `0.1.18`, the commit and the time; the gateway, started without a network, wrote
+them into its first line and answered them on `/healthz`; the check passed the three pushed to a
+local registry by digest, and refused the gateway built without the arguments (six differences) and
+v0.1.17's published gateway (no identity to state). Mutations VR-1 to VR-23 break each step, and
+HB-11, KV32, SUP-16, BOM3 and BOM4 were re-anchored for the new job beside the inventory; all
+caught. FRD-157. The packages' `pyproject.toml` still says `0.1.0`, which the images' SBOMs list
+for the three workspace packages: changing it per release would change the lock file per release.
+
+## Management's routes in the log as patterns, spelled as the gateway's (2026-11-27)
+
+A ticket from Stage T on v0.1.17: Management's `http_request` lines named the route as the Django
+router's regular expression — `api/v1/use-cases/(?P<slug>[^/.]+)/groups/$` — and a `path()` route
+without its leading slash, while the gateway wrote `/v1beta/usage/{use_case}`. A log store's query
+by route needed two spellings and an escape for every bracket.
+
+Every line that carries a route now writes the pattern: parameters as `{name}`, a leading `/`, the
+anchors, escapes and the format suffix's optional slash gone — `/api/v1/use-cases/{slug}/groups/`,
+`/api/v1/use-cases/{slug}.{format}`. One function in the shared library does it
+(`readable_route`), and one helper per plane reads a route for a line: Management's access line,
+its `auth_refused` and its `unhandled_error` went through three reads of `resolver_match.route`,
+now through `route_of`. Nothing about a value changes — a slug or a username was never in the line
+and is not now.
+
+Measured: all 88 patterns Management registers are written readably, among them the routers'
+format-suffix variants and DRF's API root; every gateway route too. A test walks both planes'
+registered patterns and fails on anything of an expression left, and one reads Management's source
+for a route read outside the helper. Mutations RT-1 to RT-11 break each rule; all caught. Spans and
+the HTTP metrics still carry Django's own `http.route`, which its instrumentation sets itself — not
+part of the ticket, named here.
+
+## The Python images on Debian 13: the critical findings are Debian 12's (2026-11-27)
+
+The owner asked whether a newer Python base image is out, to be rid of the critical findings. It is
+not: CPython's newest 3.14 tag is 3.14.10, and `python:3.14-slim-bookworm` — rebuilt by its
+maintainers on 2026-11-24 — still carries it. So the one finding *to act on* in v0.1.17, the
+interpreter's CVE-2026-119170 (fixed in 3.14.11), stays until Python ships 3.14.11.
+
+The critical ones were never Python's. v0.1.17's three — CVE-2026-5450 in `libc6` and `libc-bin`,
+CVE-2025-7458 in `libsqlite3-0` — are Debian 12's packages, which Debian's tracker marks vulnerable
+in bookworm and fixed in trixie: the `python:3.14-slim-trixie` image carries glibc
+2.41-12+deb13u5 and SQLite 3.46.1-7+deb13u2, the fixed versions. A rebuild on bookworm could never
+remove them. Both Python images now build on trixie, which needed nothing else: they install no
+Debian package of their own.
+
+Measured: both images build; in each, the native wheels load on Debian 13's glibc
+(psycopg with libpq 18, cryptography generating an RSA key, pydantic-core, SQLAlchemy, aiokafka,
+redis) and Django runs its system check. Trivy on the two bases, operating-system packages,
+critical and high: bookworm 2 critical, 4 high with a fix and 40 without; trixie **0 critical**, 1
+high with a fix (`libzstd1`, whose fix Debian has published and the base will carry at its next
+rebuild) and 53 without. Trivy's data is not Grype's — it rates a `zlib1g` finding critical where
+Grype rates glibc's — and the release's own check, with Grype, is the one that counts: it reads
+the next release's documents.
+
 ## The owner's decisions on every Gemini client: reasoning when asked, safety, counts, the reference (2026-11-27)
 
 The owner took `FRD-155` §11's decisions: the reasoning only when asked, safety settings carried,

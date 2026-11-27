@@ -64,3 +64,4 @@ Each ADR is immutable once **Accepted** — to change a decision, add a new ADR 
 | 0053 | [A worker states its own health, in a heartbeat it writes on progress](ADR-0053-a-worker-states-its-own-health.md) | **Accepted** | 2026-11-19 |
 | 0054 | [The log line carries the security record, and what a line may say is a register](ADR-0054-the-log-line-carries-the-security-record.md) | **Accepted** | 2026-11-25 |
 | 0055 | [Known vulnerabilities are reported by the release and alarmed by the night, not refused](ADR-0055-known-vulnerabilities-are-reported-not-refused.md) | **Accepted** | 2026-11-26 |
+| 0056 | [The caller's address is read through the proxies an installation names, not counted](ADR-0056-the-callers-address-is-read-through-proxies-named-by-network.md) | **Accepted** | 2026-11-27 |

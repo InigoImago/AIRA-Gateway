@@ -27,8 +27,9 @@ The lines a SIEM correlates on carry a `category`:
 | `data_access` | `directory.search` | somebody searched the directory for a person or group to grant | `actor`, `query_length`, `results`, `source` — never the term |
 | `suspension` | `suspension.created`, `suspension.lifted` | a stop was set or lifted | `object_id`, `actor`, `target`, `target_value`, `action`, `use_case` |
 | `finding` | `anomaly_detected` | a rule found something | `rule`, `kind`, `target`, `target_value`, `observed`, `threshold` |
-| `lifecycle` | `process_started` | a process is configured and its export exists | `service`, `version`, `environment`, `strict_data_mode`, `telemetry_ip`, `pseudonym_key`, `signals`, `log_level` |
+| `lifecycle` | `process_started` | a process is configured and its export exists | `service`, `version` and `commit` — the release its image says it is, `0.0.0+local` and `null` for a build that is none — `environment`, `strict_data_mode`, `telemetry_ip`, `pseudonym_key`, `signals`, `log_level`, `client_address` (`peer`, or `forwarded` through the proxies in `AIRA_TRUSTED_PROXIES`) and `trusted_proxies` |
 | `lifecycle` | `pseudonym_key_per_process` (`warning`) | a process draws its own pseudonym key because `AIRA_PSEUDONYM_SECRET` is not set | `hint` |
+| `lifecycle` | `setting_retired` (`warning`) | a process finds a setting no process reads any more, at start | `setting`, `hint` — what replaced it |
 | `lifecycle` | `process_stopping`, `process_stopped` | a process was told to stop, and the last thing it writes | `service`, `uptime_seconds` |
 
 A request is re-identified through its `request_id` — the `X-AIRA-Request-Id` its caller received —
@@ -36,7 +37,8 @@ in the console's request view, by the roles that may see people; a configuration
 `change_id` under *Platform → Configuration changes*.
 
 Lines without a category say what the processes do: `http_request` once per request each service
-answers (`method`, `route` — the route's pattern, never the values in it — `status`, `duration_ms`,
+answers (`method`, `route` — the route's pattern, never the values in it, spelled alike on both
+planes: `/v1beta/usage/{use_case}`, `/api/v1/use-cases/{slug}/groups/` — `status`, `duration_ms`,
 and in the gateway `request_id`, `subject` and `use_case`, in Management `actor`); `relay_run` for
 every run of the relay that did something (`published`, `parked`, `pending`, `swept`,
 `still_parked`; an idle run only at `debug`); `retention_pruned` for every sweep; `worker_healthy`,
@@ -68,6 +70,12 @@ accident.
 but one person is a different pseudonym in every process and after every restart. Each process says
 so in a `pseudonym_key_per_process` warning when it starts, and both services' `/readyz` report
 `degraded` with `checks.pseudonyms` until the secret is set.
+
+**Which address a line names** is the caller's as both services read it: from the right of
+`X-Forwarded-For` while the proxies `AIRA_TRUSTED_PROXIES` names wrote it, the connection's own
+address where it names none. A private address that sends the header while the list does not name
+it is a `forwarded_for_ignored` warning (`source_*` as above, `hint`), once an hour per address: it
+is what a forgotten proxy looks like, and every caller behind it shares its address.
 
 **`auth_refused` is bounded**: one source address writes at most ten such lines a minute, and the
 next line it writes after that says in `suppressed` how many were held back — an attack is visible
@@ -113,7 +121,9 @@ it was written. When a process stops, it hands over what is still queued before 
 | `author` | str | a pseudonym under strict data mode | Who decided a stop: user:<person>, or rule:<id> for the detector. |
 | `category` | str | as it is | What kind of record a security-relevant line is: request, authentication, configuration, data_access, suspension, finding or lifecycle. |
 | `change_id` | int | as it is | The configuration history's row for a change, to look it up by. |
+| `client_address` | str | as it is | How a process reads a caller's address: `peer`, or `forwarded` through its proxies. |
 | `clock_skew_seconds` | float | as it is | The clock skew a token check tolerates. |
+| `commit` | str | as it is | The commit a process's image was built from, as its image says. |
 | `constraint` | str | as it is | The database constraint an error names; never the values. |
 | `cost_nanos` | int | as it is | What a request cost, in nano-units of the currency. |
 | `count` | int | as it is | How many. |
@@ -219,7 +229,7 @@ it was written. When a process stops, it hands over what is still queued before 
 | `results` | int | as it is | How many results a search found. |
 | `retry_after` | float | as it is | Seconds until a refused caller may try again. |
 | `retry_in_seconds` | float | as it is | Seconds until the next attempt. |
-| `route` | str | as it is | The route a request matched, with its parameters as names. |
+| `route` | str | as it is | The route a request matched, its parameters as names: `/api/v1/use-cases/{slug}/groups/`. |
 | `rows_deleted` | int | as it is | How many audit rows were deleted. |
 | `rule` | str | as it is | An anomaly rule's name. |
 | `rule_id` | int | as it is | An anomaly rule's id. |
@@ -227,6 +237,7 @@ it was written. When a process stops, it hands over what is still queued before 
 | `seconds_past_expiry` | float | as it is | How long ago a token expired. |
 | `secret_id_source` | str | as it is | Where the Vault secret id was read from. |
 | `service` | str | as it is | Which AIRA process: its AIRA_APP_NAME. |
+| `setting` | str | as it is | A setting a line is about, by its variable's name. |
 | `settled` | bool | as it is | Whether a budget reservation was settled. |
 | `shown` | int | as it is | How many items of a batch are shown. |
 | `signal` | str | as it is | An OTLP signal: traces, metrics or logs. |
@@ -261,6 +272,7 @@ it was written. When a process stops, it hands over what is still queued before 
 | `trace_id` | str | as it is | The trace the line was written in. |
 | `traced` | bool | as it is | Whether a Kafka record carried a trace context. |
 | `traces` | int | as it is | How many requests' traces an OTLP batch carried. |
+| `trusted_proxies` | list | as it is | The networks whose X-Forwarded-For a process believes (AIRA_TRUSTED_PROXIES). |
 | `unmodelled_fields` | list | as it is | Request fields the surface does not model. |
 | `unscanned` | int | as it is | How many characters a check did not read. |
 | `uptime_seconds` | float | as it is | How long a process ran. |
@@ -272,7 +284,7 @@ it was written. When a process stops, it hands over what is still queued before 
 | `username` | str | a pseudonym under strict data mode | A person's username. |
 | `value` | str | as it is | A configuration value AIRA did not recognise. |
 | `vendor` | str | as it is | A database vendor. |
-| `version` | str | as it is | The version a process runs. |
+| `version` | str | as it is | The release a process runs, as its image says: `0.1.18`; `0.0.0+local` for no release. |
 | `why` | str | as it is | Why, as AIRA says it. |
 | `withheld_fields` | list | as it is | The names of fields a line was given and did not carry: no rule says how to write them. A developer's mistake, made visible. |
 | `worker` | str | as it is | Which worker: consumer, relay or retention. |

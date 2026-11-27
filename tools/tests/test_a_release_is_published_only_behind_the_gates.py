@@ -36,7 +36,7 @@ MAKEFILE = ROOT / "Makefile"
 ON = True
 
 #: The jobs that release a version, as opposed to the jobs that check a commit.
-RELEASE_JOBS = {"described", "publish", "inventory", "vulnerabilities", "release"}
+RELEASE_JOBS = {"described", "publish", "identified", "inventory", "vulnerabilities", "release"}
 
 
 def _workflow() -> dict:
@@ -294,6 +294,7 @@ def test_every_published_image_carries_the_commit_it_was_built_from() -> None:
 #: sign it. Every other job inherits the workflow's read-only default.
 RELEASE_PERMISSIONS = {
     "publish": {"contents": "read", "packages": "write"},
+    "identified": {"contents": "read", "packages": "read"},
     "inventory": {"contents": "read", "packages": "read"},
     "vulnerabilities": {"contents": "read"},
     "release": {"contents": "write", "id-token": "write", "attestations": "write"},

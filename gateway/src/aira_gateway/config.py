@@ -12,8 +12,10 @@ from typing import ClassVar, Literal
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import URL
 
+from aira_common.build import this_build
 from aira_common.config import BaseAiraSettings
 from aira_common.counters import SentinelConfig, SentinelConfigError, parse_sentinels
+from aira_common.forwarded import trusted_proxies
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.kafka import KafkaSecurity, parse_bootstrap_servers, validate_stage
 from aira_common.logging import configure_logging, process_named
@@ -29,7 +31,6 @@ from aira_common.oidc import (
     check_tolerance,
 )
 from aira_common.roles import Role, parse_role_groups
-from aira_gateway import __version__
 from aira_gateway.residency import parse_model_regions
 
 
@@ -232,15 +233,21 @@ class GatewaySettings(BaseAiraSettings):
             db=self.redis_db,
         )
 
-    # Trust ``X-Forwarded-For`` for the recorded source IP. Off by default: the socket peer is
-    # used (ADR-0007). Enable it only when this gateway sits behind a reverse proxy it controls.
-    trust_forwarded_for: bool = False
+    # The reverse proxies whose ``X-Forwarded-For`` is believed (`FRD-156`, `ADR-0056`): addresses
+    # and networks, comma-separated. The header is read from the right while the address that wrote
+    # each entry is named here, and the first address that is not is the caller's — the same answer
+    # through the console's two proxies and straight to this API through one. Empty, the default,
+    # names none: the connection's own address is recorded. Name the proxies, never the callers'
+    # networks — a caller inside a named network can choose its address. Management reads the same.
+    trusted_proxies: str = ""
 
-    # How many reverse proxies append to ``X-Forwarded-For``; the address is read that many entries
-    # from the **right**, because the left end is whatever the caller sent. 1 is the shipped nginx;
-    # a shorter chain did not come through them and falls back to the socket peer. A negative
-    # count names no deployment and refuses to start, as Management refuses it.
-    trusted_proxy_hops: int = Field(default=1, ge=0)
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _trusted_proxies_are_addresses(cls, value: str) -> str:
+        """An entry that is no address refuses to start, naming it: a typo would otherwise record
+        every caller under a proxy's address."""
+        trusted_proxies(value)
+        return value
 
     # Hard ceiling on an accepted request body; larger bodies are rejected with 413 before
     # they are buffered (ADR-0007). Sizes, counts and intervals that no request could pass are
@@ -380,11 +387,6 @@ class GatewaySettings(BaseAiraSettings):
     #: The KIRA surface's stated end date, RFC 8594 (`ADR-0010` Option C). Empty means deprecated
     #: with no date yet; set it the day a migration plan exists.
     kira_sunset: str = ""
-    #: Build metadata for `/version-info`. Absent is a valid state, not an error.
-    build_number: int = 0
-    build_time: str = ""
-    git_commit: str = ""
-    git_branch: str = ""
 
     # OIDC bearer validation (Keycloak). When disabled, only API keys are accepted.
     oidc_enabled: bool = False
@@ -511,7 +513,7 @@ def configure_process(settings: GatewaySettings, *, process: str = "api") -> boo
     set_payload_rendering(settings.debug_otel_payload)
     exported = configure_observability(
         service_name=settings.app_name,
-        service_version=__version__,
+        service_version=this_build().version,
         environment=settings.environment,
         endpoint=settings.otel_endpoint,
         traces_endpoint=settings.otel_traces_endpoint,
@@ -522,10 +524,10 @@ def configure_process(settings: GatewaySettings, *, process: str = "api") -> boo
     )
     say_started(
         service=settings.app_name,
-        version=__version__,
         environment=settings.environment,
         signals=exported_signals() if exported else (),
         log_level=settings.log_level,
+        trusted_proxies=trusted_proxies(settings.trusted_proxies),
     )
     return exported
 

@@ -5,9 +5,9 @@ none; without this, credentials could be probed indefinitely at a database round
 
 - **It counts refusals, not requests.** A working credential never touches this bucket, so the bound
   can be low without throttling any legitimate integration, however busy.
-- **A shared source address shares a bucket.** Behind an untrusted proxy
-  (`AIRA_TRUST_FORWARDED_FOR` off) every caller presents the proxy's address; the worst case is that
-  somebody else's typo is answered 429 instead of 401 — working credentials are served throughout.
+- **A shared source address shares a bucket.** Behind a proxy `AIRA_TRUSTED_PROXIES` does not name,
+  every caller presents the proxy's address (`FRD-156`); the worst case is that somebody else's typo
+  is answered 429 instead of 401 — working credentials are served throughout.
 - **It degrades to per-instance, not to nothing** (`FRD-405`): without Redis the bound holds per
   process.
 """

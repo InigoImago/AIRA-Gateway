@@ -81,7 +81,13 @@ and one when a process starts and when it stops.
   `http_request` with method, route template (path only where none matched), status, duration, the
   address as FR-9 says, and the plane's own fields (request id and caller in the gateway, the actor
   in Management). No query string, ever; no line for `/healthz` or `/readyz`. uvicorn's access log is
-  off. The console's nginx writes the same shape as JSON, naming `/api/` and `/gw/` requests by that
+  off. **One spelling of a route on both planes**, the gateway's: parameters as `{name}` and a
+  leading `/` — `/v1beta/usage/{use_case}`, `/api/v1/use-cases/{slug}/groups/`. Django writes a
+  router's route as the regular expression it matches (`api/v1/use-cases/(?P<slug>[^/.]+)/groups/$`)
+  and a `path()` without its slash; `aira_common.logging.access.readable_route` writes both as the
+  pattern, for every line that carries a route (`http_request`, `auth_refused`, `unhandled_error`),
+  through one helper per plane. A test walks every registered pattern of each plane and fails on
+  anything of an expression left in what a line would write. The console's nginx writes the same shape as JSON, naming `/api/` and `/gw/` requests by that
   prefix only, without address, `X-Forwarded-For`, user agent or query string, and not the
   container's healthcheck. nginx's own error lines about a request are not written (`error_log …
   crit`): they name the caller's address and the request line with its query string, a Gemini

@@ -73,5 +73,19 @@ COPY management/frontend/deploy/10-runtime-config.envsh /docker-entrypoint.d/10-
 
 EXPOSE 8080
 
+# **What this image is** (`FRD-157`): the release, the commit and the time it was built, handed in
+# by the release job (`--build-arg`). nginx states nothing of its own, so here the labels
+# `docker inspect` shows say it, as the other two images' do. A build without them says
+# `0.0.0+local`, which is true: it is no release. Last, so a new commit rebuilds no layer.
+ARG AIRA_BUILD_VERSION=0.0.0+local
+ARG AIRA_GIT_COMMIT=
+ARG AIRA_BUILD_TIME=
+ENV AIRA_BUILD_VERSION=$AIRA_BUILD_VERSION \
+    AIRA_GIT_COMMIT=$AIRA_GIT_COMMIT \
+    AIRA_BUILD_TIME=$AIRA_BUILD_TIME
+LABEL org.opencontainers.image.version=$AIRA_BUILD_VERSION \
+      org.opencontainers.image.revision=$AIRA_GIT_COMMIT \
+      org.opencontainers.image.created=$AIRA_BUILD_TIME
+
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
     CMD wget -qO- http://127.0.0.1:8080/index.html > /dev/null || exit 1

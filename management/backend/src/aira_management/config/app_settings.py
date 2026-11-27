@@ -77,14 +77,13 @@ class ManagementSettings(BaseAiraSettings):
     #: every row names the person who made the change. The relay deletes what is older.
     config_history_days: int = Field(default=730, ge=1, le=36500)
 
-    #: How many reverse proxies **append** to `X-Forwarded-For` in front of this service — the
-    #: gateway's setting of the same name, read here for the same reason. The source address the
-    #: failed-authentication bound counts against is read that many entries from the **right**:
-    #: a proxy appends, so the left end is whatever the caller sent, and a caller who chose the
-    #: address could rotate it and never be bounded. `1` is the console's nginx, which this
-    #: service always sits behind; `0` when it is reached directly. It also decides whether a
+    #: The reverse proxies whose `X-Forwarded-For` is believed — the gateway's setting, read the
+    #: same way (`aira_common.forwarded`, `FRD-156`): addresses and networks, comma-separated; the
+    #: first address from the right that is not named is the caller's, which the access line names
+    #: and the bound on failed sign-ins counts against. Empty, the default, names none: the
+    #: connection's own address, which behind the console is its nginx. Once any is named, a
     #: proxy's `X-Forwarded-Proto` is believed (`config.security.proxy_ssl_header`).
-    trusted_proxy_hops: int = 1
+    trusted_proxies: str = ""
 
     # OIDC (Keycloak) — the Angular SPA sends a bearer JWT that the API validates.
     oidc_issuer: str = ""

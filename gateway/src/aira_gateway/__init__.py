@@ -1,3 +1,5 @@
-"""AIRA Gateway API — the data plane."""
+"""AIRA Gateway API — the data plane.
 
-__version__ = "0.1.0"
+Which release this is, the image says (`aira_common.build`): the version lives in the release's tag,
+never in the code.
+"""

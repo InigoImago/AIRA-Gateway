@@ -13,13 +13,13 @@ from typing import Any
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from aira_common.build import this_build
 from aira_common.clock import zone_named
 from aira_common.counters import DegradationLog, ScriptRunner, build_runner
 from aira_common.logging import get_logger, process_named
 from aira_common.logging.access import AccessLog
 from aira_common.logging.lifecycle import say_stopped, say_stopping
 from aira_common.observability import flush_telemetry, redact_query_string
-from aira_gateway import __version__
 from aira_gateway.anomalies import AnomalyService
 from aira_gateway.anomalies.suspensions import SuspensionService
 from aira_gateway.api.gemini.routes import router as gemini_router
@@ -104,7 +104,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     documented = is_local_or_demo(settings)
     app = FastAPI(
         title=settings.app_name,
-        version=__version__,
+        version=this_build().version,
         lifespan=_lifespan(settings, engine, sessionmaker, counters, use_sqlite=use_sqlite),
         docs_url="/docs" if documented else None,
         redoc_url="/redoc" if documented else None,

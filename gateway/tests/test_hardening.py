@@ -93,7 +93,10 @@ async def test_an_oversized_request_is_recorded_where_it_came_from_and_how_large
     left the largest requests out of its measurement altogether."""
     app = create_app(
         GatewaySettings(
-            auth_required=False, max_request_bytes=100, log_queue_size=0, trust_forwarded_for=True
+            auth_required=False,
+            max_request_bytes=100,
+            log_queue_size=0,
+            trusted_proxies="172.18.0.0/16",
         )
     )
 
@@ -103,7 +106,7 @@ async def test_an_oversized_request_is_recorded_where_it_came_from_and_how_large
         yield b'"}]}]}'
 
     forwarded = {"x-forwarded-for": "203.0.113.7", "content-type": "application/json"}
-    with TestClient(app) as client:
+    with TestClient(app, client=("172.18.0.5", 50000)) as client:
         client.post(_URL, content=b"x", headers={**forwarded, "content-length": "5000"})
         client.post(_URL, content=chunks(), headers=forwarded)
         client.post(_URL, content=b"x", headers={**forwarded, "content-length": str(10**12)})
@@ -412,8 +415,8 @@ def test_malformed_content_length_is_treated_as_unknown() -> None:
     assert resp.status_code == 413
 
 
-def test_trusted_forwarded_for_without_header_uses_peer() -> None:
-    app = create_app(GatewaySettings(auth_required=False, trust_forwarded_for=True))
+def test_a_named_proxy_without_a_header_is_its_own_address() -> None:
+    app = create_app(GatewaySettings(auth_required=False, trusted_proxies="0.0.0.0/0"))
     with TestClient(app) as client:
         resp = client.post(_URL, json=_BODY)
     assert resp.status_code == 200

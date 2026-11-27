@@ -113,9 +113,8 @@ def _say_if_refused(exc: Exception, context: dict[str, Any]) -> None:
         outcome, status_code = FORBIDDEN, 403
     else:
         return
-    from aira_management.apps.api.access import source_of
+    from aira_management.apps.api.access import route_of, source_of
 
-    match = getattr(getattr(request, "_request", request), "resolver_match", None)
     say_refused(
         outcome=outcome,
         status=status_code,
@@ -123,7 +122,7 @@ def _say_if_refused(exc: Exception, context: dict[str, Any]) -> None:
         subject=str(user.get_username()) if known and user is not None else None,
         auth_method="oidc" if known else None,
         reason=_text(getattr(exc, "detail", "")) or None,
-        route=getattr(match, "route", None) or None,
+        route=route_of(getattr(request, "_request", request)),
     )
 
 
@@ -147,10 +146,11 @@ def _unexpected(exc: Exception, context: dict[str, Any]) -> Response:
     # hand — `Key (username)=(…) already exists` — and the traceback only at `DEBUG` (`FRD-631`
     # FR-8).
     # The route, not the path: a path names whom it is about (`…/members/<username>/`).
-    match = getattr(getattr(request, "_request", request), "resolver_match", None)
+    from aira_management.apps.api.access import route_of
+
     _log.error(
         "unhandled_error",
-        route=getattr(match, "route", None),
+        route=route_of(getattr(request, "_request", request)),
         method=getattr(request, "method", None),
         exc_info=exc,
         **trace_context_fields(),

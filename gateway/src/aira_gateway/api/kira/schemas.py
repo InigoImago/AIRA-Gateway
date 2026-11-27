@@ -509,6 +509,8 @@ class GitInfo(BaseModel):
 
 class VersionInfo(BaseModel):
     model_config = _ALIASED
+    #: The release the image says it is (`FRD-157`); the predecessor's answer had no version.
+    version: str | None = None
     buildNumber: int | None = None
     buildTime: str | None = None
     git: GitInfo | None = None

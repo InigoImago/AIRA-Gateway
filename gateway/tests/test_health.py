@@ -6,7 +6,8 @@ from aira_common.health import CheckResult
 def test_healthz(client) -> None:
     resp = client.get("/healthz")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    # A build that is no release says so (`FRD-157`).
+    assert resp.json() == {"status": "ok", "version": "0.0.0+local", "commit": None, "built": None}
 
 
 def test_readyz_ready(client, monkeypatch) -> None:

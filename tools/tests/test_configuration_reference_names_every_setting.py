@@ -34,6 +34,19 @@ REFERENCE = ROOT / "docs" / "CONFIGURATION.md"
 #: own publishing variables, and the console's runtime configuration, which is baked by the
 #: entrypoint rather than parsed by Pydantic. Each is documented where a reader needs it.
 NOT_SETTINGS = {
+    # What an **image** is (`FRD-157`): written by the release job's build, read from the process's
+    # environment by `aira_common.build`, and never a setting — a value from a settings file would
+    # be a claim about the image the image did not make. Documented because a reader looking for
+    # where a version comes from looks here.
+    "AIRA_BUILD_VERSION",
+    "AIRA_BUILD_NUMBER",
+    "AIRA_BUILD_TIME",
+    "AIRA_GIT_COMMIT",
+    "AIRA_GIT_BRANCH",
+    # **Retired** (`FRD-156`): named so that a reader who has them set learns what replaced them.
+    # No settings class declares either, and a process that finds one set says so at start.
+    "AIRA_TRUST_FORWARDED_FOR",
+    "AIRA_TRUSTED_PROXY_HOPS",
     "AIRA_STACK",
     "AIRA_BIND_HOST",
     "AIRA_OIDC_ISSUER",

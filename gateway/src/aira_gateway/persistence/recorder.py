@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Request
 
 from aira_common.addresses import address_attributes
+from aira_common.forwarded import trusted_proxies
 from aira_common.logging import get_logger
 from aira_common.observability import set_span_attributes, trace_context_fields
 from aira_gateway.audit import Outcome, was_flagged
@@ -46,24 +47,20 @@ def _tool_attributes(tool_calls: dict[str, Any] | None) -> dict[str, object]:
 
 
 def client_ip(request: Request) -> str | None:
-    """The client IP for the audit trail (`FRD-105`, PRD FR-GW-9).
+    """The caller's address (`FRD-105`, PRD FR-GW-9, `FRD-156`): on every audit row, in every line
+    and span, and the key the failed-authentication bound counts against.
 
-    ``X-Forwarded-For`` is honoured **only** when ``trust_forwarded_for`` is set, and then read
-    ``trusted_proxy_hops`` entries **from the right**. A proxy appends, so the left end is whatever
-    the caller sent: reading it would let a caller choose the address on every audit row, evade the
-    incident view's filter and rotate past the failed-authentication bound. A chain shorter than
-    the configured hops did not traverse them, and the socket peer is used instead.
+    Read through the proxies ``AIRA_TRUSTED_PROXIES`` names (`aira_common.forwarded`): from the
+    right of ``X-Forwarded-For`` while a named proxy wrote the entry, the connection's own address
+    where none is named. A proxy appends, so what a caller wrote is left of everything a named
+    proxy wrote and never read — a caller who chose this address could evade the incident view's
+    filter and rotate past the bound. As long as the column it is stored in.
     """
-    settings = settings_of(request)
-    if settings.trust_forwarded_for:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            chain = [part.strip() for part in forwarded.split(",") if part.strip()]
-            hops = int(settings.trusted_proxy_hops)
-            # No proxy appending means the whole header is the caller's: it names nobody.
-            if 0 < hops <= len(chain):
-                return chain[-hops][:64]
-    return request.client.host if request.client else None
+    peer = request.client.host if request.client else None
+    address = trusted_proxies(settings_of(request).trusted_proxies).client(
+        peer, request.headers.getlist("x-forwarded-for")
+    )
+    return address[:64] if address else None
 
 
 def _degradation_snapshot(request: Request) -> dict[str, str] | None:

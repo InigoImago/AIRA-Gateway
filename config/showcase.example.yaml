@@ -92,8 +92,9 @@ core:
   # Extra patterns redacted from stored payloads (`FRD-406`): regular expressions separated by `;`
   # or a newline, **added to** the built-in credential shapes. Empty uses the built-in ones alone.
   redact_patterns: ''
-  trust_forwarded_for: false
-  trusted_proxy_hops: 1
+  # The reverse proxies whose `X-Forwarded-For` is believed, as addresses or networks. Empty names
+  # none: every request is recorded under the address it connected from (`docs/DEPLOYMENT.md` §3.7).
+  trusted_proxies: ''
 
 # The three governance controls. Off means *measured and not enforced* — which is the honest way to
 # introduce them, and the wrong way to leave them.

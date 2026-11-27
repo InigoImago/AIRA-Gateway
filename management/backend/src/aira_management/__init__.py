@@ -1,3 +1,5 @@
-"""AIRA Management & Monitoring backend (Django + DRF)."""
+"""AIRA Management & Monitoring backend (Django + DRF).
 
-__version__ = "0.1.0"
+Which release this is, the image says (`aira_common.build`): the version lives in the release's tag,
+never in the code.
+"""

@@ -342,7 +342,8 @@ async def test_nothing_configured_to_probe_is_not_a_degradation() -> None:
 
 def test_healthz_does_no_io_and_says_only_that_the_process_is_up() -> None:
     """A liveness probe that checks a dependency restarts a healthy process when that dependency
-    blinks. That is how a restart loop is built out of a transient outage."""
+    blinks. That is how a restart loop is built out of a transient outage. Which build it is comes
+    from the environment, without any: a build that is no release says so (`FRD-157`)."""
     app = create_app(GatewaySettings(auth_required=False))
     app.state.providers = ProviderRegistry([_Broken("x")])
 
@@ -350,7 +351,31 @@ def test_healthz_does_no_io_and_says_only_that_the_process_is_up() -> None:
         response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "version": "0.0.0+local",
+        "commit": None,
+        "built": None,
+    }
+
+
+def test_healthz_names_the_release_the_commit_and_the_time_the_image_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What an operator compares with the tag after an update: no `null` on a published image."""
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    monkeypatch.setenv("AIRA_GIT_COMMIT", "0123456789abcdef")
+    monkeypatch.setenv("AIRA_BUILD_TIME", "2026-11-27T12:00:00Z")
+
+    with TestClient(create_app(GatewaySettings(auth_required=False))) as client:
+        body = client.get("/healthz").json()
+
+    assert body == {
+        "status": "ok",
+        "version": "0.1.18",
+        "commit": "0123456789abcdef",
+        "built": "2026-11-27T12:00:00Z",
+    }
 
 
 # == correlation (FR-4) ==========================================================================
@@ -437,21 +462,36 @@ def test_absent_build_metadata_is_null_rather_than_an_error() -> None:
     with TestClient(app) as client:
         body = client.get("/version-info").json()
 
+    assert body["version"] == "0.0.0+local"
     assert body["buildNumber"] is None
     assert body["git"]["commit"] is None
 
 
-def test_build_metadata_is_reported_when_it_exists() -> None:
-    settings = GatewaySettings(
-        auth_required=False, git_commit="0123456789abcdef", git_branch="main", build_number=42
-    )
-    app = create_app(settings)
+def test_build_metadata_is_reported_when_it_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The image's identity (`FRD-157`), and the two facts a release does not write when somebody
+    sets them."""
+    for name, value in {
+        "AIRA_BUILD_VERSION": "0.1.18",
+        "AIRA_GIT_COMMIT": "0123456789abcdef",
+        "AIRA_BUILD_TIME": "2026-11-27T12:00:00Z",
+        "AIRA_GIT_BRANCH": "main",
+        "AIRA_BUILD_NUMBER": "42",
+    }.items():
+        monkeypatch.setenv(name, value)
+    app = create_app(GatewaySettings(auth_required=False))
     with TestClient(app) as client:
         body = client.get("/version-info").json()
 
-    assert body["buildNumber"] == 42
-    assert body["git"]["commit"] == "0123456789abcdef"
-    assert body["git"]["commitShort"] == "0123456"
+    assert (body["version"], body["buildNumber"], body["buildTime"]) == (
+        "0.1.18",
+        42,
+        "2026-11-27T12:00:00Z",
+    )
+    assert body["git"] == {
+        "commit": "0123456789abcdef",
+        "commitShort": "0123456",
+        "branch": "main",
+    }
 
 
 # == CORS (§5.4) =================================================================================

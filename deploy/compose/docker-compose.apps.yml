@@ -107,8 +107,10 @@ services:
       # The realm the account obtains its token in, when it lives in another realm than the
       # issuer's — `master`, holding the realm's `<realm>-realm` roles. Empty: the issuer's realm.
       AIRA_DIRECTORY_TOKEN_REALM: ${AIRA_DIRECTORY_TOKEN_REALM:-}
-      AIRA_TRUSTED_PROXY_HOPS: ${AIRA_TRUSTED_PROXY_HOPS:-1}
-      AIRA_TRUST_FORWARDED_FOR: ${AIRA_TRUST_FORWARDED_FOR:-false}
+      # The proxies whose X-Forwarded-For is believed, as addresses or networks (`FRD-156`): the
+      # platform's reverse proxy as Docker shows it, and the console's nginx. Empty: none, and the
+      # connection's own address is recorded. Management receives the same list.
+      AIRA_TRUSTED_PROXIES: ${AIRA_TRUSTED_PROXIES:-}
       AIRA_ENVIRONMENT: ${AIRA_ENVIRONMENT:-local}
       # ── Secrets from Vault ────────────────────────────────────────────────────────────────
       #
@@ -371,6 +373,9 @@ services:
       AIRA_PSEUDONYM_SECRET: ${AIRA_PSEUDONYM_SECRET:-}
       # How log lines and spans write an address; the privacy notice states it.
       AIRA_TELEMETRY_IP: ${AIRA_TELEMETRY_IP:-pseudonym}
+      # The proxies whose X-Forwarded-For is believed — the gateway's list: a request through the
+      # console passes the same proxies to both (`FRD-156`). Empty: none.
+      AIRA_TRUSTED_PROXIES: ${AIRA_TRUSTED_PROXIES:-}
       # How long the configuration history keeps a change, in days; the relay deletes the rest.
       AIRA_CONFIG_HISTORY_DAYS: ${AIRA_CONFIG_HISTORY_DAYS:-730}
       AIRA_DEFAULT_RETENTION_DAYS: ${AIRA_DEFAULT_RETENTION_DAYS:-7}

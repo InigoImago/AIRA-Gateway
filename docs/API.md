@@ -223,7 +223,7 @@ thins every span. The guides say the rest.
 | `POST /kira/api/external/rerank` | the same | `{model_id, query, records: [{id, title, content}]}`, every field filled, answered with `{records: [{id, score, title, content}]}` in the reranker's order. `422 NO_RERANKER_CAPABILITIES` for a model not declared `rerank`. Booked as on Google's ranking path. |
 | `GET /kira/api/external/models` | any credential | The served models that have a KIRA id, by that id, with their capabilities (`Chat`, `Embedding`, `Reranker`), limits, thinking (modes and level words, the default a request that names none is sent, `null` for an undeclared bound) and embedding options. |
 | `GET /kira/api/external/health` | public; the upstreams are listed only to whom `/readyz` shows its diagnosis | The gateway, and each upstream from the background probe's last verdict; `503` when any of them is unhealthy. |
-| `GET /kira/api/external/version-info` | public | Build metadata, `null` where none was set. |
+| `GET /kira/api/external/version-info` | public | The predecessor's build metadata — `buildNumber`, `buildTime`, `git: {commit, commitShort, branch, stage}` — and `version`, the release the image says it is (`0.0.0+local` for a build that is none); `null` where the build was not told a fact. |
 | `GET /kira/api/external/ki-usage` | any credential | **The caller's own** requests and tokens between `startDatum` and `endDatum`, one row per model, `user_id` the caller's name and `model_id` the model's KIRA id (`0` where none) — counted **in the use cases the credential may act in**: an API key's own use case, the use cases a signed-in person holds a grant on. Nobody else's figures, whatever the caller's role, and none from a use case the credential has no part in. CSV with a byte-order mark for `Accept: text/csv`. A missing date is `400 MISSING_QUERY_PARAM`, one that does not parse `422`; an `endDatum` not after `startDatum`, or a window of more than 366 days, is `400 INVALID_TIME_RANGE`. A date without an offset is read on the installation's clock (`AIRA_TIME_ZONE`); seconds since 1970 need none. |
 
 An upstream failure on the KIRA surface is `502 EXTERNAL_KI_API_ERROR`, whatever the provider said,
@@ -261,9 +261,9 @@ record.
 
 | Operation           | Who may call | Answers |
 | ------------------- | ------------ | ------- |
-| `GET /healthz`      | public | `200 {"status": "ok"}`. Liveness, with no I/O. |
+| `GET /healthz`      | public | `200 {"status": "ok", "version", "commit", "built"}`: liveness, with no I/O, and the release, commit and build time the image says it is — `"0.0.0+local"` and `null` for a build that is no release. |
 | `GET /readyz`       | public; the diagnosis to `operations.diagnose`, to the break-glass key, and to anybody locally or in demo mode | `200` or `503` with `{status: ready \| not_ready, degraded}`. **Postgres alone decides readiness.** Kafka (`checks.kafka`, `required: false`, reachable while any broker answers), the shared counter store, a pseudonym key the process drew for itself (`checks.pseudonyms`), a feature running on its fallback and the upstreams only set `degraded`. The diagnosis adds `fallbacks`, `checks`, `upstreams` (the background probe's last verdicts, never a call made for the request) and `secrets` (names, never values). |
-| `GET /version-info` | public | `{service, environment, buildNumber, buildTime, git: {commit, commitShort, branch}}`, with `null` where no build metadata was set. |
+| `GET /version-info` | public | `{service, environment, version, buildNumber, buildTime, git: {commit, commitShort, branch}}`: the release, commit and build time the image says it is, `null` where the build was not told a fact — a release writes no build number or branch. |
 
 ### 2.3 Trying a pipeline
 
@@ -350,7 +350,7 @@ request a moment later would.
 
 | Operation      | Who may call | Answers |
 | -------------- | ------------ | ------- |
-| `GET /healthz` | public | `200 {"status": "ok"}`. |
+| `GET /healthz` | public | `200 {"status": "ok", "version", "commit", "built"}`, as the gateway's. |
 | `GET /readyz`  | public | `200` or `503` with `{status, degraded, checks: {postgres, kafka, pseudonyms}}`. Postgres decides readiness; Kafka (`required: false`) only sets `degraded`, because a change waits in the outbox while it is down, and so does a pseudonym key each process draws for itself (`checks.pseudonyms`, when `AIRA_PSEUDONYM_SECRET` is not set and pseudonyms are written). The same body for everybody: it names no host. |
 
 ### 3.2 The caller

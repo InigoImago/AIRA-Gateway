@@ -52,6 +52,8 @@ shape, not four consecutive deploy attempts):
 
 And a parsing rule rather than a setting: the forwarded address is read `AIRA_TRUSTED_PROXY_HOPS`
 entries **from the right**, so the part a caller controls is never the part that is believed.
+*(Superseded by `ADR-0056`: still from the right, but as far as the proxies `AIRA_TRUSTED_PROXIES`
+names, because no count is right on both of an installation's paths.)*
 
 **Loopback is exempt from the plaintext rules.** A sidecar terminating TLS on `127.0.0.1` is a
 normal deployment and its traffic never reaches a network. Refusing it would push operators to

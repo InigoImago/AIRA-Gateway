@@ -616,8 +616,10 @@ When it fails, answer each finding to act on in one of two ways:
   Action where it is pinned. The console's Alpine packages take the fix at the next
   release, since its build installs every Alpine update of the day. The Python images' Debian
   packages and the Python interpreter come with their base image: they are fixed once its
-  maintainers rebuild it, and every release builds from the newest. Then release. From the next night the newest
-  release is the one that carries the update.
+  maintainers rebuild it, and every release builds from the newest. A finding Debian will not fix
+  in the base's Debian release is fixed only by moving the base to the release that carries the
+  fix — the Python images build on Debian 13 (`-slim-trixie`) for that reason. Then release. From
+  the next night the newest release is the one that carries the update.
 - **Or accept it**, with a reason a reviewer can check and a date at most a year ahead:
 
   ```toml
@@ -749,11 +751,16 @@ restart, and a stack that cannot say which version it is running is the state th
 exist to end. To check: `docker inspect --format '{{.Name}} {{.Config.Image}}' $(docker ps -q)`, and
 every AIRA container must name the same version.
 
-**`GET /version-info`** on the gateway (unauthenticated, like its KIRA twin) answers the service
-name and environment, and build metadata only when `AIRA_BUILD_NUMBER`, `AIRA_BUILD_TIME`,
-`AIRA_GIT_COMMIT` and `AIRA_GIT_BRANCH` reach the gateway's environment. Neither the published images
-nor the Compose files set them, so a released image answers `null` there; the image reference is
-the answer to *what is deployed*.
+**What runs, as the running processes say it.** Every published image carries its release, the
+commit and the time it was built — the release job hands them to the build, and refuses to publish
+a Release whose images say otherwise. So each process states the version in its first line
+(`process_started`: `"version": "0.1.18"`, `"commit": …`) and as `service.version` on every span,
+metric and exported line, which is how a log store or a dashboard tells from when an update ran;
+`GET /healthz` on both planes answers `version`, `commit` and `built`, and the gateway's
+`GET /version-info` (unauthenticated, like its KIRA twin) the same beside the service name and
+environment. `docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}'`
+answers it for an image that is not running, the console's included. An image built from a checkout
+says `0.0.0+local`: it is no release.
 
 ---
 
@@ -1020,20 +1027,40 @@ with every step, so a session of about 300 000 tokens is a 1 MiB request, and su
 it with an HTML page no client can read, before the gateway has seen it — the request appears
 nowhere in the audit trail.
 
-**The client address in the audit trail.** Behind proxies, decide which address is recorded:
+**The client address in the audit trail.** Name the proxies in front of the services — the same
+value on both planes, which the Compose files hand to both:
 
 ```bash
-AIRA_TRUST_FORWARDED_FOR=true    # read X-Forwarded-For at all — only behind proxies you run
-AIRA_TRUSTED_PROXY_HOPS=1        # how many of them append to it in front of this service
+AIRA_TRUSTED_PROXIES=172.18.0.0/16   # the network your proxy and the console's nginx connect from
 ```
 
-A proxy **appends** the address it saw, so the left end of `X-Forwarded-For` is whatever the caller
-sent and is never read: the gateway takes the entry `AIRA_TRUSTED_PROXY_HOPS` places from the right,
-and the socket peer when the chain is shorter than that (it did not come through your proxies). Left
-at `AIRA_TRUST_FORWARDED_FOR=false` (the default), the socket peer is recorded. Management reads
-`AIRA_TRUSTED_PROXY_HOPS` always (default 1, the console's nginx): for the address its
-failed-authentication bound counts against, and to decide whether a proxy's `X-Forwarded-Proto`
-is believed for HSTS. Add one hop for each proxy of yours that appends in front of nginx.
+Every proxy **appends** the address it saw to `X-Forwarded-For`, so the header is read from the
+right: the connection's own address first and, while the list names an address, the entry that
+proxy appended. The first address the list does not name is the caller — on the audit row, in every
+log line and span, and in the bound on failed sign-ins. An installation has two paths, and both name
+the workstation:
+
+```
+Workstation → your reverse proxy (appends) → the console's nginx (appends) → gateway / Management
+Application → your reverse proxy (appends) ───────────────────────────────→ gateway (/v1/…)
+```
+
+Behind Compose, Docker shows a proxy on the same host as its network's gateway address
+(`172.18.0.1`), and the console's nginx sits in that network: naming the network names both. Find it
+with `docker network inspect aira --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'` (the network
+is named after `AIRA_STACK`). A proxy on another machine connects with its own address; name it as
+well: `AIRA_TRUSTED_PROXIES=172.18.0.0/16,10.20.30.40`. **Never name the workstations' networks**: a
+listed address is believed about whom it forwarded for, so a workstation inside a listed network can
+choose the address recorded for it. A caller connecting from an address the list does not name is
+recorded as that address, whatever its header says.
+
+Left empty — the default — every request is recorded under the address it connected from: the
+console's nginx for every console user, who then share one bucket of the failed-sign-in bound. Each
+process says which it does in its first line (`"client_address": "peer"` or `"forwarded"`, with
+`trusted_proxies`), and a private address that sends the header unread is a warning,
+`forwarded_for_ignored`, once an hour per address. With any proxy named, Management also believes a
+proxy's `X-Forwarded-Proto` for HSTS. `AIRA_TRUST_FORWARDED_FOR` and `AIRA_TRUSTED_PROXY_HOPS` are
+read no more; a process that finds either set warns at start.
 
 ### 3.8 The SPA is configured at deployment time
 
@@ -1083,7 +1110,7 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 
 | Variable                                                       | Default                                                    | Meaning                                                                                                                                                    |
 | -------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `staging` \| `production`. `local` — or `AIRA_DEMO_MODE` — is also what makes the gateway serve its API documentation (`/docs`, `/redoc`, `/openapi.json`) and the whole `/readyz` body to anyone; nowhere else. Anything but `local` turns on both planes' start-up checks (§6) and Management's HSTS header — sent only on a request that reached it over HTTPS, directly or through a proxy reporting `X-Forwarded-Proto: https` (believed with `AIRA_TRUSTED_PROXY_HOPS` ≥ 1). The console's nginx terminates no TLS and reports its own scheme, so set HSTS on the TLS terminator in front of it. |
+| `AIRA_ENVIRONMENT`                                             | `local`                                                    | `local` \| `staging` \| `production`. `local` — or `AIRA_DEMO_MODE` — is also what makes the gateway serve its API documentation (`/docs`, `/redoc`, `/openapi.json`) and the whole `/readyz` body to anyone; nowhere else. Anything but `local` turns on both planes' start-up checks (§6) and Management's HSTS header — sent only on a request that reached it over HTTPS, directly or through a proxy reporting `X-Forwarded-Proto: https` (believed once `AIRA_TRUSTED_PROXIES` names a proxy). The console's nginx terminates no TLS and reports its own scheme, so set HSTS on the TLS terminator in front of it. |
 | `AIRA_LOG_LEVEL`                                               | `INFO`                                                     | `DEBUG`/`INFO`/`WARNING`/`ERROR`                                                                                                                           |
 | `AIRA_LOG_JSON`                                                | `true`                                                     | JSON lines (`true`) or human-readable console output                                                                                                       |
 | `AIRA_DEMO_MODE`                                               | `false`                                                    | Gateway: seeds the published demo API key, registers the mock upstream, serves `/docs`, `/redoc`, `/openapi.json` and the whole `/readyz` body to anyone, and waives six start-up checks — the published Postgres password, a missing audience, `PLAINTEXT` Kafka, and plain-HTTP issuer, JWKS and Vault addresses — never authentication or the use-case requirement. Management: lets `seed_demo` run, and waives none of its checks. **Never in production.** |
@@ -1099,7 +1126,7 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_OIDC_AUDIENCE`                                           | `''`                                                       | Expected `aud`. **Empty disables audience verification**, and is refused outside `local` (§3.2).                                                           |
 | `AIRA_OIDC_JWKS_URI`                                           | `''`                                                       | Override; derived from the issuer when empty                                                                                                               |
 | `AIRA_ROLE_GROUPS`                                             | `''`                                                       | Which Keycloak group confers each built-in role, `role=/path;…`. Empty grants nobody a role; outside `local` Management refuses a mapping with no `global-admin` group |
-| `AIRA_TRUSTED_PROXY_HOPS`                                      | `1`                                                        | How many proxies append to `X-Forwarded-For` in front of the service (§3.7)                                                                                |
+| `AIRA_TRUSTED_PROXIES`                                         | _(empty)_                                                  | The reverse proxies whose `X-Forwarded-For` is believed, as addresses or networks (§3.7). Both planes                                    |
 | `AIRA_STRICT_DATA_MODE`                                        | `true`                                                     | Stored content is readable by Global Administrator and IT Security only, and a person — their figures, their name and key on a request, a finding about them — reaches only those two and the person concerned. Off, each use case's own setting decides. The same value on both services. Telemetry and logs then carry a pseudonym for a name, keyed with `AIRA_PSEUDONYM_SECRET` (from Vault, the same on both); without it each process draws its own key and says so at start |
 | `AIRA_DIRECTORY_CLIENT_ID` / `_SECRET` / `_URL`                | `''`                                                       | The read-only directory client (§5.6). Management searches people and groups with it — without it no role can be bound to a group and nobody who has not signed in can be granted; the gateway reads with it the address a mail goes to |
 | `AIRA_SMTP_HOST` / `AIRA_MAIL_FROM`                            | `''`                                                       | The mail relay and the sender. With both, the gateway mails when a budget crosses a threshold of its use case and when an anomaly rule finds something; Management reads them to say, in the console and the privacy notice, whether anything is mailed. Port, TLS and login are the gateway's alone — `AIRA_SMTP_PORT` (587), `AIRA_SMTP_SECURITY` (`starttls`), [`CONFIGURATION.md`](CONFIGURATION.md) |
@@ -1121,7 +1148,6 @@ is [`CONFIGURATION.md`](CONFIGURATION.md); this section holds the ones an operat
 | `AIRA_ENFORCE_RATE_LIMITS`           | `true`                              | Enforce the per-use-case/per-member request rate. A use case with no configured limit stays unlimited either way.                                                                                                                                                                                                           |
 | `AIRA_BUDGET_ESTIMATE_OUTPUT_TOKENS` | `1024`                              | Tokens assumed for a request whose output nothing bounds — no cap from the caller, and neither a default nor a maximum in the catalogue — used to reserve budget before the real usage is known. A model with a declared maximum reserves that instead. Corrected the moment the response arrives.                                  |
 | `AIRA_LOG_QUEUE_SIZE`                | `512`                               | Request-log rows buffered off the request path, holding at most 64 MiB of request and response bodies whatever the number. A full queue writes inline rather than dropping. **`0` writes every row synchronously** — choose it if a request must be durably logged before its response goes out.                                                                                                       |
-| `AIRA_TRUST_FORWARDED_FOR`           | `false`                             | Honour `X-Forwarded-For` for the recorded source IP, read `AIRA_TRUSTED_PROXY_HOPS` entries from the right (§3.7)                                                                                                                                                                                                          |
 | `AIRA_MAX_REQUEST_BYTES`             | `8388608` (8 MiB)                   | Hard ceiling on a request body; larger bodies get 413 before being buffered                                                                                                                                                                                                                                                 |
 | `AIRA_GOOGLE_API_KEY`                | `''`                                | Registers Google AI Studio when set — and stops the gateway at start-up unless `AIRA_ALLOWED_REGIONS` names `global`                                                                                                                                                                                                       |
 | `AIRA_GEMINI_MODELS`                 | empty                               | Models offered by name; empty, the catalog's discovery asks the key, and a model catalogued under `generative-language` is served all the same                                                                                                                                                                              |
@@ -1244,8 +1270,7 @@ AIRA_OIDC_AUDIENCE=aira-gateway
 AIRA_ROLE_GROUPS=global-admin=/aira/global-admins;it-security=/aira/it-security;it-steuerung=/aira/it-steuerung
 AIRA_VERTEX_PROJECT=my-gcp-project
 AIRA_VERTEX_MODELS=europe-west1/google/gemini-2.5-flash
-AIRA_TRUST_FORWARDED_FOR=true      # behind proxies you run …
-AIRA_TRUSTED_PROXY_HOPS=1          # … this many of which append to X-Forwarded-For
+AIRA_TRUSTED_PROXIES=172.18.0.0/16  # the network your proxies connect from (§3.7), on both planes
 AIRA_OTEL_ENABLED=true
 AIRA_OTEL_ENDPOINT=http://otel-collector:4318
 VAULT_ADDR=https://vault.internal:8200
@@ -1451,8 +1476,8 @@ Security:
 - [ ] `AIRA_OIDC_AUDIENCE` set on **both** services, and the audience mapper on every client
       that reaches AIRA (§5.4)
 - [ ] Keycloak client: no wildcard redirect URIs, direct access grants off, PKCE S256
-- [ ] `AIRA_TRUST_FORWARDED_FOR` and `AIRA_TRUSTED_PROXY_HOPS` match reality — on only behind
-      proxies you run, the hop count equal to the proxies that append (§3.7)
+- [ ] `AIRA_TRUSTED_PROXIES` names your proxies and nothing else — never the callers' networks —
+      and the first line of each process says `"client_address": "forwarded"` (§3.7)
 - [ ] TLS terminated in front of both services; the SPA served over HTTPS (the client refuses the
       code flow against a remote issuer over plain HTTP)
 - [ ] Database credentials, `AIRA_SECRET_KEY`, the Kafka SASL password, the directory secret, the

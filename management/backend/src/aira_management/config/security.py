@@ -16,6 +16,7 @@ import os
 
 from django.core.exceptions import ImproperlyConfigured
 
+from aira_common.forwarded import trusted_proxies
 from aira_common.roles import Role, RoleMappingError, parse_role_groups
 from aira_common.transport_security import plaintext_problems
 from aira_management.config.app_settings import DEV_SECRET_KEY, ManagementSettings
@@ -71,11 +72,10 @@ def misconfigured_settings(settings: ManagementSettings) -> list[str]:
             f"1 and AIRA_API_KEY_MAX_DAYS ({settings.api_key_max_days}), or a key issued without a "
             "lifetime would be already expired, or outlive the maximum."
         )
-    if settings.trusted_proxy_hops < 0:
-        problems.append(
-            f"AIRA_TRUSTED_PROXY_HOPS is {settings.trusted_proxy_hops} — a count of proxies, 0 "
-            "when this service is reached directly."
-        )
+    try:
+        trusted_proxies(settings.trusted_proxies)
+    except ValueError as unreadable:
+        problems.append(f"{unreadable}.")
     return problems
 
 
@@ -84,11 +84,13 @@ def proxy_ssl_header(settings: ManagementSettings) -> tuple[str, str] | None:
 
     Django sends HSTS only on a request it considers secure, and behind a proxy that terminates
     TLS every request reaches it as plain HTTP — so without this, HSTS is configured and never
-    sent. Believed only with a proxy in front (`AIRA_TRUSTED_PROXY_HOPS` ≥ 1): reached directly,
-    the header is the caller's. Believing it changes nothing but that header here — this API sets
-    no cookie and redirects nowhere.
+    sent. Believed only once `AIRA_TRUSTED_PROXIES` names a proxy in front: with none, the header
+    is the caller's. Believing it changes nothing but that header here — this API sets no cookie
+    and redirects nowhere.
     """
-    return ("HTTP_X_FORWARDED_PROTO", "https") if settings.trusted_proxy_hops > 0 else None
+    return (
+        ("HTTP_X_FORWARDED_PROTO", "https") if trusted_proxies(settings.trusted_proxies) else None
+    )
 
 
 def unsafe_settings(settings: ManagementSettings) -> list[str]:

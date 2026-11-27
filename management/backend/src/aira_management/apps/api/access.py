@@ -1,7 +1,7 @@
 """One access line per request to Management's API (`FRD-631` FR-5).
 
 The plane's half of `aira_common.logging.access`: the route Django matched — the pattern, so
-`…/members/<username>/` is never the name in it — the status, the duration, who made it where the
+`…/members/{username}/` is never the name in it — the status, the duration, who made it where the
 token named somebody, and the address as the installation writes one. Outermost but for the trace's
 own middleware, so the line carries the request's trace id; after the view, so the caller DRF
 authenticated is known. A health probe writes none.
@@ -16,9 +16,10 @@ from typing import Any
 
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.http import HttpRequest, HttpResponseBase
-from rest_framework.throttling import BaseThrottle
 
-from aira_common.logging.access import PROBES, write_access_line
+from aira_common.forwarded import trusted_proxies
+from aira_common.logging.access import PROBES, readable_route, write_access_line
+from aira_management.config.runtime import get_settings
 
 #: The request being answered, for what happens inside it and needs to know who asked — the
 #: configuration history's actor (`FRD-632`). Set for exactly the length of one request.
@@ -31,14 +32,28 @@ def current_request() -> HttpRequest | None:
 
 
 def source_of(request: HttpRequest) -> str | None:
-    """The caller's address as DRF resolves it: `AIRA_TRUSTED_PROXY_HOPS` entries from the right
-    of `X-Forwarded-For`, the socket peer otherwise — the address the bound on failed sign-ins
-    counts."""
+    """The caller's address, read as the gateway reads it (`FRD-156`): through the proxies
+    `AIRA_TRUSTED_PROXIES` names, from the right of `X-Forwarded-For`; the connection's own address
+    where none is named. What the access line and a refusal's line name, and what the bound on
+    failed sign-ins counts against."""
     try:
-        # DRF reads only `META` from it, which a Django request has as well.
-        return str(BaseThrottle().get_ident(request)) or None  # type: ignore[arg-type]
+        forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+        return trusted_proxies(get_settings().trusted_proxies).client(
+            request.META.get("REMOTE_ADDR"), [forwarded] if forwarded else []
+        )
     except Exception:  # noqa: BLE001 — an address that cannot be read is not the request's failure
         return None
+
+
+def route_of(request: HttpRequest | None) -> str | None:
+    """The route Django matched, as every line writes one: ``/api/v1/use-cases/{slug}/groups/``.
+
+    The pattern and never the path, which names whom it is about (``…/members/<username>/``). The
+    one place this plane reads a route for a line, so a line cannot carry the router's regular
+    expression by reading it itself.
+    """
+    match = getattr(request, "resolver_match", None)
+    return readable_route(getattr(match, "route", None))
 
 
 def _actor(request: HttpRequest) -> str | None:
@@ -51,12 +66,11 @@ def _actor(request: HttpRequest) -> str | None:
 def write_line(request: HttpRequest, response: HttpResponseBase | None, started: float) -> None:
     if request.path in PROBES:
         return
-    match = getattr(request, "resolver_match", None)
     write_access_line(
         method=request.method or "",
         status=response.status_code if response is not None else 500,
         duration_ms=(time.perf_counter() - started) * 1000.0,
-        route=getattr(match, "route", None) or None,
+        route=route_of(request),
         path=request.path,
         actor=_actor(request),
         source_ip=source_of(request),

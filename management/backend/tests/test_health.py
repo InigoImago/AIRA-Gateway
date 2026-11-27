@@ -7,7 +7,38 @@ from aira_common.health import CheckResult
 def test_healthz() -> None:
     resp = Client().get("/healthz")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    # A build that is no release says so, and names no commit or time (`FRD-157`).
+    assert resp.json() == {"status": "ok", "version": "0.0.0+local", "commit": None, "built": None}
+
+
+def test_healthz_names_the_release_the_commit_and_the_time_the_image_says(monkeypatch) -> None:
+    """As the gateway's: what an operator compares with the tag after an update."""
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    monkeypatch.setenv("AIRA_GIT_COMMIT", "0123456789abcdef")
+    monkeypatch.setenv("AIRA_BUILD_TIME", "2026-11-27T12:00:00Z")
+
+    assert Client().get("/healthz").json() == {
+        "status": "ok",
+        "version": "0.1.18",
+        "commit": "0123456789abcdef",
+        "built": "2026-11-27T12:00:00Z",
+    }
+
+
+def test_every_signal_names_the_release_the_image_says(monkeypatch) -> None:
+    """`service.version` on every span, metric and exported line (`FRD-157`)."""
+    from aira_management.config import observability
+    from aira_management.config.app_settings import ManagementSettings
+
+    monkeypatch.setenv("AIRA_BUILD_VERSION", "0.1.18")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        observability, "configure_observability", lambda **kwargs: seen.update(kwargs) or True
+    )
+
+    observability.setup_observability(ManagementSettings())
+
+    assert seen["service_version"] == "0.1.18"
 
 
 def test_readyz_ready(monkeypatch) -> None:

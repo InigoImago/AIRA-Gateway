@@ -6,20 +6,23 @@ from aira_gateway.auth.attribution import Attribution
 from aira_gateway.config import GatewaySettings
 from aira_gateway.persistence.recorder import client_ip
 
+#: The proxies these requests pass, as an installation behind Docker names them (`FRD-156`).
+DOCKER = "172.18.0.0/16"
+
 
 def _request(
     headers: dict[str, str] | None = None,
     client: tuple[str, int] | None = None,
     *,
-    trust_forwarded_for: bool = False,
-    trusted_proxy_hops: int = 1,
+    trusted_proxies: str = "",
+    forwarded_lines: list[str] | None = None,
 ) -> Request:
-    settings = GatewaySettings(
-        trust_forwarded_for=trust_forwarded_for, trusted_proxy_hops=trusted_proxy_hops
-    )
+    settings = GatewaySettings(trusted_proxies=trusted_proxies)
+    raw = [(k.encode(), v.encode()) for k, v in (headers or {}).items()]
+    raw += [(b"x-forwarded-for", line.encode()) for line in forwarded_lines or []]
     scope: dict = {
         "type": "http",
-        "headers": [(k.encode(), v.encode()) for k, v in (headers or {}).items()],
+        "headers": raw,
         "app": SimpleNamespace(state=SimpleNamespace(settings=settings)),
     }
     if client is not None:
@@ -27,9 +30,11 @@ def _request(
     return Request(scope)
 
 
-def test_client_ip_uses_forwarded_for_when_trusted() -> None:
-    """One proxy in front, so the address it appended is the last entry."""
-    request = _request({"x-forwarded-for": "9.9.9.9"}, trust_forwarded_for=True)
+def test_client_ip_uses_forwarded_for_from_a_named_proxy() -> None:
+    """The console's nginx, named, appended the address it saw."""
+    request = _request(
+        {"x-forwarded-for": "9.9.9.9"}, client=("172.18.0.5", 1), trusted_proxies=DOCKER
+    )
     assert client_ip(request) == "9.9.9.9"
 
 
@@ -48,59 +53,52 @@ def test_a_caller_cannot_choose_the_address_that_is_recorded() -> None:
     """
     forged = _request(
         {"x-forwarded-for": "10.9.9.9, 203.0.113.7"},
-        client=("172.16.0.1", 1),
-        trust_forwarded_for=True,
+        client=("172.18.0.5", 1),
+        trusted_proxies=DOCKER,
     )
 
     assert client_ip(forged) == "203.0.113.7"
     assert client_ip(forged) != "10.9.9.9"
 
 
-def test_the_address_is_read_one_entry_per_configured_hop() -> None:
-    """Two proxies append, so the caller's own address is two from the right. Anything further
-    left is still the caller's to write."""
+def test_the_address_is_read_through_every_named_proxy_and_no_further() -> None:
+    """The platform's proxy and the console's nginx both named: the workstation is the first
+    address from the right that neither is — a count of two, without counting."""
     request = _request(
-        {"x-forwarded-for": "10.9.9.9, 198.51.100.4, 203.0.113.7"},
-        trust_forwarded_for=True,
-        trusted_proxy_hops=2,
+        {"x-forwarded-for": "10.9.9.9, 198.51.100.4, 172.18.0.1"},
+        client=("172.18.0.5", 1),
+        trusted_proxies=DOCKER,
     )
 
     assert client_ip(request) == "198.51.100.4"
 
 
-def test_a_chain_shorter_than_the_hops_falls_back_to_the_socket() -> None:
-    """The request did not come through the proxies that were supposed to append to it, so the
-    header describes nothing this deployment can vouch for. An unspoofable address that is merely
-    the peer's beats a spoofable one claiming to be the client's."""
+def test_a_connection_nobody_named_is_the_caller_whatever_its_header_says() -> None:
+    """The request did not come through the proxies the installation vouches for, so the header
+    describes nothing this deployment can vouch for. An unspoofable address that is merely the
+    peer's beats a spoofable one claiming to be the client's."""
     request = _request(
-        {"x-forwarded-for": "10.9.9.9"},
-        client=("172.16.0.1", 1),
-        trust_forwarded_for=True,
-        trusted_proxy_hops=2,
+        {"x-forwarded-for": "10.9.9.9"}, client=("203.0.113.9", 1), trusted_proxies=DOCKER
     )
 
-    assert client_ip(request) == "172.16.0.1"
+    assert client_ip(request) == "203.0.113.9"
 
 
-def test_no_proxy_in_front_means_the_header_is_the_caller_s_and_ignored() -> None:
-    """`AIRA_TRUSTED_PROXY_HOPS=0` says nothing appends to the header, so all of it is what the
-    caller sent. It was read as one hop, and the caller's own last entry was the address on every
-    audit row — the spoofing the right-hand reading exists to prevent."""
+def test_every_header_line_is_read() -> None:
+    """The first line is not the only one: a proxy that adds a line of its own is read too — and
+    reading only the first would have handed the caller's own line back as the address."""
     request = _request(
-        {"x-forwarded-for": "6.6.6.6"},
-        client=("172.16.0.1", 1),
-        trust_forwarded_for=True,
-        trusted_proxy_hops=0,
+        client=("172.18.0.5", 1),
+        trusted_proxies=DOCKER,
+        forwarded_lines=["6.6.6.6", "198.51.100.4"],
     )
 
-    assert client_ip(request) == "172.16.0.1"
+    assert client_ip(request) == "198.51.100.4"
 
 
 def test_an_empty_forwarded_header_falls_back_to_the_socket() -> None:
-    request = _request(
-        {"x-forwarded-for": " , "}, client=("172.16.0.1", 1), trust_forwarded_for=True
-    )
-    assert client_ip(request) == "172.16.0.1"
+    request = _request({"x-forwarded-for": " , "}, client=("172.18.0.5", 1), trusted_proxies=DOCKER)
+    assert client_ip(request) == "172.18.0.5"
 
 
 def test_client_ip_ignores_forwarded_for_by_default() -> None:
@@ -109,9 +107,11 @@ def test_client_ip_ignores_forwarded_for_by_default() -> None:
     assert client_ip(request) == "5.6.7.8"
 
 
-def test_client_ip_truncates_oversized_forwarded_for() -> None:
-    request = _request({"x-forwarded-for": "9" * 200}, trust_forwarded_for=True)
-    assert client_ip(request) == "9" * 64
+def test_client_ip_is_as_long_as_its_column() -> None:
+    """`request_logs.source_ip` is 64 characters; an address with a long zone fits it cut."""
+    zoned = "fe80::1%" + "x" * 80
+    request = _request({"x-forwarded-for": zoned}, client=("172.18.0.5", 1), trusted_proxies=DOCKER)
+    assert client_ip(request) == zoned[:64]
 
 
 def test_client_ip_falls_back_to_peer() -> None:
@@ -120,11 +120,6 @@ def test_client_ip_falls_back_to_peer() -> None:
 
 def test_client_ip_none_when_unknown() -> None:
     assert client_ip(_request()) is None
-
-
-def test_client_ip_blank_forwarded_falls_back() -> None:
-    request = _request({"x-forwarded-for": "  "}, client=("1.1.1.1", 1), trust_forwarded_for=True)
-    assert client_ip(request) == "1.1.1.1"
 
 
 # ---- the wire from the attribution to the row (`FRD-606`) -----------------------------------

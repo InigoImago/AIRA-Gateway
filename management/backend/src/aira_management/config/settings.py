@@ -8,11 +8,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from aira_common.forwarded import trusted_proxies
 from aira_common.integration_debug import configure_integration_debug
 from aira_common.logging import configure_logging, process_named
 from aira_common.logging.lifecycle import configure_identities, say_started
 from aira_common.observability import exported_signals, set_payload_rendering
-from aira_management import __version__
 from aira_management.config.database import build_databases
 from aira_management.config.observability import process_of, setup_observability
 from aira_management.config.runtime import get_settings
@@ -45,10 +45,10 @@ _exported = setup_observability(_settings)
 # FR-1); the lines Vault wrote while the settings were read were held for it.
 say_started(
     service=_settings.app_name,
-    version=__version__,
     environment=_settings.environment,
     signals=exported_signals() if _exported else (),
     log_level=_settings.log_level,
+    trusted_proxies=trusted_proxies(_settings.trusted_proxies),
 )
 
 # Refuse to boot a non-local deployment that still carries the development defaults (ADR-0007).
@@ -183,7 +183,8 @@ REST_FRAMEWORK = {
     # through the usual error envelope.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"user": _settings.throttle_user},
-    # Where a caller's address is read from `X-Forwarded-For`: this many entries from the right,
-    # which is what the failed-authentication bound counts against (`apps.api.attempts`).
-    "NUM_PROXIES": _settings.trusted_proxy_hops,
+    # **DRF reads no header**: the caller's address is `apps.api.access.source_of`'s, through the
+    # proxies `AIRA_TRUSTED_PROXIES` names (`FRD-156`) — a count of proxies is wrong on one path or
+    # the other. `0` makes DRF's own reading the connection's, never a caller's header.
+    "NUM_PROXIES": 0,
 }

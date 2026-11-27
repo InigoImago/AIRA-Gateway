@@ -2273,8 +2273,8 @@ demands HTTPS everywhere else.
 
 Terminate TLS in front of both APIs. Five things AIRA needs from the proxy:
 
-- **`X-Forwarded-For`**, appended, and a hop count on both planes that matches it — see below.
-  Without them every audit row names your proxy, and every caller shares one failed-attempt limit.
+- **`X-Forwarded-For`**, appended, and your proxies named on both planes — see below. Without them
+  every audit row names your proxy, and every caller shares one failed-attempt limit.
 - **HSTS, sent by the proxy.** No AIRA component sends it as shipped: the gateway leaves it to the
   proxy, and Management sends it only on a request it sees as HTTPS — which, behind the console's
   nginx, it never does, because that nginx sets `X-Forwarded-Proto` to its own scheme, `http`.
@@ -2316,30 +2316,34 @@ model still works — and a client that works with large contexts should stream.
 
 ### The caller's address, through your proxies
 
-**The gateway.** `AIRA_TRUST_FORWARDED_FOR=true` makes it read the caller's address from
-`X-Forwarded-For`, and `AIRA_TRUSTED_PROXY_HOPS` says how many proxies append to it (**1** for a
-single nginx, which is what this repository ships). Leave the first off without a proxy you trust:
-with it on, any caller could write any address into your audit trail.
+**Name your proxies, on both planes**, with one value: `AIRA_TRUSTED_PROXIES`, addresses and
+networks separated by commas. The Compose files hand it to the gateway and to Management alike.
 
-The address is read that many entries **from the right**. The left end is whatever the *caller*
-sent: a proxy appends, so `X-Forwarded-For: 10.9.9.9` from a client arrives as
-`10.9.9.9, <real address>`. Getting this wrong is not cosmetic — the value lands on every audit row,
-it is what the console's request list filters by when somebody investigates an incident, and it is
-the key the failed-authentication bound counts against, so a caller who could choose it could also
-rotate it and never be bounded. A chain **shorter** than the hop count is treated as not having come
-through those proxies at all, and the socket peer is used instead.
+The address is read **from the right** of `X-Forwarded-For`: the connection's own address first, and
+while the list names an address, the entry that proxy appended. The first address the list does not
+name is the caller. That is right on both paths an installation has — a workstation through your
+proxy and the console's nginx, an application through your proxy straight to the gateway — where a
+count of proxies was wrong on one of them: one too few named a proxy, one too many let the caller
+write the address. Getting this wrong is not cosmetic: the value lands on every audit row, it is what
+the console's request list filters by when somebody investigates an incident, the anomaly rule for a
+new source address compares it, and it is the key the failed-authentication bound counts against —
+an address over that limit is refused for every request, valid tokens included, so callers sharing
+one address are locked out together.
 
-**Management** has no switch: it always reads `X-Forwarded-For` by its own `AIRA_TRUSTED_PROXY_HOPS`
-(default 1; `0` takes the socket peer), and the Compose files set that for the gateway only. It
-keys its failed-authentication limit on the result — and an address over that limit is refused for
-every request, valid tokens included, so a count too low puts every user behind one address and
-lets one prober lock them all out. A chain shorter than the count gives its leftmost entry, which
-may be one the caller wrote. A count above 0 also makes Management believe `X-Forwarded-Proto`.
+**Nobody chooses their address.** A connection from an address the list does not name is the
+caller, whatever its header says. What a caller writes into the header stays left of the entry your
+proxy appended and is never read — **as long as the list names your proxies and not your callers**:
+a listed address is believed about whom it forwarded for, so a workstation inside a listed network
+(`10.0.0.0/8`, where most workstations are) can choose the address recorded for it.
 
-**Count every proxy that appends on the way in**, on both planes: too low, and the address is a
-proxy's; too high, and it is one the caller wrote. The console's nginx is one: behind a TLS proxy
-of yours, a request through `/api` or `/gw` has passed two — the count Management needs — while an
-API caller that reaches the gateway through its own ingress passes only yours.
+Behind Compose, Docker shows a proxy on the same host as its network's gateway address and the
+console's nginx sits in that network, so the network names both (`172.18.0.0/16`;
+`docker network inspect aira` shows it). A proxy elsewhere connects with its own address: add it.
+Left empty — the default — the address recorded is the connection's, behind the console its nginx.
+The first line of every process says which applies (`client_address`: `peer` or `forwarded`) and
+names the networks, and a private address that sends `X-Forwarded-For` unread is a warning,
+`forwarded_for_ignored`, once an hour. With any proxy named, Management also believes
+`X-Forwarded-Proto`. The console's nginx appends to the header as it arrives and decides nothing.
 
 ### A private certificate authority
 
@@ -2359,8 +2363,8 @@ work and leaves Vault, the directory and the model platforms refusing the certif
 `SSL_CERT_FILE` **replaces** the bundle rather than adding to it: point it at a file that holds
 your CA *and* the public roots, or the public model platforms stop verifying instead.
 
-> done TLS · HSTS at the proxy · `X-Forwarded-For` appended, and the hop count set on **both**
-> planes · SSE unbuffered · a body limit no lower than `AIRA_MAX_REQUEST_BYTES` · generous
+> done TLS · HSTS at the proxy · `X-Forwarded-For` appended, and your proxies named in
+> `AIRA_TRUSTED_PROXIES` on **both** planes · SSE unbuffered · a body limit no lower than `AIRA_MAX_REQUEST_BYTES` · generous
 > timeouts · a private CA in `SSL_CERT_FILE` on both planes, not only in the system store
 
 ---

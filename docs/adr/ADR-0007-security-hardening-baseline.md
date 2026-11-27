@@ -88,7 +88,8 @@ who may invoke them, what they may submit, and what the system does by default.
   default `SECRET_KEY`, a wildcard `ALLOWED_HOSTS`, or `DEBUG`; `DEBUG` is additionally forced
   off anywhere but local. Security headers (nosniff, `X-Frame-Options: DENY`, referrer policy,
   COOP, HSTS outside local) are on by default.
-- `X-Forwarded-For` is honoured only when `AIRA_TRUST_FORWARDED_FOR` is set; otherwise the
+- *(Superseded by `ADR-0056`: the header is read from the proxies `AIRA_TRUSTED_PROXIES` names.)*
+  `X-Forwarded-For` is honoured only when `AIRA_TRUST_FORWARDED_FOR` is set; otherwise the
   socket peer is recorded.
 - Credential-bearing query parameters are redacted before the query string reaches a span.
 - The dev realm pins redirect URIs and web origins to the local dev hosts and disables the

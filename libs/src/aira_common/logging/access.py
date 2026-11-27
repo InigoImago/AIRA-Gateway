@@ -8,7 +8,7 @@ access log for: how long the request took. So the server's is switched off
 pipeline as every other line:
 
 - the method, the **route** the request matched with its parameters as names
-  (``/api/v1/use-cases/<slug>/members/<username>/``, never the name in it), and the path only where
+  (``/api/v1/use-cases/{slug}/members/{username}/``, never the name in it), and the path only where
   no route matched — without the query string, always;
 - the status and the duration, the address as the installation writes addresses, and whatever the
   plane adds: the request's id, who made it;
@@ -17,6 +17,7 @@ pipeline as every other line:
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from typing import Any
@@ -42,6 +43,85 @@ PROBES = frozenset({"/healthz", "/readyz"})
 
 #: How much of an unmatched path a line keeps: a scanner's paths are long and say nothing more.
 PATH_CHARACTERS = 200
+
+#: Where a regular expression names a parameter: ``(?P<slug>`` up to the group's own end.
+_NAMED_GROUP = "(?P<"
+#: A Django ``path()`` parameter, ``<str:username>`` or ``<username>``.
+_CONVERTER = re.compile(r"<(?:\w+:)?(?P<name>\w+)>")
+#: A Starlette parameter with its converter, ``{model:path}``.
+_TYPED_PARAMETER = re.compile(r"\{(?P<name>\w+):[^}]+\}")
+#: A character a regular expression escapes to mean itself: ``\.`` is a dot.
+_ESCAPED_LITERAL = re.compile(r"\\(?P<char>[^0-9A-Za-z])")
+
+
+def _group_end(pattern: str, start: int) -> int:
+    """Where the group opened just before ``start`` ends: the index after its ``)``.
+
+    A ``)`` inside a character class or behind a backslash closes nothing.
+    """
+    depth = 1
+    index = start
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "[":
+            index += 1
+            # A `]` first in the class, or after its `^`, is a member and ends nothing.
+            if index < len(pattern) and pattern[index] == "^":
+                index += 1
+            if index < len(pattern) and pattern[index] == "]":
+                index += 1
+            while index < len(pattern) and pattern[index] != "]":
+                index += 2 if pattern[index] == "\\" else 1
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return len(pattern)
+
+
+def _named_groups_as_names(pattern: str) -> str:
+    """Every ``(?P<name>…)`` of ``pattern`` as ``{name}``, whatever the group matches."""
+    written: list[str] = []
+    index = 0
+    while (found := pattern.find(_NAMED_GROUP, index)) != -1:
+        name_end = pattern.find(">", found)
+        if name_end == -1:
+            break
+        written.append(pattern[index:found])
+        written.append("{" + pattern[found + len(_NAMED_GROUP) : name_end] + "}")
+        index = _group_end(pattern, name_end + 1)
+    written.append(pattern[index:])
+    return "".join(written)
+
+
+def readable_route(route: str | None) -> str | None:
+    """``route`` in the one spelling every line uses: parameters as ``{name}``, a leading ``/``.
+
+    The gateway's framework writes a route as ``/v1beta/usage/{use_case}``. Django writes a
+    router's as the regular expression it matches — ``api/v1/use-cases/(?P<slug>[^/.]+)/groups/$``
+    — and a ``path()`` as ``api/v1/directory/search`` or ``…/members/<str:username>/``. A reader
+    filtering a log store by route would need a spelling per plane, and an escape for every bracket,
+    so both are written as ``/api/v1/use-cases/{slug}/groups/``. The name is the parameter's,
+    never its value: a slug or a username stays out of the line as before. What this cannot
+    spell — an unnamed group, a class outside one — stays as it is, and the test over every
+    registered pattern fails on it.
+    """
+    if not route:
+        return None
+    written = _named_groups_as_names(route)
+    written = _CONVERTER.sub(lambda found: "{" + found["name"] + "}", written)
+    written = _TYPED_PARAMETER.sub(lambda found: "{" + found["name"] + "}", written)
+    written = written.removeprefix("^").removesuffix("$")
+    # An optional slash — a router's format suffix, `\.(?P<format>…)/?$` — is the route without it.
+    written = written.replace("/?", "")
+    written = _ESCAPED_LITERAL.sub(lambda found: found["char"], written)
+    return written if written.startswith("/") else "/" + written
 
 
 def write_access_line(
@@ -69,7 +149,7 @@ def route_of(scope: Mapping[str, Any]) -> str | None:
     """The template of the route a Starlette or FastAPI application matched, if it matched one."""
     route = scope.get("route")
     path = getattr(route, "path_format", None) or getattr(route, "path", None)
-    return path if isinstance(path, str) else None
+    return readable_route(path) if isinstance(path, str) else None
 
 
 class AccessLog:

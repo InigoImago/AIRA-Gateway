@@ -20,6 +20,7 @@ import contextlib
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from aira_common.build import this_build
 from aira_common.counters import CountersUnavailable
 from aira_common.health import any_reachable, check_tcp
 from aira_common.logging.lifecycle import pseudonym_state
@@ -38,33 +39,39 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
-    """Liveness probe: the process is up and serving.
+async def healthz() -> dict[str, str | None]:
+    """Liveness probe: the process is up and serving — and which build it is (`FRD-157`).
 
     **No I/O, and it must stay that way**: a liveness probe that checks a dependency restarts a
-    healthy process when that dependency blinks.
+    healthy process when that dependency blinks. The release, the commit and the time the image was
+    built are what its environment says, read without any: what an operator compares with the tag
+    after an update, `null` where a build is no release. Nothing `/version-info` does not already
+    tell anyone who can reach the port (`ADR-0018`).
     """
-    return {"status": "ok"}
+    build = this_build()
+    return {"status": "ok", "version": build.version, "commit": build.commit, "built": build.time}
 
 
 @router.get("/version-info")
 async def version_info(request: Request) -> dict[str, object]:
-    """What is running here (`FRD-117` FR-1). Unauthenticated, like the predecessor's.
+    """What is running here (`FRD-117` FR-1, `FRD-157`). Unauthenticated, like the predecessor's.
 
-    Absent build metadata yields nulls, not an error. No configuration and no secret — a commit hash
-    identifies the code and nothing more.
+    The build as its image says it is (`aira_common.build`); what a build was not told is `null`,
+    not an error. No configuration and no secret — a version and a commit identify the code and
+    nothing more.
     """
     settings = settings_of(request)
-    commit = settings.git_commit or ""
+    build = this_build()
     return {
         "service": settings.app_name,
         "environment": settings.environment,
-        "buildNumber": settings.build_number or None,
-        "buildTime": settings.build_time or None,
+        "version": build.version,
+        "buildNumber": build.number,
+        "buildTime": build.time,
         "git": {
-            "commit": commit or None,
-            "commitShort": commit[:7] or None,
-            "branch": settings.git_branch or None,
+            "commit": build.commit,
+            "commitShort": build.commit_short,
+            "branch": build.branch,
         },
     }
 

@@ -156,6 +156,16 @@ def test_a_working_credential_never_touches_that_bucket(monkeypatch: pytest.Monk
     assert [client.get(BASE, **headers).status_code for _ in range(3)] == [200, 200, 200]
 
 
+def _behind_the_test_clients_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The test client connects from `127.0.0.1`: named here as the proxy in front (`FRD-156`)."""
+    from aira_management.apps.api import access
+    from aira_management.config.app_settings import ManagementSettings
+
+    monkeypatch.setattr(
+        access, "get_settings", lambda: ManagementSettings(trusted_proxies="127.0.0.1")
+    )
+
+
 def test_a_rejected_token_is_bounded_however_the_caller_writes_its_forwarded_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -163,6 +173,8 @@ def test_a_rejected_token_is_bounded_however_the_caller_writes_its_forwarded_hea
     the whole header, whose left end the caller writes. Counting the whole header gave every
     request with a fresh `X-Forwarded-For` a fresh bucket, and the bound never bound."""
     from aira_management.apps.api import authentication
+
+    _behind_the_test_clients_proxy(monkeypatch)
 
     monkeypatch.setattr(authentication, "build_management_verifier", lambda: _RejectsEverything())
     monkeypatch.setattr(authentication, "build_attempt_bound", lambda: _bound("2/minute"))
@@ -185,6 +197,8 @@ def test_callers_behind_one_proxy_are_still_told_apart(monkeypatch: pytest.Monke
     """The other half of reading the right entry: the address the proxy saw differs per caller,
     so one address collecting refusals does not lock out a neighbour behind the same proxy."""
     from aira_management.apps.api import authentication
+
+    _behind_the_test_clients_proxy(monkeypatch)
 
     monkeypatch.setattr(authentication, "build_management_verifier", lambda: _RejectsEverything())
     monkeypatch.setattr(authentication, "build_attempt_bound", lambda: _bound("1/minute"))

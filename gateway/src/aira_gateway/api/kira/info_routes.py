@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
+from aira_common.build import this_build
 from aira_common.clock import read_in
 from aira_common.models import Capability, ThinkingMode
 from aira_gateway.api.kira import BASE, errors, schemas
@@ -189,15 +190,18 @@ def _upstream_tags(verdict: dict[str, object]) -> list[str]:
 
 @router.get("/version-info")
 async def version_info(request: Request) -> Response:
-    """Build metadata, or nulls: a development run has no build number, which is not an error."""
+    """The build as its image says it is (`FRD-157`), or nulls: a development run has no build
+    number, which is not an error. ``version`` beside the predecessor's fields, which had none."""
     settings = request.app.state.settings
+    build = this_build()
     info = schemas.VersionInfo(
-        buildNumber=getattr(settings, "build_number", None) or None,
-        buildTime=getattr(settings, "build_time", "") or None,
+        version=build.version,
+        buildNumber=build.number,
+        buildTime=build.time,
         git=schemas.GitInfo(
-            commit=getattr(settings, "git_commit", "") or None,
-            commitShort=(getattr(settings, "git_commit", "") or "")[:7] or None,
-            branch=getattr(settings, "git_branch", "") or None,
+            commit=build.commit,
+            commitShort=build.commit_short,
+            branch=build.branch,
             stage=settings.environment,
         ),
     )
