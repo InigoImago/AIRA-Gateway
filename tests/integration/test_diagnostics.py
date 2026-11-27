@@ -224,7 +224,11 @@ async def test_liveness_needs_nothing_and_says_nothing_more() -> None:
         response = await client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    # The verdict, and which build answers (`FRD-157`) — the image's identity, which `/version-info`
+    # tells anyone already — and nothing of the diagnosis `/readyz` keeps for operators.
+    body = response.json()
+    assert body.keys() == {"status", "version", "commit", "built"}
+    assert body["status"] == "ok" and body["version"]
 
 
 # ═══ can this model be reached at all? (FRD-506) ════════════════════════════════════════════════
